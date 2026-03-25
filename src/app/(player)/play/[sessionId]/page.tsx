@@ -37,6 +37,7 @@ import {
   Flame,
   Snowflake,
   Thermometer,
+  SkipForward,
 } from "lucide-react";
 import dynamic from "next/dynamic";
 
@@ -74,6 +75,8 @@ export default function PlayPage() {
   const [hintLoading, setHintLoading] = useState(false);
   const [stepSuccess, setStepSuccess] = useState(false);
   const [showIntro, setShowIntro] = useState(true);
+  const [skipAnswer, setSkipAnswer] = useState<string | null>(null);
+  const [skipping, setSkipping] = useState(false);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -169,6 +172,36 @@ export default function PlayPage() {
       setError("Erreur lors de la demande d'indice");
     } finally {
       setHintLoading(false);
+    }
+  };
+
+  // Skip step
+  const skipStep = async () => {
+    if (!gameState) return;
+    setSkipping(true);
+    try {
+      const res = await fetch(`/api/game/${sessionId}/skip-step?lang=${locale}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ stepOrder: gameState.currentStep }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSkipAnswer(data.answer || "Reponse non disponible");
+        setHints([]);
+        setTimeout(() => {
+          setSkipAnswer(null);
+          if (data.completed) {
+            router.push(`/results/${sessionId}`);
+          } else {
+            fetchGameState();
+          }
+        }, 5000);
+      }
+    } catch {
+      setError("Erreur lors du passage de l'etape");
+    } finally {
+      setSkipping(false);
     }
   };
 
@@ -315,6 +348,23 @@ export default function PlayPage() {
               Etape validee!
             </p>
           </div>
+        </div>
+      )}
+
+      {/* Skip answer overlay */}
+      {skipAnswer && (
+        <div className="fixed inset-0 z-50 bg-orange-500/10 backdrop-blur-sm flex items-center justify-center p-4">
+          <Card className="bg-slate-900 border-orange-500/30 max-w-sm w-full">
+            <CardContent className="pt-6 text-center space-y-3">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-500/10">
+                <Trophy className="h-8 w-8 text-orange-400" />
+              </div>
+              <p className="text-sm text-orange-300">Etape passee (+45 min de penalite)</p>
+              <p className="text-lg font-bold text-white">La reponse etait :</p>
+              <p className="text-2xl font-bold text-orange-400">{skipAnswer}</p>
+              <p className="text-xs text-slate-500">Passage a l&apos;etape suivante...</p>
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -484,17 +534,19 @@ export default function PlayPage() {
               <AlertDialogHeader>
                 <AlertDialogTitle>Demander un indice?</AlertDialogTitle>
                 <AlertDialogDescription>
-                  Chaque indice ajoute une penalite de 2 minutes a votre
-                  temps. Indice {hints.length + 1}/{gameState.hintsAvailable}.
+                  {hints.length < 3
+                    ? `Penalite : +2 minutes. Indice ${hints.length + 1}/${gameState.hintsAvailable}.`
+                    : `Indice supplementaire : +10 minutes de penalite ! Indice ${hints.length + 1}/${gameState.hintsAvailable}.`
+                  }
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
                 <AlertDialogCancel>Annuler</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={() => requestHint(hints.length)}
-                  className="bg-yellow-600 hover:bg-yellow-700"
+                  className={hints.length < 3 ? "bg-yellow-600 hover:bg-yellow-700" : "bg-orange-600 hover:bg-orange-700"}
                 >
-                  Voir l&apos;indice
+                  {hints.length < 3 ? "Voir l'indice (-2 min)" : "Voir l'indice (-10 min)"}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
@@ -525,6 +577,44 @@ export default function PlayPage() {
               <Camera className="h-5 w-5" />
             </Button>
           )}
+
+          {/* Skip step button */}
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button
+                variant="outline"
+                size="lg"
+                className="border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
+                disabled={skipping}
+              >
+                {skipping ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <SkipForward className="h-5 w-5" />
+                )}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent className="bg-slate-900 border-red-500/30">
+              <AlertDialogHeader>
+                <AlertDialogTitle className="text-orange-400">
+                  Passer cette etape?
+                </AlertDialogTitle>
+                <AlertDialogDescription>
+                  Vous serez penalise de <span className="text-orange-400 font-bold">45 minutes</span> sur votre temps final.
+                  La reponse vous sera revelee et vous passerez a l&apos;etape suivante.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Annuler</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={skipStep}
+                  className="bg-orange-600 hover:bg-orange-700"
+                >
+                  Passer (-45 min)
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </div>
     </div>

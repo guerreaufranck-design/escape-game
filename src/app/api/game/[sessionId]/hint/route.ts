@@ -77,25 +77,16 @@ export async function POST(
     // Validate hint index
     if (hintIndex < 0 || hintIndex >= hints.length) {
       return NextResponse.json(
-        { error: "Index d'indice invalide" },
+        { error: "Plus d'indices disponibles pour cette étape" },
         { status: 400 }
       );
     }
 
-    if (hintIndex >= game.max_hints_per_step) {
-      return NextResponse.json(
-        { error: "Nombre maximum d'indices atteint pour cette étape" },
-        { status: 400 }
-      );
-    }
-
-    // Hints must be requested in order (0, then 1, then 2...)
-    // hintIndex represents the next hint to reveal, so it should equal total already revealed
-    // We check that previous hints have been consumed by verifying hintIndex is sequential
-    if (hintIndex > 0) {
-      // Allow requesting hint N only if it's the next one in sequence
-      // The client tracks which hints have been shown
-    }
+    // Progressive penalty: first 3 hints = base penalty (2min), extras = 10min each
+    const EXTRA_HINT_PENALTY = 600; // 10 minutes in seconds
+    const penaltySeconds = hintIndex < game.max_hints_per_step
+      ? game.hint_penalty_seconds
+      : EXTRA_HINT_PENALTY;
 
     // Update session totals
     const { error: updateError } = await supabase
@@ -103,7 +94,7 @@ export async function POST(
       .update({
         total_hints_used: session.total_hints_used + 1,
         total_penalty_seconds:
-          session.total_penalty_seconds + game.hint_penalty_seconds,
+          session.total_penalty_seconds + penaltySeconds,
       })
       .eq("id", sessionId);
 
@@ -123,7 +114,8 @@ export async function POST(
         image: hint.image || null,
       },
       totalHintsUsed: session.total_hints_used + 1,
-      penaltyAdded: game.hint_penalty_seconds,
+      penaltyAdded: penaltySeconds,
+      isExtraHint: hintIndex >= game.max_hints_per_step,
     });
   } catch {
     return NextResponse.json(

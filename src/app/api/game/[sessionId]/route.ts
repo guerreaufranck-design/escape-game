@@ -60,7 +60,7 @@ export async function GET(
         validationRadius = step.validation_radius_meters;
 
         const hints = (step.hints as unknown as Hint[]) || [];
-        hintsAvailable = Math.min(hints.length, game.max_hints_per_step);
+        hintsAvailable = hints.length; // All hints available (with progressive penalty)
       }
     }
 
