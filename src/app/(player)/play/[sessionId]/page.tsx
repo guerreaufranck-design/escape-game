@@ -73,6 +73,7 @@ export default function PlayPage() {
   const [hints, setHints] = useState<Hint[]>([]);
   const [hintLoading, setHintLoading] = useState(false);
   const [stepSuccess, setStepSuccess] = useState(false);
+  const [showIntro, setShowIntro] = useState(true);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -208,6 +209,95 @@ export default function PlayPage() {
   }
 
   if (!gameState) return null;
+
+  // Intro / briefing screen with starting point
+  if (showIntro && gameState.currentStep === 1 && gameState.completedSteps.length === 0) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-white">
+        <div className="max-w-lg mx-auto px-4 py-6 space-y-5">
+          {/* Game title */}
+          <div className="text-center space-y-2 pt-4">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 mb-2">
+              <MapPin className="h-8 w-8 text-emerald-400" />
+            </div>
+            <h1 className="text-2xl font-bold text-emerald-400">
+              {gameState.gameTitle}
+            </h1>
+            <div className="flex items-center justify-center gap-2 text-sm text-slate-400">
+              <Badge variant="outline" className="text-xs">
+                {gameState.totalSteps} etapes
+              </Badge>
+            </div>
+          </div>
+
+          {/* Scenario / description */}
+          {gameState.gameDescription && (
+            <Card className="bg-slate-900/80 border-slate-800">
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm text-slate-400 uppercase tracking-wider">
+                  Scenario
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-slate-300 leading-relaxed text-sm">
+                  {gameState.gameDescription}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Starting point map */}
+          {gameState.approximateTarget && (
+            <Card className="bg-slate-900/80 border-slate-800">
+              <CardHeader className="pb-2">
+                <div className="flex items-center gap-2">
+                  <Navigation className="h-4 w-4 text-emerald-400" />
+                  <CardTitle className="text-sm text-emerald-300">
+                    Point de depart
+                  </CardTitle>
+                </div>
+              </CardHeader>
+              <CardContent className="pb-3">
+                <p className="text-xs text-slate-400 mb-3">
+                  Rendez-vous a ce point pour commencer l&apos;aventure. La premiere enigme vous y attend !
+                </p>
+                <GameMap
+                  playerLat={geo.latitude}
+                  playerLon={geo.longitude}
+                  targetLat={gameState.approximateTarget.latitude}
+                  targetLon={gameState.approximateTarget.longitude}
+                  validationRadius={gameState.validationRadius}
+                />
+                {distance !== null && (
+                  <p className="text-center text-sm text-slate-400 mt-2">
+                    Vous etes a environ <span className="text-emerald-400 font-semibold">{formatDistance(distance)}</span> du point de depart
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {/* GPS status */}
+          {!geo.latitude && (
+            <div className="flex items-center gap-2 text-sm text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-4 py-3">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Activation du GPS en cours...
+            </div>
+          )}
+
+          {/* Start button */}
+          <Button
+            size="lg"
+            className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg h-14 rounded-xl"
+            onClick={() => setShowIntro(false)}
+          >
+            <Flame className="h-5 w-5 mr-2" />
+            C&apos;est parti !
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const temp = getTemperature(distance);
   const TempIcon = temp.icon;
