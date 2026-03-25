@@ -39,6 +39,7 @@ import {
   Thermometer,
   SkipForward,
 } from "lucide-react";
+import { NavigationGuide } from "@/components/player/NavigationGuide";
 import dynamic from "next/dynamic";
 
 const GameMap = dynamic(
@@ -78,6 +79,7 @@ export default function PlayPage() {
   const [skipAnswer, setSkipAnswer] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [videoWatched, setVideoWatched] = useState(false);
+  const [anecdote, setAnecdote] = useState<{ title: string; text: string } | null>(null);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -130,14 +132,9 @@ export default function PlayPage() {
       if (data.success) {
         setStepSuccess(true);
         setHints([]);
-        setTimeout(() => {
-          setStepSuccess(false);
-          if (data.completed) {
-            router.push(`/results/${sessionId}`);
-          } else {
-            fetchGameState();
-          }
-        }, 2000);
+        if (data.anecdote) {
+          setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
+        }
       } else if (data.error) {
         setError(data.error);
         setTimeout(() => setError(null), 3000);
@@ -332,11 +329,16 @@ export default function PlayPage() {
                   targetLon={gameState.approximateTarget.longitude}
                   validationRadius={gameState.validationRadius}
                 />
-                {distance !== null && (
-                  <p className="text-center text-sm text-slate-400 mt-2">
-                    Vous etes a environ <span className="text-emerald-400 font-semibold">{formatDistance(distance)}</span> du point de depart
-                  </p>
-                )}
+                <div className="mt-3">
+                  <NavigationGuide
+                    playerLat={geo.latitude}
+                    playerLon={geo.longitude}
+                    targetLat={gameState.approximateTarget.latitude}
+                    targetLon={gameState.approximateTarget.longitude}
+                    distance={distance}
+                    label="Direction du point de depart"
+                  />
+                </div>
               </CardContent>
             </Card>
           )}
@@ -370,14 +372,57 @@ export default function PlayPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white pb-32">
-      {/* Step success overlay */}
+      {/* Step success overlay with anecdote */}
       {stepSuccess && (
-        <div className="fixed inset-0 z-50 bg-emerald-500/20 backdrop-blur-sm flex items-center justify-center">
-          <div className="text-center animate-bounce">
-            <CheckCircle2 className="h-24 w-24 text-emerald-400 mx-auto mb-4" />
-            <p className="text-2xl font-bold text-emerald-300">
-              Etape validee!
-            </p>
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="max-w-md w-full space-y-4">
+            {/* Success badge */}
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500/20 border-2 border-emerald-400 mb-3 animate-bounce">
+                <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+              </div>
+              <p className="text-2xl font-bold text-emerald-300">
+                Etape validee !
+              </p>
+            </div>
+
+            {/* Anecdote card */}
+            {anecdote && (
+              <Card className="bg-slate-900/95 border-emerald-800/50">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">📖</span>
+                    <CardTitle className="text-sm text-emerald-400">Le saviez-vous ?</CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-300 leading-relaxed">
+                    {anecdote.text}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Continue button */}
+            <Button
+              size="lg"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
+              onClick={() => {
+                setStepSuccess(false);
+                setAnecdote(null);
+                const isCompleted = gameState?.status === "completed";
+                if (isCompleted) {
+                  router.push(`/results/${sessionId}`);
+                } else {
+                  fetchGameState();
+                }
+              }}
+            >
+              {gameState?.currentStep === gameState?.totalSteps
+                ? "Voir mes resultats"
+                : "Etape suivante"
+              }
+            </Button>
           </div>
         </div>
       )}
@@ -441,39 +486,15 @@ export default function PlayPage() {
           />
         </div>
 
-        {/* Distance indicator */}
-        <Card className="bg-slate-900/80 border-slate-800">
-          <CardContent className="py-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div
-                  className={`p-2 rounded-lg bg-slate-800 ${
-                    distance !== null && distance < 100
-                      ? "animate-pulse"
-                      : ""
-                  }`}
-                >
-                  <TempIcon className={`h-6 w-6 ${temp.color}`} />
-                </div>
-                <div>
-                  <p className={`font-bold text-lg ${temp.color}`}>
-                    {temp.label}
-                  </p>
-                  <p className="text-xs text-slate-500">
-                    {distance !== null
-                      ? formatDistance(distance)
-                      : "Localisation en cours..."}
-                  </p>
-                </div>
-              </div>
-              {geo.accuracy && (
-                <Badge variant="outline" className="text-xs text-slate-500">
-                  +-{Math.round(geo.accuracy)}m
-                </Badge>
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        {/* Navigation guide with compass */}
+        <NavigationGuide
+          playerLat={geo.latitude}
+          playerLon={geo.longitude}
+          targetLat={gameState.approximateTarget?.latitude ?? null}
+          targetLon={gameState.approximateTarget?.longitude ?? null}
+          distance={distance}
+          label="Direction de l'objectif"
+        />
 
         {/* Current riddle */}
         {gameState.currentRiddle && (

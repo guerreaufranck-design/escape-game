@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { validateStepSchema } from "@/lib/validators";
 import { haversineDistance } from "@/lib/geo";
 import { calculateScore } from "@/lib/scoring";
+import { t, detectLocale } from "@/lib/i18n";
 import { MAX_VALIDATION_RATE_MS } from "@/lib/constants";
 
 export async function POST(
@@ -11,6 +12,7 @@ export async function POST(
 ) {
   try {
     const { sessionId } = await params;
+    const locale = detectLocale(request);
     const body = await request.json();
     const parsed = validateStepSchema.safeParse(body);
 
@@ -195,6 +197,8 @@ export async function POST(
         success: true,
         distance: Math.round(distance),
         completed: true,
+        anecdote: step.anecdote ? t(step.anecdote, locale) : null,
+        stepTitle: t(step.title, locale),
       });
     }
 
@@ -209,6 +213,8 @@ export async function POST(
       distance: Math.round(distance),
       nextStep: stepOrder + 1,
       completed: false,
+      anecdote: step.anecdote ? t(step.anecdote, locale) : null,
+      stepTitle: t(step.title, locale),
     });
   } catch {
     return NextResponse.json(
