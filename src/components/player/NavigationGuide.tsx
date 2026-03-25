@@ -66,7 +66,9 @@ export function NavigationGuide({
   }
 
   const bearing = calculateBearing(playerLat, playerLon, targetLat, targetLon);
-  const rotation = bearing - heading;
+  // The compass rose rotates so that the target direction aligns with the fixed arrow (pointing up)
+  // Rose rotation: negative of (bearing - heading) so the rose turns under the fixed arrow
+  const roseRotation = -(bearing - heading);
 
   // Estimate walking time (~5 km/h = 83m/min)
   const walkingMinutes = distance !== null ? Math.max(1, Math.round(distance / 83)) : null;
@@ -81,23 +83,27 @@ export function NavigationGuide({
     <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-900/80 border border-emerald-900/30">
       {/* Compass arrow */}
       <div className="relative flex-shrink-0">
-        <div className="w-16 h-16 rounded-full border-2 border-emerald-800/50 bg-slate-950 flex items-center justify-center shadow-inner">
-          {/* Cardinal marks */}
-          <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 text-[8px] font-bold text-emerald-600">N</span>
-          <span className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 text-[8px] text-zinc-600">S</span>
-          <span className="absolute top-1/2 -right-0.5 -translate-y-1/2 text-[8px] text-zinc-600">E</span>
-          <span className="absolute top-1/2 -left-0.5 -translate-y-1/2 text-[8px] text-zinc-600">O</span>
+        <div className="w-16 h-16 rounded-full border-2 border-emerald-800/50 bg-slate-950 flex items-center justify-center shadow-inner overflow-hidden">
+          {/* Rotating compass rose (cardinal marks rotate with phone orientation) */}
+          <div
+            className="absolute inset-0"
+            style={{
+              transform: `rotate(${roseRotation}deg)`,
+              transition: "transform 0.3s ease-out",
+            }}
+          >
+            <span className="absolute top-0.5 left-1/2 -translate-x-1/2 text-[8px] font-bold text-emerald-500">N</span>
+            <span className="absolute bottom-0.5 left-1/2 -translate-x-1/2 text-[8px] text-zinc-600">S</span>
+            <span className="absolute top-1/2 right-1 -translate-y-1/2 text-[8px] text-zinc-600">E</span>
+            <span className="absolute top-1/2 left-1 -translate-y-1/2 text-[8px] text-zinc-600">O</span>
+          </div>
 
-          {/* Arrow */}
+          {/* Fixed arrow (always points UP = direction to walk) */}
           <svg
             width="40"
             height="40"
             viewBox="0 0 40 40"
-            className="drop-shadow-lg"
-            style={{
-              transform: `rotate(${rotation}deg)`,
-              transition: "transform 0.3s ease-out",
-            }}
+            className="relative z-10 drop-shadow-lg"
           >
             <polygon
               points="20,4 26,22 20,18 14,22"
