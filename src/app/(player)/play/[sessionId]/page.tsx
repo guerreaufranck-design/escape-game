@@ -77,6 +77,7 @@ export default function PlayPage() {
   const [showIntro, setShowIntro] = useState(true);
   const [skipAnswer, setSkipAnswer] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
+  const [videoWatched, setVideoWatched] = useState(false);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -242,6 +243,36 @@ export default function PlayPage() {
   }
 
   if (!gameState) return null;
+
+  // Video intro screen (before briefing)
+  if (!videoWatched && gameState.introVideoUrl && gameState.currentStep === 1 && gameState.completedSteps.length === 0) {
+    return (
+      <div className="min-h-screen bg-black flex flex-col items-center justify-center">
+        <div className="w-full max-w-lg relative">
+          <video
+            src={gameState.introVideoUrl}
+            className="w-full rounded-xl"
+            autoPlay
+            playsInline
+            controls={false}
+            onEnded={() => setVideoWatched(true)}
+            onClick={(e) => {
+              const video = e.currentTarget;
+              if (video.paused) video.play();
+              else video.pause();
+            }}
+          />
+          {/* Skip video button */}
+          <button
+            onClick={() => setVideoWatched(true)}
+            className="absolute top-4 right-4 px-3 py-1.5 bg-black/60 backdrop-blur border border-zinc-700 rounded-full text-xs text-zinc-400 hover:text-white transition-colors"
+          >
+            Passer la video &rarr;
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   // Intro / briefing screen with starting point
   if (showIntro && gameState.currentStep === 1 && gameState.completedSteps.length === 0) {

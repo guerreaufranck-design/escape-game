@@ -17,6 +17,7 @@ export interface GameState {
   sessionId: string;
   gameTitle: string;
   gameDescription: string | null;
+  introVideoUrl: string | null;
   currentStep: number;
   totalSteps: number;
   status: "active" | "completed" | "abandoned";

@@ -31,6 +31,7 @@ export async function GET(
       id: string;
       title: string;
       description: string | null;
+      intro_videos: Record<string, string> | null;
       max_hints_per_step: number;
     };
 
@@ -102,10 +103,17 @@ export async function GET(
       ? 0
       : 0;
 
+    // Get intro video URL for the current locale (fallback: fr → en → first)
+    let introVideoUrl: string | null = null;
+    if (game.intro_videos) {
+      introVideoUrl = game.intro_videos[locale] || game.intro_videos.fr || game.intro_videos.en || Object.values(game.intro_videos)[0] || null;
+    }
+
     const gameState: GameState = {
       sessionId: session.id,
       gameTitle: t(game.title, locale),
       gameDescription: t(game.description, locale),
+      introVideoUrl,
       currentStep: session.current_step,
       totalSteps: session.total_steps,
       status: session.status,
