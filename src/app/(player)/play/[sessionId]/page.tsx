@@ -637,33 +637,34 @@ export default function PlayPage() {
                 Fermer
               </button>
             </div>
-            {Object.keys(notebook).length === 0 ? (
-              <p className="text-xs text-slate-500 text-center py-2">
-                Vos reponses apparaitront ici au fur et a mesure.
-              </p>
-            ) : (
-              <div className="space-y-1.5">
-                {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step) => (
-                  <div
-                    key={step}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
-                      notebook[step]
-                        ? "bg-emerald-500/10 border border-emerald-800/30"
-                        : "bg-slate-800/50 border border-slate-800"
-                    }`}
-                  >
-                    <span className="text-xs text-slate-500 w-16 shrink-0">Etape {step}</span>
-                    {notebook[step] ? (
-                      <span className="font-mono font-bold text-emerald-400">{notebook[step]}</span>
-                    ) : (
-                      <span className="text-slate-600 italic text-xs">
-                        {step < gameState.currentStep ? "Non note" : step === gameState.currentStep ? "En cours..." : "A venir"}
-                      </span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            )}
+            <div className="space-y-1.5">
+              {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step) => (
+                <div
+                  key={step}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
+                    step <= gameState.currentStep
+                      ? "bg-slate-800/80 border border-slate-700"
+                      : "bg-slate-800/30 border border-slate-800/50"
+                  }`}
+                >
+                  <span className="text-xs text-slate-500 w-14 shrink-0">Etape {step}</span>
+                  {step <= gameState.currentStep ? (
+                    <input
+                      type="text"
+                      value={notebook[step] || ""}
+                      onChange={(e) => setNotebook((prev) => ({ ...prev, [step]: e.target.value }))}
+                      placeholder="Votre reponse..."
+                      className="flex-1 bg-transparent border-none text-sm font-mono font-bold text-emerald-400 placeholder-slate-600 focus:outline-none"
+                    />
+                  ) : (
+                    <span className="text-slate-600 italic text-xs">A venir</span>
+                  )}
+                </div>
+              ))}
+            </div>
+            <p className="text-[10px] text-slate-600 text-center mt-2">
+              Notez vos reponses ici pour le code final
+            </p>
           </div>
         </div>
       )}
@@ -799,17 +800,6 @@ export default function PlayPage() {
             )}
             Valider ma position
           </Button>
-
-          {/* Photo button (if applicable) */}
-          {gameState.currentRiddle?.hasPhotoChallenge && (
-            <Button
-              variant="outline"
-              size="lg"
-              className="border-slate-700"
-            >
-              <Camera className="h-5 w-5" />
-            </Button>
-          )}
 
           {/* Skip step button */}
           <button
