@@ -1,65 +1,217 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+  KeyRound,
+  MapPin,
+  Trophy,
+  Compass,
+  Loader2,
+  User,
+  Users,
+  ArrowRight,
+  Sparkles,
+} from "lucide-react";
+import { isValidCodeFormat } from "@/lib/code-generator";
+import { useLocale, LocaleSelector } from "@/components/player/LocaleSelector";
+
+export default function HomePage() {
+  const router = useRouter();
+  const [locale] = useLocale();
+  const [code, setCode] = useState("");
+  const [playerName, setPlayerName] = useState("");
+  const [teamName, setTeamName] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleCodeChange = (value: string) => {
+    const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+    let formatted = "";
+    for (let i = 0; i < Math.min(cleaned.length, 12); i++) {
+      if (i > 0 && i % 4 === 0) formatted += "-";
+      formatted += cleaned[i];
+    }
+    setCode(formatted);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+
+    if (!isValidCodeFormat(code)) {
+      setError("Format de code invalide (XXXX-XXXX-XXXX)");
+      return;
+    }
+
+    if (playerName.trim().length < 2) {
+      setError("Entrez votre nom (min. 2 caracteres)");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const res = await fetch(`/api/activate?lang=${locale}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: code.trim(),
+          playerName: playerName.trim(),
+          teamName: teamName.trim() || undefined,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok || data.error) {
+        setError(data.error || "Erreur d'activation");
+        return;
+      }
+
+      router.push(`/play/${data.sessionId}`);
+    } catch {
+      setError("Erreur de connexion au serveur");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
+    <div className="min-h-screen bg-slate-950 text-white flex flex-col">
+      <div className="absolute top-4 right-4 z-20">
+        <LocaleSelector />
+      </div>
+      <div className="fixed inset-0 overflow-hidden pointer-events-none">
+        <div className="absolute top-20 -left-20 w-72 h-72 bg-emerald-500/5 rounded-full blur-3xl" />
+        <div className="absolute bottom-20 -right-20 w-72 h-72 bg-blue-500/5 rounded-full blur-3xl" />
+      </div>
+
+      <div className="relative flex-1 flex flex-col items-center justify-center px-4 py-8">
+        <div className="text-center mb-8">
+          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 mb-4">
+            <Compass className="h-10 w-10 text-emerald-400" />
+          </div>
+          <h1 className="text-3xl font-bold tracking-tight">
+            Escape Game{" "}
+            <span className="text-emerald-400">Outdoor</span>
           </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+          <p className="text-slate-500 mt-2 max-w-xs mx-auto">
+            Explorez, resolvez, triomphez. L&apos;aventure vous attend dehors.
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        <div className="flex flex-wrap justify-center gap-2 mb-8">
+          <Badge variant="outline" className="text-xs text-slate-400 border-slate-700">
+            <MapPin className="h-3 w-3 mr-1" />
+            Geolocalisation
+          </Badge>
+          <Badge variant="outline" className="text-xs text-slate-400 border-slate-700">
+            <Trophy className="h-3 w-3 mr-1" />
+            Classement
+          </Badge>
+          <Badge variant="outline" className="text-xs text-slate-400 border-slate-700">
+            <Sparkles className="h-3 w-3 mr-1" />
+            Enigmes
+          </Badge>
         </div>
-      </main>
+
+        <Card className="bg-slate-900/80 border-slate-800 w-full max-w-sm backdrop-blur-sm">
+          <CardHeader className="text-center pb-4">
+            <div className="mx-auto w-12 h-12 rounded-xl bg-emerald-500/10 flex items-center justify-center mb-2">
+              <KeyRound className="h-6 w-6 text-emerald-400" />
+            </div>
+            <CardTitle className="text-lg">Entrez votre code</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="code" className="text-slate-400 text-sm">
+                  Code d&apos;activation
+                </Label>
+                <Input
+                  id="code"
+                  value={code}
+                  onChange={(e) => handleCodeChange(e.target.value)}
+                  placeholder="XXXX-XXXX-XXXX"
+                  className="bg-slate-800 border-slate-700 text-center text-lg font-mono tracking-widest uppercase placeholder:text-slate-600"
+                  maxLength={14}
+                  autoFocus
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="playerName" className="text-slate-400 text-sm">
+                  <User className="h-3 w-3 inline mr-1" />
+                  Votre nom
+                </Label>
+                <Input
+                  id="playerName"
+                  value={playerName}
+                  onChange={(e) => setPlayerName(e.target.value)}
+                  placeholder="Votre nom de joueur"
+                  className="bg-slate-800 border-slate-700"
+                  maxLength={50}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="teamName" className="text-slate-400 text-sm">
+                  <Users className="h-3 w-3 inline mr-1" />
+                  Nom d&apos;equipe{" "}
+                  <span className="text-slate-600">(optionnel)</span>
+                </Label>
+                <Input
+                  id="teamName"
+                  value={teamName}
+                  onChange={(e) => setTeamName(e.target.value)}
+                  placeholder="Nom de votre equipe"
+                  className="bg-slate-800 border-slate-700"
+                  maxLength={50}
+                />
+              </div>
+
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2 text-sm text-red-400">
+                  {error}
+                </div>
+              )}
+
+              <Button
+                type="submit"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-semibold h-12"
+                disabled={loading}
+              >
+                {loading ? (
+                  <Loader2 className="h-5 w-5 animate-spin" />
+                ) : (
+                  <>
+                    Lancer l&apos;aventure
+                    <ArrowRight className="h-5 w-5 ml-2" />
+                  </>
+                )}
+              </Button>
+            </form>
+          </CardContent>
+        </Card>
+
+        <Button
+          variant="ghost"
+          className="mt-6 text-slate-500 hover:text-slate-300"
+          onClick={() => router.push("/leaderboard")}
+        >
+          <Trophy className="h-4 w-4 mr-2" />
+          Voir le classement general
+        </Button>
+      </div>
+
+      <footer className="relative text-center py-4 text-xs text-slate-700">
+        Escape Game Outdoor
+      </footer>
     </div>
   );
 }

@@ -1,0 +1,442 @@
+"use client";
+
+import { useEffect, useState, useCallback } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { useGeolocation } from "@/hooks/useGeolocation";
+import { useTimer } from "@/hooks/useTimer";
+import { useDistance } from "@/hooks/useDistance";
+import { useGameStore } from "@/stores/game-store";
+import { useLocale } from "@/components/player/LocaleSelector";
+import { formatTime } from "@/lib/scoring";
+import { formatDistance } from "@/lib/geo";
+import type { GameState, Hint } from "@/types/game";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Progress } from "@/components/ui/progress";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import {
+  MapPin,
+  Clock,
+  Lightbulb,
+  CheckCircle2,
+  Navigation,
+  Camera,
+  Loader2,
+  Trophy,
+  Flame,
+  Snowflake,
+  Thermometer,
+} from "lucide-react";
+import dynamic from "next/dynamic";
+
+const GameMap = dynamic(
+  () => import("@/components/player/GameMap").then((mod) => mod.GameMap),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-[300px] bg-slate-800 rounded-xl animate-pulse flex items-center justify-center">
+        <MapPin className="h-8 w-8 text-slate-600" />
+      </div>
+    ),
+  }
+);
+
+export default function PlayPage() {
+  const params = useParams();
+  const router = useRouter();
+  const sessionId = params.sessionId as string;
+
+  const { gameState, setGameState, setLoading, isLoading, error, setError } =
+    useGameStore();
+  const geo = useGeolocation(true);
+  const timer = useTimer(gameState?.startedAt ?? null);
+  const { distance } = useDistance({
+    playerLat: geo.latitude,
+    playerLon: geo.longitude,
+    targetLat: gameState?.approximateTarget?.latitude ?? null,
+    targetLon: gameState?.approximateTarget?.longitude ?? null,
+  });
+
+  const [locale] = useLocale();
+  const [validating, setValidating] = useState(false);
+  const [hints, setHints] = useState<Hint[]>([]);
+  const [hintLoading, setHintLoading] = useState(false);
+  const [stepSuccess, setStepSuccess] = useState(false);
+
+  // Fetch game state
+  const fetchGameState = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await fetch(`/api/game/${sessionId}?lang=${locale}`);
+      if (!res.ok) throw new Error("Impossible de charger la partie");
+      const data: GameState = await res.json();
+      setGameState(data);
+      if (data.status === "completed") {
+        router.push(`/results/${sessionId}`);
+      }
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Erreur de chargement"
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [sessionId, setGameState, setLoading, setError, router, locale]);
+
+  useEffect(() => {
+    fetchGameState();
+  }, [fetchGameState]);
+
+  useEffect(() => {
+    if (gameState?.startedAt) {
+      timer.start();
+    }
+  }, [gameState?.startedAt, timer]);
+
+  // Validate step
+  const validateStep = async () => {
+    if (!geo.latitude || !geo.longitude || !gameState) return;
+
+    setValidating(true);
+    try {
+      const res = await fetch(`/api/game/${sessionId}/validate-step?lang=${locale}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          latitude: geo.latitude,
+          longitude: geo.longitude,
+          stepOrder: gameState.currentStep,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setStepSuccess(true);
+        setHints([]);
+        setTimeout(() => {
+          setStepSuccess(false);
+          if (data.completed) {
+            router.push(`/results/${sessionId}`);
+          } else {
+            fetchGameState();
+          }
+        }, 2000);
+      } else if (data.error) {
+        setError(data.error);
+        setTimeout(() => setError(null), 3000);
+      }
+    } catch {
+      setError("Erreur de validation");
+    } finally {
+      setValidating(false);
+    }
+  };
+
+  // Request hint
+  const requestHint = async (hintIndex: number) => {
+    if (!gameState) return;
+
+    setHintLoading(true);
+    try {
+      const res = await fetch(`/api/game/${sessionId}/hint?lang=${locale}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          stepOrder: gameState.currentStep,
+          hintIndex,
+        }),
+      });
+
+      const data = await res.json();
+      if (data.hint) {
+        setHints((prev) => [...prev, data.hint]);
+        fetchGameState();
+      }
+    } catch {
+      setError("Erreur lors de la demande d'indice");
+    } finally {
+      setHintLoading(false);
+    }
+  };
+
+  // Temperature indicator
+  const getTemperature = (d: number | null) => {
+    if (d === null) return { label: "Recherche...", color: "text-slate-400", icon: Navigation };
+    if (d < 30) return { label: "Brulant!", color: "text-red-500", icon: Flame };
+    if (d < 100) return { label: "Tres chaud", color: "text-orange-500", icon: Flame };
+    if (d < 300) return { label: "Chaud", color: "text-yellow-500", icon: Thermometer };
+    if (d < 1000) return { label: "Tiede", color: "text-emerald-400", icon: Thermometer };
+    return { label: "Froid", color: "text-blue-400", icon: Snowflake };
+  };
+
+  if (isLoading && !gameState) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950">
+        <div className="text-center space-y-4">
+          <Loader2 className="h-12 w-12 animate-spin text-emerald-500 mx-auto" />
+          <p className="text-slate-400">Chargement de la partie...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error && !gameState) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
+        <Card className="bg-slate-900 border-red-500/30 max-w-md w-full">
+          <CardContent className="pt-6 text-center">
+            <p className="text-red-400 mb-4">{error}</p>
+            <Button onClick={() => router.push("/")} variant="outline">
+              Retour
+            </Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (!gameState) return null;
+
+  const temp = getTemperature(distance);
+  const TempIcon = temp.icon;
+  const progressPercent =
+    ((gameState.currentStep - 1) / gameState.totalSteps) * 100;
+
+  return (
+    <div className="min-h-screen bg-slate-950 text-white pb-32">
+      {/* Step success overlay */}
+      {stepSuccess && (
+        <div className="fixed inset-0 z-50 bg-emerald-500/20 backdrop-blur-sm flex items-center justify-center">
+          <div className="text-center animate-bounce">
+            <CheckCircle2 className="h-24 w-24 text-emerald-400 mx-auto mb-4" />
+            <p className="text-2xl font-bold text-emerald-300">
+              Etape validee!
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="bg-slate-900/80 backdrop-blur-sm border-b border-slate-800 sticky top-0 z-40">
+        <div className="max-w-lg mx-auto px-4 py-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="font-bold text-sm text-emerald-400 truncate max-w-[180px]">
+                {gameState.gameTitle}
+              </h1>
+              <p className="text-xs text-slate-400">
+                Etape {gameState.currentStep}/{gameState.totalSteps}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center gap-1.5 text-sm">
+                <Clock className="h-4 w-4 text-slate-400" />
+                <span className="font-mono text-white">
+                  {formatTime(timer.elapsedSeconds)}
+                </span>
+              </div>
+              {gameState.hintsUsed > 0 && (
+                <Badge variant="destructive" className="text-xs">
+                  -{gameState.hintsUsed * 2}min
+                </Badge>
+              )}
+            </div>
+          </div>
+          <Progress value={progressPercent} className="mt-2 h-1.5" />
+        </div>
+      </div>
+
+      <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
+        {/* Map */}
+        <div className="rounded-xl overflow-hidden border border-slate-800">
+          <GameMap
+            playerLat={geo.latitude}
+            playerLon={geo.longitude}
+            targetLat={gameState.approximateTarget?.latitude ?? null}
+            targetLon={gameState.approximateTarget?.longitude ?? null}
+            validationRadius={gameState.validationRadius}
+          />
+        </div>
+
+        {/* Distance indicator */}
+        <Card className="bg-slate-900/80 border-slate-800">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`p-2 rounded-lg bg-slate-800 ${
+                    distance !== null && distance < 100
+                      ? "animate-pulse"
+                      : ""
+                  }`}
+                >
+                  <TempIcon className={`h-6 w-6 ${temp.color}`} />
+                </div>
+                <div>
+                  <p className={`font-bold text-lg ${temp.color}`}>
+                    {temp.label}
+                  </p>
+                  <p className="text-xs text-slate-500">
+                    {distance !== null
+                      ? formatDistance(distance)
+                      : "Localisation en cours..."}
+                  </p>
+                </div>
+              </div>
+              {geo.accuracy && (
+                <Badge variant="outline" className="text-xs text-slate-500">
+                  +-{Math.round(geo.accuracy)}m
+                </Badge>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Current riddle */}
+        {gameState.currentRiddle && (
+          <Card className="bg-slate-900/80 border-slate-800">
+            <CardHeader className="pb-2">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg bg-emerald-500/10">
+                  <MapPin className="h-4 w-4 text-emerald-400" />
+                </div>
+                <CardTitle className="text-base text-emerald-300">
+                  {gameState.currentRiddle.title}
+                </CardTitle>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">
+                {gameState.currentRiddle.text}
+              </p>
+              {gameState.currentRiddle.image && (
+                <img
+                  src={gameState.currentRiddle.image}
+                  alt="Indice visuel"
+                  className="mt-3 rounded-lg w-full max-h-48 object-cover"
+                />
+              )}
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Hints */}
+        {hints.length > 0 && (
+          <Card className="bg-yellow-500/5 border-yellow-500/20">
+            <CardContent className="py-3">
+              <div className="space-y-2">
+                {hints.map((hint, i) => (
+                  <div key={i} className="flex items-start gap-2">
+                    <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
+                    <p className="text-sm text-yellow-200">{hint.text}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* GPS error */}
+        {geo.error && (
+          <Card className="bg-red-500/10 border-red-500/30">
+            <CardContent className="py-3">
+              <p className="text-sm text-red-400">{geo.error}</p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={geo.startTracking}
+              >
+                Reactiver le GPS
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Error message */}
+        {error && (
+          <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2 text-sm text-red-400">
+            {error}
+          </div>
+        )}
+      </div>
+
+      {/* Bottom action bar */}
+      <div className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
+        <div className="max-w-lg mx-auto flex gap-3">
+          {/* Hint button */}
+          <AlertDialog>
+            <AlertDialogTrigger
+              className="inline-flex items-center justify-center rounded-md border border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/10 h-11 px-4 disabled:opacity-50"
+            >
+              {hintLoading ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Lightbulb className="h-5 w-5" />
+              )}
+              <span className="ml-1.5 text-xs">
+                {hints.length}/{gameState.hintsAvailable}
+              </span>
+            </AlertDialogTrigger>
+            <AlertDialogContent className="bg-slate-900 border-slate-700">
+              <AlertDialogHeader>
+                <AlertDialogTitle>Demander un indice?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Chaque indice ajoute une penalite de 2 minutes a votre
+                  temps. Indice {hints.length + 1}/{gameState.hintsAvailable}.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Annuler</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => requestHint(hints.length)}
+                  className="bg-yellow-600 hover:bg-yellow-700"
+                >
+                  Voir l&apos;indice
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+
+          {/* Validate position button */}
+          <Button
+            size="lg"
+            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+            disabled={!geo.latitude || !geo.longitude || validating}
+            onClick={validateStep}
+          >
+            {validating ? (
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            ) : (
+              <MapPin className="h-5 w-5 mr-2" />
+            )}
+            Valider ma position
+          </Button>
+
+          {/* Photo button (if applicable) */}
+          {gameState.currentRiddle?.hasPhotoChallenge && (
+            <Button
+              variant="outline"
+              size="lg"
+              className="border-slate-700"
+            >
+              <Camera className="h-5 w-5" />
+            </Button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
