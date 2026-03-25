@@ -611,19 +611,14 @@ export default function PlayPage() {
 
           {/* Skip step button */}
           <AlertDialog>
-            <AlertDialogTrigger asChild>
-              <Button
-                variant="outline"
-                size="lg"
-                className="border-orange-500/30 text-orange-400 hover:bg-orange-500/10"
-                disabled={skipping}
-              >
-                {skipping ? (
-                  <Loader2 className="h-5 w-5 animate-spin" />
-                ) : (
-                  <SkipForward className="h-5 w-5" />
-                )}
-              </Button>
+            <AlertDialogTrigger
+              className="inline-flex items-center justify-center rounded-md border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 h-11 px-4 disabled:opacity-50"
+            >
+              {skipping ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <SkipForward className="h-5 w-5" />
+              )}
             </AlertDialogTrigger>
             <AlertDialogContent className="bg-slate-900 border-red-500/30">
               <AlertDialogHeader>
