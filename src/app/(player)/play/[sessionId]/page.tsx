@@ -38,6 +38,8 @@ import {
   Snowflake,
   Thermometer,
   SkipForward,
+  BookOpen,
+  Send,
 } from "lucide-react";
 import { NavigationGuide } from "@/components/player/NavigationGuide";
 import dynamic from "next/dynamic";
@@ -80,6 +82,11 @@ export default function PlayPage() {
   const [skipping, setSkipping] = useState(false);
   const [videoWatched, setVideoWatched] = useState(false);
   const [anecdote, setAnecdote] = useState<{ title: string; text: string } | null>(null);
+  const [notebook, setNotebook] = useState<Record<number, string>>({});
+  const [notebookInput, setNotebookInput] = useState("");
+  const [showNotebook, setShowNotebook] = useState(false);
+  const [showFinalCode, setShowFinalCode] = useState(false);
+  const [finalCodeInput, setFinalCodeInput] = useState("");
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -198,9 +205,13 @@ export default function PlayPage() {
   };
 
   const dismissSkip = () => {
+    // Auto-save the skip answer to notebook
+    if (skipAnswer && gameState) {
+      setNotebook((prev) => ({ ...prev, [gameState.currentStep]: skipAnswer }));
+    }
     setSkipAnswer(null);
     if (skipCompleted) {
-      router.push(`/results/${sessionId}`);
+      setShowFinalCode(true);
     } else {
       fetchGameState();
     }
@@ -407,23 +418,50 @@ export default function PlayPage() {
               </Card>
             )}
 
+            {/* Notebook input - note your answer */}
+            <Card className="bg-slate-900/95 border-emerald-800/50">
+              <CardContent className="pt-4 pb-3">
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-lg">📝</span>
+                  <p className="text-sm font-medium text-emerald-400">Notez votre reponse</p>
+                </div>
+                <p className="text-xs text-slate-500 mb-2">
+                  Ce chiffre/mot fera partie du code final a la fin du jeu.
+                </p>
+                <input
+                  type="text"
+                  value={notebookInput}
+                  onChange={(e) => setNotebookInput(e.target.value)}
+                  placeholder="Votre reponse pour cette etape..."
+                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-center text-lg font-mono focus:border-emerald-500 focus:outline-none"
+                  autoFocus
+                />
+              </CardContent>
+            </Card>
+
             {/* Continue button */}
             <Button
               size="lg"
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
               onClick={() => {
+                // Save notebook entry
+                if (notebookInput.trim()) {
+                  setNotebook((prev) => ({ ...prev, [gameState.currentStep]: notebookInput.trim() }));
+                }
+                setNotebookInput("");
                 setStepSuccess(false);
                 setAnecdote(null);
-                const isCompleted = gameState?.status === "completed";
-                if (isCompleted) {
-                  router.push(`/results/${sessionId}`);
+
+                const isLastStep = gameState.currentStep >= gameState.totalSteps;
+                if (isLastStep) {
+                  setShowFinalCode(true);
                 } else {
                   fetchGameState();
                 }
               }}
             >
-              {gameState?.currentStep === gameState?.totalSteps
-                ? "Voir mes resultats"
+              {gameState.currentStep >= gameState.totalSteps
+                ? "Entrer le code final"
                 : "Etape suivante"
               }
             </Button>
@@ -468,18 +506,27 @@ export default function PlayPage() {
                 Etape {gameState.currentStep}/{gameState.totalSteps}
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              {/* Notebook toggle */}
+              <button
+                onClick={() => setShowNotebook(!showNotebook)}
+                className={`relative p-1.5 rounded-lg transition-colors ${
+                  showNotebook ? "bg-emerald-500/20 text-emerald-400" : "text-slate-400 hover:text-slate-200"
+                }`}
+              >
+                <BookOpen className="h-4 w-4" />
+                {Object.keys(notebook).length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold">
+                    {Object.keys(notebook).length}
+                  </span>
+                )}
+              </button>
               <div className="flex items-center gap-1.5 text-sm">
                 <Clock className="h-4 w-4 text-slate-400" />
                 <span className="font-mono text-white">
                   {formatTime(timer.elapsedSeconds)}
                 </span>
               </div>
-              {gameState.hintsUsed > 0 && (
-                <Badge variant="destructive" className="text-xs">
-                  -{gameState.hintsUsed * 2}min
-                </Badge>
-              )}
             </div>
           </div>
           <Progress value={progressPercent} className="mt-2 h-1.5" />
@@ -576,6 +623,128 @@ export default function PlayPage() {
           </div>
         )}
       </div>
+
+      {/* Notebook panel (slide down) */}
+      {showNotebook && (
+        <div className="fixed top-[60px] left-0 right-0 z-[1000] bg-slate-900 border-b border-emerald-800/30 shadow-2xl">
+          <div className="max-w-lg mx-auto px-4 py-3">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <BookOpen className="h-4 w-4 text-emerald-400" />
+                <span className="text-sm font-medium text-emerald-400">Mon carnet</span>
+              </div>
+              <button onClick={() => setShowNotebook(false)} className="text-slate-500 text-xs hover:text-white">
+                Fermer
+              </button>
+            </div>
+            {Object.keys(notebook).length === 0 ? (
+              <p className="text-xs text-slate-500 text-center py-2">
+                Vos reponses apparaitront ici au fur et a mesure.
+              </p>
+            ) : (
+              <div className="space-y-1.5">
+                {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step) => (
+                  <div
+                    key={step}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
+                      notebook[step]
+                        ? "bg-emerald-500/10 border border-emerald-800/30"
+                        : "bg-slate-800/50 border border-slate-800"
+                    }`}
+                  >
+                    <span className="text-xs text-slate-500 w-16 shrink-0">Etape {step}</span>
+                    {notebook[step] ? (
+                      <span className="font-mono font-bold text-emerald-400">{notebook[step]}</span>
+                    ) : (
+                      <span className="text-slate-600 italic text-xs">
+                        {step < gameState.currentStep ? "Non note" : step === gameState.currentStep ? "En cours..." : "A venir"}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Final code screen */}
+      {showFinalCode && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur flex items-center justify-center p-4 overflow-y-auto">
+          <div className="max-w-md w-full space-y-4">
+            <div className="text-center">
+              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 mb-3">
+                <Trophy className="h-10 w-10 text-emerald-400" />
+              </div>
+              <h2 className="text-2xl font-bold text-emerald-400">Code Final</h2>
+              <p className="text-sm text-slate-400 mt-1">
+                Assemblez toutes vos reponses pour former le code secret !
+              </p>
+            </div>
+
+            {/* Notebook recap */}
+            <Card className="bg-slate-900/95 border-slate-800">
+              <CardContent className="pt-4">
+                <p className="text-xs text-slate-500 mb-2">Vos reponses :</p>
+                <div className="space-y-1">
+                  {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step) => (
+                    <div key={step} className="flex items-center gap-2 text-sm">
+                      <span className="text-slate-500 w-16 shrink-0">Etape {step}</span>
+                      <span className="font-mono font-bold text-emerald-400">
+                        {notebook[step] || "???"}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Final code input */}
+            <Card className="bg-slate-900/95 border-emerald-500/30">
+              <CardContent className="pt-4">
+                <p className="text-sm text-slate-300 mb-3 text-center">
+                  Entrez le code final :
+                </p>
+                <input
+                  type="text"
+                  value={finalCodeInput}
+                  onChange={(e) => setFinalCodeInput(e.target.value)}
+                  placeholder="Votre code..."
+                  className="w-full px-4 py-3 bg-slate-800 border-2 border-emerald-700/50 rounded-xl text-white text-center text-2xl font-mono font-bold tracking-wider focus:border-emerald-500 focus:outline-none placeholder-slate-600"
+                  autoFocus
+                />
+              </CardContent>
+            </Card>
+
+            <div className="flex gap-3">
+              <Button
+                variant="outline"
+                size="lg"
+                className="flex-1 border-slate-700"
+                onClick={() => {
+                  setShowFinalCode(false);
+                  router.push(`/results/${sessionId}`);
+                }}
+              >
+                Terminer sans code
+              </Button>
+              <Button
+                size="lg"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                onClick={() => {
+                  // Store the final code attempt, then go to results
+                  setShowFinalCode(false);
+                  router.push(`/results/${sessionId}`);
+                }}
+                disabled={!finalCodeInput.trim()}
+              >
+                <Send className="h-4 w-4 mr-2" />
+                Valider
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Bottom action bar */}
       <div className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
