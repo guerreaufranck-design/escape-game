@@ -41,7 +41,7 @@ export async function POST(
     // Fetch all step completions
     const { data: completions } = await supabase
       .from("step_completions")
-      .select("*, game_steps(title, bonus_time_seconds)")
+      .select("*, game_steps(title, bonus_time_seconds, answer_text, anecdote)")
       .eq("session_id", sessionId)
       .order("step_order", { ascending: true });
 
@@ -91,16 +91,20 @@ export async function POST(
       .select("*", { count: "exact", head: true })
       .eq("game_id", session.game_id);
 
-    // Build step details
+    // Build step details with answers and anecdotes
     const steps = (completions || []).map((c) => {
       const stepData = c.game_steps as unknown as {
         title: string;
+        answer_text: unknown;
+        anecdote: unknown;
       } | null;
       return {
         title: t(stepData?.title, locale) || `Étape ${c.step_order}`,
         timeSeconds: c.time_seconds ?? 0,
         hintsUsed: c.hints_used,
         penaltySeconds: c.penalty_seconds,
+        answer: stepData?.answer_text ? t(stepData.answer_text, locale) : null,
+        anecdote: stepData?.anecdote ? t(stepData.anecdote, locale) : null,
       };
     });
 

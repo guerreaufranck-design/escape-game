@@ -212,33 +212,59 @@ export default function ResultsPage() {
           </div>
         )}
 
-        {/* Step breakdown */}
+        {/* Step breakdown with corrections */}
         <Card className="bg-slate-900/80 border-slate-800">
           <CardHeader>
-            <CardTitle className="text-base">Detail des etapes</CardTitle>
+            <CardTitle className="text-base">Correction etape par etape</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-4">
             {results.steps.map((step, i) => (
               <div key={i}>
-                {i > 0 && <Separator className="mb-3 bg-slate-800" />}
-                <div className="flex items-center justify-between">
+                {i > 0 && <Separator className="mb-4 bg-slate-800" />}
+                {/* Step header */}
+                <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-3">
-                    <div className="w-6 h-6 rounded-full bg-emerald-500/20 flex items-center justify-center text-xs font-bold text-emerald-400">
+                    <div className="w-7 h-7 rounded-full bg-emerald-500/20 flex items-center justify-center text-xs font-bold text-emerald-400">
                       {i + 1}
                     </div>
-                    <div>
-                      <p className="text-sm font-medium">{step.title}</p>
-                      {step.hintsUsed > 0 && (
-                        <p className="text-xs text-yellow-500">
-                          {step.hintsUsed} indice{step.hintsUsed > 1 ? "s" : ""}
-                        </p>
-                      )}
-                    </div>
+                    <p className="text-sm font-medium">{step.title}</p>
                   </div>
-                  <span className="text-sm font-mono text-slate-400">
+                  <span className="text-xs font-mono text-slate-500">
                     {formatTime(step.timeSeconds)}
                   </span>
                 </div>
+
+                {/* Answer */}
+                {step.answer && (
+                  <div className="ml-10 mb-2 px-3 py-2 bg-emerald-500/10 border border-emerald-800/30 rounded-lg">
+                    <p className="text-xs text-emerald-500 mb-0.5">Reponse :</p>
+                    <p className="text-sm font-bold text-emerald-300 font-mono">{step.answer}</p>
+                  </div>
+                )}
+
+                {/* Anecdote */}
+                {step.anecdote && (
+                  <div className="ml-10 px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg">
+                    <p className="text-xs text-slate-500 mb-0.5">Le saviez-vous ?</p>
+                    <p className="text-xs text-slate-400 leading-relaxed">{step.anecdote}</p>
+                  </div>
+                )}
+
+                {/* Hints/penalty info */}
+                {(step.hintsUsed > 0 || step.penaltySeconds > 0) && (
+                  <div className="ml-10 mt-1.5 flex gap-3 text-xs">
+                    {step.hintsUsed > 0 && (
+                      <span className="text-yellow-500">
+                        {step.hintsUsed} indice{step.hintsUsed > 1 ? "s" : ""}
+                      </span>
+                    )}
+                    {step.penaltySeconds > 0 && (
+                      <span className="text-red-400">
+                        +{formatTime(step.penaltySeconds)} penalite
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
           </CardContent>

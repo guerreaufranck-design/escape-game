@@ -61,5 +61,7 @@ export interface GameResults {
     timeSeconds: number;
     hintsUsed: number;
     penaltySeconds: number;
+    answer: string | null;
+    anecdote: string | null;
   }[];
 }
