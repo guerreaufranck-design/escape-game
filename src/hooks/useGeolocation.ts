@@ -74,7 +74,11 @@ export function useGeolocation(autoStart = false) {
       return;
     }
 
-    if (watchIdRef.current !== null) return;
+    // Clear any existing watch before restarting
+    if (watchIdRef.current !== null) {
+      navigator.geolocation.clearWatch(watchIdRef.current);
+      watchIdRef.current = null;
+    }
 
     watchIdRef.current = navigator.geolocation.watchPosition(
       handleSuccess,

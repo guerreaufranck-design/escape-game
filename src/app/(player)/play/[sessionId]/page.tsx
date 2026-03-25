@@ -751,40 +751,25 @@ export default function PlayPage() {
       <div className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
         <div className="max-w-lg mx-auto flex gap-3">
           {/* Hint button */}
-          <AlertDialog>
-            <AlertDialogTrigger
-              className="inline-flex items-center justify-center rounded-md border border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/10 h-11 px-4 disabled:opacity-50"
-            >
-              {hintLoading ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <Lightbulb className="h-5 w-5" />
-              )}
-              <span className="ml-1.5 text-xs">
-                {hints.length}/{gameState.hintsAvailable}
-              </span>
-            </AlertDialogTrigger>
-            <AlertDialogContent className="bg-slate-900 border-slate-700">
-              <AlertDialogHeader>
-                <AlertDialogTitle>Demander un indice?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  {hints.length < 3
-                    ? `Penalite : +2 minutes. Indice ${hints.length + 1}/${gameState.hintsAvailable}.`
-                    : `Indice supplementaire : +10 minutes de penalite ! Indice ${hints.length + 1}/${gameState.hintsAvailable}.`
-                  }
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Annuler</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={() => requestHint(hints.length)}
-                  className={hints.length < 3 ? "bg-yellow-600 hover:bg-yellow-700" : "bg-orange-600 hover:bg-orange-700"}
-                >
-                  {hints.length < 3 ? "Voir l'indice (-2 min)" : "Voir l'indice (-10 min)"}
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <button
+            className="inline-flex items-center justify-center rounded-md border border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/10 h-11 px-4 disabled:opacity-50"
+            disabled={hintLoading || hints.length >= gameState.hintsAvailable}
+            onClick={() => {
+              const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
+              if (confirm(`Demander l'indice ${hints.length + 1}/${gameState.hintsAvailable} ?\n\nPenalite : +${penalty}`)) {
+                requestHint(hints.length);
+              }
+            }}
+          >
+            {hintLoading ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Lightbulb className="h-5 w-5" />
+            )}
+            <span className="ml-1.5 text-xs">
+              {hints.length}/{gameState.hintsAvailable}
+            </span>
+          </button>
 
           {/* Validate position button */}
           <Button
