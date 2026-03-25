@@ -174,6 +174,7 @@ export default function PlayPage() {
   };
 
   // Skip step
+  const [skipCompleted, setSkipCompleted] = useState(false);
   const skipStep = async () => {
     if (!gameState) return;
     setSkipping(true);
@@ -186,21 +187,24 @@ export default function PlayPage() {
       const data = await res.json();
       if (data.success) {
         setSkipAnswer(data.answer || "Reponse non disponible");
+        setSkipCompleted(!!data.completed);
         setHints([]);
-        setTimeout(() => {
-          setSkipAnswer(null);
-          if (data.completed) {
-            router.push(`/results/${sessionId}`);
-          } else {
-            fetchGameState();
-          }
-        }, 5000);
       }
     } catch {
       setError("Erreur lors du passage de l'etape");
     } finally {
       setSkipping(false);
     }
+  };
+
+  const dismissSkip = () => {
+    setSkipAnswer(null);
+    if (skipCompleted) {
+      router.push(`/results/${sessionId}`);
+    } else {
+      fetchGameState();
+    }
+    setSkipCompleted(false);
   };
 
   // Temperature indicator
@@ -429,18 +433,26 @@ export default function PlayPage() {
 
       {/* Skip answer overlay */}
       {skipAnswer && (
-        <div className="fixed inset-0 z-50 bg-orange-500/10 backdrop-blur-sm flex items-center justify-center p-4">
-          <Card className="bg-slate-900 border-orange-500/30 max-w-sm w-full">
-            <CardContent className="pt-6 text-center space-y-3">
-              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-500/10">
-                <Trophy className="h-8 w-8 text-orange-400" />
-              </div>
-              <p className="text-sm text-orange-300">Etape passee (+45 min de penalite)</p>
-              <p className="text-lg font-bold text-white">La reponse etait :</p>
-              <p className="text-2xl font-bold text-orange-400">{skipAnswer}</p>
-              <p className="text-xs text-slate-500">Passage a l&apos;etape suivante...</p>
-            </CardContent>
-          </Card>
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="max-w-sm w-full space-y-4">
+            <Card className="bg-slate-900 border-orange-500/30">
+              <CardContent className="pt-6 text-center space-y-3">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-500/10">
+                  <Trophy className="h-8 w-8 text-orange-400" />
+                </div>
+                <p className="text-sm text-orange-300">Etape passee (+45 min de penalite)</p>
+                <p className="text-lg font-bold text-white">La reponse etait :</p>
+                <p className="text-2xl font-bold text-orange-400">{skipAnswer}</p>
+              </CardContent>
+            </Card>
+            <Button
+              size="lg"
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold h-12 rounded-xl"
+              onClick={dismissSkip}
+            >
+              Etape suivante
+            </Button>
+          </div>
         </div>
       )}
 
@@ -631,37 +643,21 @@ export default function PlayPage() {
           )}
 
           {/* Skip step button */}
-          <AlertDialog>
-            <AlertDialogTrigger
-              className="inline-flex items-center justify-center rounded-md border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 h-11 px-4 disabled:opacity-50"
-            >
-              {skipping ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
-              ) : (
-                <SkipForward className="h-5 w-5" />
-              )}
-            </AlertDialogTrigger>
-            <AlertDialogContent className="bg-slate-900 border-red-500/30">
-              <AlertDialogHeader>
-                <AlertDialogTitle className="text-orange-400">
-                  Passer cette etape?
-                </AlertDialogTitle>
-                <AlertDialogDescription>
-                  Vous serez penalise de <span className="text-orange-400 font-bold">45 minutes</span> sur votre temps final.
-                  La reponse vous sera revelee et vous passerez a l&apos;etape suivante.
-                </AlertDialogDescription>
-              </AlertDialogHeader>
-              <AlertDialogFooter>
-                <AlertDialogCancel>Annuler</AlertDialogCancel>
-                <AlertDialogAction
-                  onClick={skipStep}
-                  className="bg-orange-600 hover:bg-orange-700"
-                >
-                  Passer (-45 min)
-                </AlertDialogAction>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialog>
+          <button
+            className="inline-flex items-center justify-center rounded-md border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 h-11 px-4 disabled:opacity-50"
+            disabled={skipping}
+            onClick={() => {
+              if (confirm("Passer cette etape ?\n\nVous serez penalise de 45 minutes sur votre temps final.\nLa reponse vous sera revelee.")) {
+                skipStep();
+              }
+            }}
+          >
+            {skipping ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <SkipForward className="h-5 w-5" />
+            )}
+          </button>
         </div>
       </div>
     </div>
