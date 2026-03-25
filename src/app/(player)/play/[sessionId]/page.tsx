@@ -87,6 +87,8 @@ export default function PlayPage() {
   const [showNotebook, setShowNotebook] = useState(false);
   const [showFinalCode, setShowFinalCode] = useState(false);
   const [finalCodeInput, setFinalCodeInput] = useState("");
+  const [codeResult, setCodeResult] = useState<{ valid: boolean; message: string } | null>(null);
+  const [validatingCode, setValidatingCode] = useState(false);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -701,48 +703,88 @@ export default function PlayPage() {
             </Card>
 
             {/* Final code input */}
-            <Card className="bg-slate-900/95 border-emerald-500/30">
+            <Card className={`bg-slate-900/95 ${codeResult?.valid ? 'border-emerald-500' : 'border-emerald-500/30'}`}>
               <CardContent className="pt-4">
-                <p className="text-sm text-slate-300 mb-3 text-center">
-                  Entrez le code final :
+                <p className="text-sm text-slate-300 mb-2 text-center">
+                  Assemblez vos reponses separees par des tirets :
+                </p>
+                <p className="text-xs text-slate-500 mb-3 text-center font-mono">
+                  ex: {Array.from({ length: gameState.totalSteps }, (_, i) => notebook[i + 1] || "?").join("-")}
                 </p>
                 <input
                   type="text"
                   value={finalCodeInput}
-                  onChange={(e) => setFinalCodeInput(e.target.value)}
-                  placeholder="Votre code..."
-                  className="w-full px-4 py-3 bg-slate-800 border-2 border-emerald-700/50 rounded-xl text-white text-center text-2xl font-mono font-bold tracking-wider focus:border-emerald-500 focus:outline-none placeholder-slate-600"
+                  onChange={(e) => { setFinalCodeInput(e.target.value); setCodeResult(null); }}
+                  placeholder="1990-3-1934-428-4-1502"
+                  className={`w-full px-4 py-3 bg-slate-800 border-2 rounded-xl text-white text-center text-xl font-mono font-bold tracking-wider focus:outline-none placeholder-slate-600 ${
+                    codeResult === null ? 'border-emerald-700/50 focus:border-emerald-500' :
+                    codeResult.valid ? 'border-emerald-500' : 'border-red-500'
+                  }`}
                   autoFocus
                 />
+                {codeResult && (
+                  <p className={`text-sm text-center mt-2 font-medium ${codeResult.valid ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {codeResult.message}
+                  </p>
+                )}
               </CardContent>
             </Card>
 
-            <div className="flex gap-3">
+            {codeResult?.valid ? (
               <Button
-                variant="outline"
                 size="lg"
-                className="flex-1 border-slate-700"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
                 onClick={() => {
                   setShowFinalCode(false);
                   router.push(`/results/${sessionId}`);
                 }}
               >
-                Terminer sans code
+                <Trophy className="h-5 w-5 mr-2" />
+                Voir mes resultats !
               </Button>
-              <Button
-                size="lg"
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                onClick={() => {
-                  // Store the final code attempt, then go to results
-                  setShowFinalCode(false);
-                  router.push(`/results/${sessionId}`);
-                }}
-                disabled={!finalCodeInput.trim()}
-              >
-                <Send className="h-4 w-4 mr-2" />
-                Valider
-              </Button>
-            </div>
+            ) : (
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  size="lg"
+                  className="flex-1 border-slate-700"
+                  onClick={() => {
+                    setShowFinalCode(false);
+                    router.push(`/results/${sessionId}`);
+                  }}
+                >
+                  Passer
+                </Button>
+                <Button
+                  size="lg"
+                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                  disabled={!finalCodeInput.trim() || validatingCode}
+                  onClick={async () => {
+                    setValidatingCode(true);
+                    try {
+                      const res = await fetch(`/api/game/${sessionId}/validate-code?lang=${locale}`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ code: finalCodeInput.trim() }),
+                      });
+                      const data = await res.json();
+                      setCodeResult({ valid: data.valid, message: data.message });
+                    } catch {
+                      setCodeResult({ valid: false, message: "Erreur de verification" });
+                    } finally {
+                      setValidatingCode(false);
+                    }
+                  }}
+                >
+                  {validatingCode ? (
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  ) : (
+                    <Send className="h-4 w-4 mr-2" />
+                  )}
+                  Verifier
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       )}
