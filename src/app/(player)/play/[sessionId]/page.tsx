@@ -42,6 +42,7 @@ import {
   Send,
 } from "lucide-react";
 import { NavigationGuide } from "@/components/player/NavigationGuide";
+import { Tutorial } from "@/components/player/Tutorial";
 import dynamic from "next/dynamic";
 
 const GameMap = dynamic(
@@ -81,6 +82,7 @@ export default function PlayPage() {
   const [skipAnswer, setSkipAnswer] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [videoWatched, setVideoWatched] = useState(false);
+  const [tutorialDone, setTutorialDone] = useState(false);
   const [anecdote, setAnecdote] = useState<{ title: string; text: string } | null>(null);
   const [notebook, setNotebook] = useState<Record<number, string>>({});
   const [notebookInput, setNotebookInput] = useState("");
@@ -257,6 +259,18 @@ export default function PlayPage() {
   }
 
   if (!gameState) return null;
+
+  // Tutorial screen (before everything else)
+  if (!tutorialDone && gameState.currentStep === 1 && gameState.completedSteps.length === 0) {
+    return (
+      <Tutorial
+        locale={locale}
+        gameTitle={gameState.gameTitle}
+        totalSteps={gameState.totalSteps}
+        onComplete={() => setTutorialDone(true)}
+      />
+    );
+  }
 
   // Video intro screen (before briefing)
   if (!videoWatched && gameState.introVideoUrl && gameState.currentStep === 1 && gameState.completedSteps.length === 0) {
