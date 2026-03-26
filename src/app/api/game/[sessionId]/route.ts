@@ -32,6 +32,7 @@ export async function GET(
       title: string;
       description: string | null;
       intro_videos: Record<string, string> | null;
+      estimated_duration_min: number | null;
       max_hints_per_step: number;
     };
 
@@ -114,6 +115,7 @@ export async function GET(
       gameTitle: t(game.title, locale),
       gameDescription: t(game.description, locale),
       introVideoUrl,
+      estimatedDuration: game.estimated_duration_min ? `${Math.floor(game.estimated_duration_min / 60)}h${String(game.estimated_duration_min % 60).padStart(2, "0")}` : null,
       currentStep: session.current_step,
       totalSteps: session.total_steps,
       status: session.status,

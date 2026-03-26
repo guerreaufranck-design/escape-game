@@ -13,12 +13,15 @@ import {
   Shield,
   ChevronRight,
   ChevronLeft,
+  Clock,
+  AlertTriangle,
 } from "lucide-react";
 
 interface TutorialProps {
   locale: Locale;
   gameTitle: string;
   totalSteps: number;
+  estimatedDuration?: string;
   onComplete: () => void;
 }
 
@@ -29,7 +32,25 @@ type Slide = {
   color: string;
 };
 
-const slides: Slide[] = [
+const getSlides = (estimatedDuration?: string): Slide[] => [
+  {
+    icon: <Clock className="h-10 w-10" />,
+    color: "text-emerald-400",
+    title: {
+      fr: "Avant de commencer",
+      en: "Before you start",
+      de: "Bevor Sie beginnen",
+      es: "Antes de empezar",
+      it: "Prima di iniziare",
+    },
+    text: {
+      fr: `Duree estimee : ${estimatedDuration || "1h30 a 2h"}. Ce parcours se fait entierement a pied en exterieur. Attention : le parcours n'est pas adapte aux poussettes. Les enfants en bas age devront etre portes. Prevoyez de l'eau, de la creme solaire et de bonnes chaussures !`,
+      en: `Estimated duration: ${estimatedDuration || "1h30 to 2h"}. This route is entirely on foot outdoors. Warning: the route is not suitable for strollers. Young children will need to be carried. Bring water, sunscreen and good shoes!`,
+      de: `Geschatzte Dauer: ${estimatedDuration || "1h30 bis 2h"}. Diese Route findet komplett zu Fuss im Freien statt. Achtung: Die Strecke ist nicht fur Kinderwagen geeignet. Kleinkinder mussen getragen werden. Bringen Sie Wasser, Sonnencreme und gute Schuhe mit!`,
+      es: `Duracion estimada: ${estimatedDuration || "1h30 a 2h"}. Este recorrido es totalmente a pie al aire libre. Atencion: el recorrido no es apto para cochecitos de bebe. Los ninos pequenos tendran que ir en brazos. Lleva agua, proteccion solar y buen calzado!`,
+      it: `Durata stimata: ${estimatedDuration || "1h30 a 2h"}. Questo percorso e interamente a piedi all'aperto. Attenzione: il percorso non e adatto ai passeggini. I bambini piccoli dovranno essere portati in braccio. Portate acqua, crema solare e buone scarpe!`,
+    },
+  },
   {
     icon: <MapPin className="h-10 w-10" />,
     color: "text-emerald-400",
@@ -131,17 +152,18 @@ const slides: Slide[] = [
       it: "Consigli di sicurezza",
     },
     text: {
-      fr: "Prevoyez de l'eau en quantite suffisante, de la creme solaire et un chapeau. Portez de bonnes chaussures de marche. Restez sur les sentiers balises. En cas d'urgence, composez le 112. Amusez-vous en toute securite !",
-      en: "Bring plenty of water, sunscreen and a hat. Wear good walking shoes. Stay on marked trails. In case of emergency, call 112. Have fun safely!",
-      de: "Bringen Sie ausreichend Wasser, Sonnencreme und einen Hut mit. Tragen Sie gute Wanderschuhe. Bleiben Sie auf markierten Wegen. Im Notfall rufen Sie 112 an. Viel Spass und bleiben Sie sicher!",
-      es: "Lleva suficiente agua, proteccion solar y sombrero. Usa calzado comodo para caminar. No abandones los senderos senalizados. En caso de emergencia, llama al 112. Diviertete con seguridad!",
-      it: "Portate acqua a sufficienza, crema solare e cappello. Indossate buone scarpe da camminata. Restate sui sentieri segnalati. In caso di emergenza, chiamate il 112. Divertitevi in sicurezza!",
+      fr: "Restez sur les sentiers balises et soyez attentifs a la circulation. Ne traversez jamais en dehors des passages pietons. En cas d'urgence, composez le 112. Amusez-vous en toute securite !",
+      en: "Stay on marked trails and watch for traffic. Never cross outside pedestrian crossings. In case of emergency, call 112. Have fun safely!",
+      de: "Bleiben Sie auf markierten Wegen und achten Sie auf den Verkehr. Uberqueren Sie nie ausserhalb von Fusgangeruberwegen. Im Notfall rufen Sie 112 an. Viel Spass und bleiben Sie sicher!",
+      es: "No abandones los senderos senalizados y presta atencion al trafico. Nunca cruces fuera de los pasos de peatones. En caso de emergencia, llama al 112. Diviertete con seguridad!",
+      it: "Restate sui sentieri segnalati e fate attenzione al traffico. Non attraversate mai fuori dalle strisce pedonali. In caso di emergenza, chiamate il 112. Divertitevi in sicurezza!",
     },
   },
 ];
 
-export function Tutorial({ locale, gameTitle, totalSteps, onComplete }: TutorialProps) {
+export function Tutorial({ locale, gameTitle, totalSteps, estimatedDuration, onComplete }: TutorialProps) {
   const [currentSlide, setCurrentSlide] = useState(0);
+  const slides = getSlides(estimatedDuration);
   const slide = slides[currentSlide];
   const isLast = currentSlide === slides.length - 1;
 

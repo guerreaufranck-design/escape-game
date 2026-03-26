@@ -267,6 +267,7 @@ export default function PlayPage() {
         locale={locale}
         gameTitle={gameState.gameTitle}
         totalSteps={gameState.totalSteps}
+        estimatedDuration={gameState.estimatedDuration ?? undefined}
         onComplete={() => setTutorialDone(true)}
       />
     );
