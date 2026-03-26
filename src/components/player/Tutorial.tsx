@@ -44,11 +44,11 @@ const getSlides = (estimatedDuration?: string): Slide[] => [
       it: "Prima di iniziare",
     },
     text: {
-      fr: `Duree estimee : ${estimatedDuration || "1h30 a 2h"}. Ce parcours se fait entierement a pied en exterieur. Attention : le parcours n'est pas adapte aux poussettes. Les enfants en bas age devront etre portes. Prevoyez de l'eau, de la creme solaire et de bonnes chaussures !`,
-      en: `Estimated duration: ${estimatedDuration || "1h30 to 2h"}. This route is entirely on foot outdoors. Warning: the route is not suitable for strollers. Young children will need to be carried. Bring water, sunscreen and good shoes!`,
-      de: `Geschatzte Dauer: ${estimatedDuration || "1h30 bis 2h"}. Diese Route findet komplett zu Fuss im Freien statt. Achtung: Die Strecke ist nicht fur Kinderwagen geeignet. Kleinkinder mussen getragen werden. Bringen Sie Wasser, Sonnencreme und gute Schuhe mit!`,
-      es: `Duracion estimada: ${estimatedDuration || "1h30 a 2h"}. Este recorrido es totalmente a pie al aire libre. Atencion: el recorrido no es apto para cochecitos de bebe. Los ninos pequenos tendran que ir en brazos. Lleva agua, proteccion solar y buen calzado!`,
-      it: `Durata stimata: ${estimatedDuration || "1h30 a 2h"}. Questo percorso e interamente a piedi all'aperto. Attenzione: il percorso non e adatto ai passeggini. I bambini piccoli dovranno essere portati in braccio. Portate acqua, crema solare e buone scarpe!`,
+      fr: `Duree estimee : ${estimatedDuration || "1h30 a 2h"} (sans compter le temps de retour au point de depart). Ce parcours se fait entierement a pied en exterieur. Attention : le parcours n'est pas adapte aux poussettes. Les enfants en bas age devront etre portes. Prevoyez de l'eau, de la creme solaire et de bonnes chaussures !`,
+      en: `Estimated duration: ${estimatedDuration || "1h30 to 2h"} (not including walk back to the starting point). This route is entirely on foot outdoors. Warning: the route is not suitable for strollers. Young children will need to be carried. Bring water, sunscreen and good shoes!`,
+      de: `Geschatzte Dauer: ${estimatedDuration || "1h30 bis 2h"} (ohne Ruckweg zum Startpunkt). Diese Route findet komplett zu Fuss im Freien statt. Achtung: Die Strecke ist nicht fur Kinderwagen geeignet. Kleinkinder mussen getragen werden. Bringen Sie Wasser, Sonnencreme und gute Schuhe mit!`,
+      es: `Duracion estimada: ${estimatedDuration || "1h30 a 2h"} (sin contar el tiempo de regreso al punto de partida). Este recorrido es totalmente a pie al aire libre. Atencion: el recorrido no es apto para cochecitos de bebe. Los ninos pequenos tendran que ir en brazos. Lleva agua, proteccion solar y buen calzado!`,
+      it: `Durata stimata: ${estimatedDuration || "1h30 a 2h"} (senza contare il ritorno al punto di partenza). Questo percorso e interamente a piedi all'aperto. Attenzione: il percorso non e adatto ai passeggini. I bambini piccoli dovranno essere portati in braccio. Portate acqua, crema solare e buone scarpe!`,
     },
   },
   {
