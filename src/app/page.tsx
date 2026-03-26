@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,20 +24,47 @@ import { useLocale, LocaleSelector } from "@/components/player/LocaleSelector";
 export default function HomePage() {
   const router = useRouter();
   const [locale] = useLocale();
-  const [code, setCode] = useState("");
+  const [parts, setParts] = useState(["", "", ""]);
   const [playerName, setPlayerName] = useState("");
   const [teamName, setTeamName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null]);
 
-  const handleCodeChange = (value: string) => {
-    const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, "");
-    let formatted = "";
-    for (let i = 0; i < Math.min(cleaned.length, 12); i++) {
-      if (i > 0 && i % 4 === 0) formatted += "-";
-      formatted += cleaned[i];
+  const code = parts.join("-");
+
+  const handlePartChange = (index: number, value: string) => {
+    const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+
+    // Handle paste of full code (e.g. TEST-FRNK-2025)
+    const fullPaste = value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+    if (fullPaste.includes("-")) {
+      const pasted = fullPaste.split("-").map(p => p.replace(/[^A-Z0-9]/g, "").slice(0, 4));
+      const newParts = [...parts];
+      for (let i = 0; i < 3; i++) {
+        if (pasted[i]) newParts[i] = pasted[i];
+      }
+      setParts(newParts);
+      setError(null);
+      const lastIdx = Math.min(pasted.filter(p => p.length > 0).length - 1, 2);
+      inputRefs.current[lastIdx]?.focus();
+      return;
     }
-    setCode(formatted);
+
+    const newParts = [...parts];
+    newParts[index] = cleaned;
+    setParts(newParts);
+    setError(null);
+
+    if (cleaned.length === 4 && index < 2) {
+      inputRefs.current[index + 1]?.focus();
+    }
+  };
+
+  const handlePartKeyDown = (index: number, e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Backspace" && parts[index] === "" && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -130,18 +157,30 @@ export default function HomePage() {
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="code" className="text-slate-400 text-sm">
+                <Label htmlFor="code-0" className="text-slate-400 text-sm">
                   Code d&apos;activation
                 </Label>
-                <Input
-                  id="code"
-                  value={code}
-                  onChange={(e) => handleCodeChange(e.target.value)}
-                  placeholder="XXXX-XXXX-XXXX"
-                  className="bg-slate-800 border-slate-700 text-center text-lg font-mono tracking-widest uppercase placeholder:text-slate-600"
-                  maxLength={14}
-                  autoFocus
-                />
+                <div className="flex items-center justify-center gap-2">
+                  {[0, 1, 2].map((i) => (
+                    <div key={i} className="flex items-center gap-2">
+                      <Input
+                        id={`code-${i}`}
+                        ref={(el) => { inputRefs.current[i] = el; }}
+                        value={parts[i]}
+                        onChange={(e) => handlePartChange(i, e.target.value)}
+                        onKeyDown={(e) => handlePartKeyDown(i, e)}
+                        placeholder="XXXX"
+                        className="bg-slate-800 border-slate-700 text-center text-lg font-mono tracking-wider uppercase placeholder:text-slate-600 w-[80px]"
+                        maxLength={4}
+                        autoComplete="off"
+                        spellCheck={false}
+                        autoCapitalize="characters"
+                        autoFocus={i === 0}
+                      />
+                      {i < 2 && <span className="text-lg text-slate-500 font-bold">-</span>}
+                    </div>
+                  ))}
+                </div>
               </div>
 
               <div className="space-y-2">
