@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Lock, Loader2, KeyRound } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -19,26 +19,51 @@ import { useLocale } from "@/components/player/LocaleSelector";
 export function ActivationForm() {
   const router = useRouter();
   const [locale] = useLocale();
-  const [code, setCode] = useState("");
+  const [parts, setParts] = useState(["", "", ""]);
   const [playerName, setPlayerName] = useState("");
   const [teamName, setTeamName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null]);
 
-  function handleCodeChange(value: string) {
-    // Remove anything that isn't alphanumeric or a dash
-    let cleaned = value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+  const code = parts.join("-");
 
-    // Auto-insert dashes at positions 4 and 9
-    const digits = cleaned.replace(/-/g, "");
-    let formatted = "";
-    for (let i = 0; i < Math.min(digits.length, 12); i++) {
-      if (i === 4 || i === 8) formatted += "-";
-      formatted += digits[i];
+  function handlePartChange(index: number, value: string) {
+    // Allow alphanumeric only, uppercase
+    const cleaned = value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+
+    // Handle paste of full code (e.g. TEST-FRNK-2025)
+    const fullPaste = value.toUpperCase().replace(/[^A-Z0-9-]/g, "");
+    if (fullPaste.includes("-")) {
+      const pasted = fullPaste.split("-").map(p => p.slice(0, 4));
+      const newParts = [...parts];
+      for (let i = 0; i < 3; i++) {
+        if (pasted[i]) newParts[i] = pasted[i];
+      }
+      setParts(newParts);
+      setError(null);
+      // Focus last filled field
+      const lastIdx = Math.min(pasted.filter(p => p.length > 0).length - 1, 2);
+      inputRefs.current[lastIdx]?.focus();
+      return;
     }
 
-    setCode(formatted);
+    const newParts = [...parts];
+    newParts[index] = cleaned;
+    setParts(newParts);
     setError(null);
+
+    // Auto-advance to next field when 4 chars typed
+    if (cleaned.length === 4 && index < 2) {
+      inputRefs.current[index + 1]?.focus();
+    }
+  }
+
+  function handlePartKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    // Backspace on empty field goes to previous
+    if (e.key === "Backspace" && parts[index] === "" && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -101,21 +126,29 @@ export function ActivationForm() {
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-5">
           <div className="space-y-2">
-            <Label htmlFor="code" className="text-emerald-200">
+            <Label htmlFor="code-0" className="text-emerald-200">
               Code d&apos;activation
             </Label>
-            <div className="relative">
-              <KeyRound className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-emerald-600" />
-              <Input
-                id="code"
-                placeholder="XXXX-XXXX-XXXX"
-                value={code}
-                onChange={(e) => handleCodeChange(e.target.value)}
-                maxLength={14}
-                className="border-emerald-900/50 bg-gray-900/50 pl-10 font-mono text-lg tracking-widest text-emerald-100 placeholder:text-gray-600 focus:border-emerald-500 focus:ring-emerald-500/20"
-                autoComplete="off"
-                spellCheck={false}
-              />
+            <div className="flex items-center gap-2">
+              <KeyRound className="h-4 w-4 shrink-0 text-emerald-600" />
+              {[0, 1, 2].map((i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <Input
+                    id={`code-${i}`}
+                    ref={(el) => { inputRefs.current[i] = el; }}
+                    placeholder="XXXX"
+                    value={parts[i]}
+                    onChange={(e) => handlePartChange(i, e.target.value)}
+                    onKeyDown={(e) => handlePartKeyDown(i, e)}
+                    maxLength={4}
+                    className="w-[72px] border-emerald-900/50 bg-gray-900/50 text-center font-mono text-lg tracking-wider text-emerald-100 placeholder:text-gray-600 focus:border-emerald-500 focus:ring-emerald-500/20"
+                    autoComplete="off"
+                    spellCheck={false}
+                    autoCapitalize="characters"
+                  />
+                  {i < 2 && <span className="text-lg text-emerald-600 font-bold">-</span>}
+                </div>
+              ))}
             </div>
           </div>
 
