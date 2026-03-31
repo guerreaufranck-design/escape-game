@@ -91,6 +91,8 @@ export default function PlayPage() {
   const [finalCodeInput, setFinalCodeInput] = useState("");
   const [codeResult, setCodeResult] = useState<{ valid: boolean; message: string } | null>(null);
   const [validatingCode, setValidatingCode] = useState(false);
+  const [photoValidating, setPhotoValidating] = useState(false);
+  const [photoFeedback, setPhotoFeedback] = useState<string | null>(null);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -182,6 +184,63 @@ export default function PlayPage() {
     } finally {
       setHintLoading(false);
     }
+  };
+
+  // Validate by photo (AI)
+  const validateByPhoto = async () => {
+    if (!gameState) return;
+
+    // Create a file input and trigger it
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.capture = "environment"; // Use rear camera on mobile
+
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      setPhotoValidating(true);
+      setPhotoFeedback(null);
+
+      try {
+        // Convert to base64
+        const reader = new FileReader();
+        const base64 = await new Promise<string>((resolve) => {
+          reader.onload = () => resolve(reader.result as string);
+          reader.readAsDataURL(file);
+        });
+
+        const res = await fetch(`/api/ai/validate-photo?lang=${locale}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            photoBase64: base64,
+            sessionId,
+            stepOrder: gameState.currentStep,
+          }),
+        });
+
+        const data = await res.json();
+
+        if (data.isValid) {
+          setStepSuccess(true);
+          setHints([]);
+          if (data.anecdote) {
+            setAnecdote({ title: "Le saviez-vous ?", text: data.anecdote });
+          }
+          setPhotoFeedback(null);
+        } else {
+          setPhotoFeedback(data.feedback || "Ce n'est pas le bon lieu. Reessayez !");
+        }
+      } catch {
+        setPhotoFeedback("Erreur lors de la validation photo");
+      } finally {
+        setPhotoValidating(false);
+      }
+    };
+
+    input.click();
   };
 
   // Skip step
@@ -633,6 +692,22 @@ export default function PlayPage() {
           </Card>
         )}
 
+        {/* Photo validation feedback */}
+        {photoFeedback && (
+          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-3 text-sm text-blue-300 flex items-start gap-2">
+            <Camera className="h-4 w-4 mt-0.5 shrink-0" />
+            <div>
+              <p>{photoFeedback}</p>
+              <button
+                onClick={() => setPhotoFeedback(null)}
+                className="text-xs text-blue-500 mt-1 hover:underline"
+              >
+                Fermer
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Error message */}
         {error && (
           <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2 text-sm text-red-400">
@@ -840,8 +915,22 @@ export default function PlayPage() {
             ) : (
               <MapPin className="h-5 w-5 mr-2" />
             )}
-            Valider ma position
+            Valider GPS
           </Button>
+
+          {/* Validate by photo (AI) */}
+          <button
+            className="inline-flex items-center justify-center rounded-md border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 h-11 px-4 disabled:opacity-50"
+            disabled={photoValidating}
+            onClick={validateByPhoto}
+            title="Valider par photo"
+          >
+            {photoValidating ? (
+              <Loader2 className="h-5 w-5 animate-spin" />
+            ) : (
+              <Camera className="h-5 w-5" />
+            )}
+          </button>
 
           {/* Skip step button */}
           <button
