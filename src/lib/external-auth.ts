@@ -1,7 +1,9 @@
 import { createHmac, randomBytes } from "crypto";
 import { NextRequest } from "next/server";
 
-const EXTERNAL_API_SECRET = process.env.EXTERNAL_API_SECRET;
+function getApiSecret() {
+  return process.env.EXTERNAL_API_SECRET;
+}
 
 // Charset without ambiguous characters (no 0/O, 1/I/l)
 const CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -21,7 +23,8 @@ export const corsHeaders: Record<string, string> = {
  * against the EXTERNAL_API_SECRET environment variable.
  */
 export function validateApiKey(request: NextRequest): boolean {
-  if (!EXTERNAL_API_SECRET) return false;
+  const secret = getApiSecret();
+  if (!secret) return false;
 
   const authHeader = request.headers.get("authorization");
   if (!authHeader) return false;
@@ -29,7 +32,7 @@ export function validateApiKey(request: NextRequest): boolean {
   const [scheme, token] = authHeader.split(" ");
   if (scheme !== "Bearer" || !token) return false;
 
-  return token === EXTERNAL_API_SECRET;
+  return token === secret;
 }
 
 /**
@@ -57,7 +60,7 @@ export function generateActivationCode(cityPrefix: string): string {
 
   // Compute HMAC-SHA256 of prefix + random
   const payload = prefix + random;
-  const hmac = createHmac("sha256", EXTERNAL_API_SECRET || "fallback")
+  const hmac = createHmac("sha256", getApiSecret() || "fallback")
     .update(payload)
     .digest("hex");
 
