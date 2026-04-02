@@ -63,12 +63,16 @@ export async function GET(
     };
 
     // Translate game title & description
-    console.log(`[game] locale=${locale} title_type=${typeof game.title} title_value=${JSON.stringify(game.title).slice(0, 120)}`);
     let gameTitle = t(game.title, locale);
     let gameDescription = t(game.description, locale);
-    console.log(`[game] resolved gameTitle=${gameTitle.slice(0, 80)}`);
 
-    if (needsTranslation) {
+    // Check if translation is needed:
+    // - non-static locale (e.g. Chinese, Russian) always needs Gemini
+    // - static locale != 'en' also needs Gemini when content is plain English (pipeline-generated games)
+    const isPlainEnglish = typeof game.title === "string" && !String(game.title).startsWith("{");
+    const needsGemini = needsTranslation || (locale !== "en" && isPlainEnglish);
+
+    if (needsGemini) {
       const enTitle = getEnglishBase(game.title);
       const enDesc = getEnglishBase(game.description);
       [gameTitle, gameDescription] = await Promise.all([
@@ -95,7 +99,10 @@ export async function GET(
       if (step) {
         currentStepId = step.id;
 
-        if (needsTranslation) {
+        const stepIsPlainEnglish = typeof step.title === "string" && !String(step.title).startsWith("{");
+        const stepNeedsGemini = needsTranslation || (locale !== "en" && stepIsPlainEnglish);
+
+        if (stepNeedsGemini) {
           // Translate step fields via Gemini + cache
           const enFields: Record<string, string> = {
             title: getEnglishBase(step.title),
@@ -148,7 +155,8 @@ export async function GET(
         const rawTitle = stepTitleMap.get(completion.step_order);
         let title = t(rawTitle, locale) || `Step ${completion.step_order}`;
 
-        if (needsTranslation && rawTitle) {
+        const completedStepIsPlain = typeof rawTitle === "string" && !String(rawTitle).startsWith("{");
+        if ((needsTranslation || (locale !== "en" && completedStepIsPlain)) && rawTitle) {
           const enTitle = getEnglishBase(rawTitle);
           if (enTitle) {
             try {
