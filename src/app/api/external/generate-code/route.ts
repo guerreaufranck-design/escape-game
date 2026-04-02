@@ -14,6 +14,26 @@ export async function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders });
 }
 
+/** Extract plain text from a title that may be a JSONB object or string */
+function extractTitle(title: unknown, lang = "en"): string {
+  if (typeof title === "string") {
+    try {
+      const parsed = JSON.parse(title);
+      if (typeof parsed === "object" && parsed !== null) {
+        return parsed[lang] || parsed.en || parsed.fr || Object.values(parsed)[0] || title;
+      }
+    } catch {
+      // Not JSON, use as-is
+    }
+    return title;
+  }
+  if (typeof title === "object" && title !== null) {
+    const obj = title as Record<string, string>;
+    return obj[lang] || obj.en || obj.fr || Object.values(obj)[0] || "";
+  }
+  return String(title || "");
+}
+
 /**
  * POST /api/external/generate-code
  * Called by oddballtrip.com after a purchase to generate an activation code.
@@ -110,7 +130,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           code: retryCode,
-          gameTitle: game.title,
+          gameTitle: extractTitle(game.title),
           gameCity: game.city,
           activationUrl: `https://escape-game-indol.vercel.app?code=${retryCode}`,
         },
@@ -128,7 +148,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       {
         code,
-        gameTitle: game.title,
+        gameTitle: extractTitle(game.title),
         gameCity: game.city,
         activationUrl: `https://escape-game-indol.vercel.app?code=${code}`,
       },
