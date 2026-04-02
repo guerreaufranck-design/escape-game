@@ -1,14 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { validatePhotoWithAI } from "@/lib/gemini";
+import { calculateScore } from "@/lib/scoring";
+import { t, detectLocale } from "@/lib/i18n";
 
 export async function POST(request: NextRequest) {
   try {
+    const locale = detectLocale(request);
     const body = await request.json();
-    const { photoBase64, sessionId, stepOrder } = body as {
+    const { photoBase64, sessionId, stepOrder, mode } = body as {
       photoBase64?: string;
       sessionId?: string;
       stepOrder?: number;
+      mode?: string; // "location" = GPS fallback, validates the player is at the right place
     };
 
     if (!photoBase64 || typeof photoBase64 !== "string") {
@@ -44,7 +48,7 @@ export async function POST(request: NextRequest) {
     // Recuperer la session
     const { data: session, error: sessionError } = await supabase
       .from("game_sessions")
-      .select("id, game_id, status")
+      .select("*")
       .eq("id", sessionId)
       .single();
 
@@ -65,7 +69,7 @@ export async function POST(request: NextRequest) {
     // Recuperer l'etape avec la description attendue
     const { data: step, error: stepError } = await supabase
       .from("game_steps")
-      .select("id, photo_reference, has_photo_challenge, step_order")
+      .select("*")
       .eq("game_id", session.game_id)
       .eq("step_order", stepOrder)
       .single();
@@ -77,21 +81,119 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!step.has_photo_challenge || !step.photo_reference) {
-      return NextResponse.json(
-        { error: "Cette etape n'a pas de defi photo" },
-        { status: 400 }
-      );
+    // Determine what description to use for validation
+    let referenceDescription: string;
+
+    if (mode === "location") {
+      // GPS fallback mode: use step title as location reference
+      const titleText = typeof step.title === "object" ? (step.title as Record<string, string>).fr || Object.values(step.title as Record<string, string>)[0] : String(step.title);
+      referenceDescription = titleText;
+    } else {
+      // Classic photo challenge mode
+      if (!step.has_photo_challenge || !step.photo_reference) {
+        return NextResponse.json(
+          { error: "Cette etape n'a pas de defi photo" },
+          { status: 400 }
+        );
+      }
+      referenceDescription = step.photo_reference;
     }
 
-    // Valider la photo avec Gemini
-    const result = await validatePhotoWithAI(
-      photoBase64,
-      step.photo_reference
-    );
+    // Strip base64 prefix if present (data:image/jpeg;base64,...)
+    const base64Data = photoBase64.includes(",")
+      ? photoBase64.split(",")[1]
+      : photoBase64;
 
-    // Si confiance > 0.7, marquer l'etape comme validee (photo)
-    if (result.confidence > 0.7 && result.isValid) {
+    // Valider la photo avec Gemini
+    const result = await validatePhotoWithAI(base64Data, referenceDescription);
+
+    if (mode === "location" && result.confidence > 0.6 && result.isValid) {
+      // Photo validates location — treat as step completion (same as GPS validation)
+      const now = new Date().toISOString();
+
+      // Determine step start time
+      const { data: lastCompletion } = await supabase
+        .from("step_completions")
+        .select("completed_at")
+        .eq("session_id", sessionId)
+        .order("completed_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      let stepStartedAt = session.started_at;
+      if (lastCompletion) {
+        stepStartedAt = lastCompletion.completed_at;
+      }
+
+      const timeSeconds = Math.round(
+        (new Date(now).getTime() - new Date(stepStartedAt).getTime()) / 1000
+      );
+
+      // Create step completion
+      await supabase.from("step_completions").insert({
+        session_id: sessionId,
+        step_id: step.id,
+        step_order: stepOrder,
+        started_at: stepStartedAt,
+        completed_at: now,
+        time_seconds: timeSeconds,
+        hints_used: 0,
+        penalty_seconds: 0,
+        photo_validated: true,
+        latitude: step.latitude,
+        longitude: step.longitude,
+        distance_meters: 0,
+      });
+
+      const isLastStep = stepOrder >= session.total_steps;
+
+      if (isLastStep) {
+        const totalTimeSeconds = Math.round(
+          (new Date(now).getTime() - new Date(session.started_at).getTime()) / 1000
+        );
+        const { data: allSteps } = await supabase
+          .from("game_steps")
+          .select("id, bonus_time_seconds")
+          .eq("game_id", session.game_id);
+        const bonusPoints = (allSteps || []).reduce((sum, s) => sum + s.bonus_time_seconds, 0);
+        const finalScore = calculateScore({ totalTimeSeconds, totalPenaltySeconds: session.total_penalty_seconds, bonusPoints });
+
+        await supabase
+          .from("game_sessions")
+          .update({ status: "completed", current_step: stepOrder + 1, completed_at: now, total_time_seconds: totalTimeSeconds, final_score: finalScore })
+          .eq("id", sessionId);
+
+        return NextResponse.json({
+          isValid: true,
+          confidence: result.confidence,
+          feedback: result.feedback,
+          stepValidated: true,
+          completed: true,
+          anecdote: step.anecdote ? t(step.anecdote, locale) : null,
+          stepTitle: t(step.title, locale),
+        });
+      }
+
+      // Advance to next step
+      await supabase
+        .from("game_sessions")
+        .update({ current_step: stepOrder + 1 })
+        .eq("id", sessionId);
+
+      return NextResponse.json({
+        isValid: true,
+        confidence: result.confidence,
+        feedback: result.feedback,
+        stepValidated: true,
+        completed: false,
+        nextStep: stepOrder + 1,
+        anecdote: step.anecdote ? t(step.anecdote, locale) : null,
+        stepTitle: t(step.title, locale),
+      });
+    }
+
+    // Standard photo challenge: mark photo as validated
+    if (!mode && result.confidence > 0.7 && result.isValid) {
       await supabase
         .from("step_completions")
         .update({ photo_validated: true })

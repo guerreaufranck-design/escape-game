@@ -30,7 +30,7 @@ export default function AdminLoginPage() {
         return;
       }
 
-      router.push("/admin");
+      router.push("/admin/generate");
     } catch {
       setError("Une erreur est survenue. Veuillez reessayer.");
     } finally {

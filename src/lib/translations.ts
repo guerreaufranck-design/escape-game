@@ -1,6 +1,6 @@
-import { Locale } from './i18n';
+import type { StaticLocale } from './i18n';
 
-type Translations = Record<string, Record<Locale, string>>;
+type Translations = Record<string, Record<StaticLocale, string>>;
 
 export const ui: Translations = {
   // Home page
@@ -185,8 +185,13 @@ export const ui: Translations = {
   },
 };
 
-export function tt(key: string, locale: Locale): string {
+/**
+ * Get UI string for a given key and locale.
+ * For static locales, returns directly. For dynamic locales, returns English fallback.
+ * Client should use /api/translations for dynamic locale strings.
+ */
+export function tt(key: string, locale: string): string {
   const entry = ui[key];
   if (!entry) return key;
-  return entry[locale] || entry.fr || key;
+  return entry[locale as StaticLocale] || entry.en || entry.fr || key;
 }

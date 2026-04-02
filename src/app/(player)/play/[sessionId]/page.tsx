@@ -43,6 +43,9 @@ import {
 } from "lucide-react";
 import { NavigationGuide } from "@/components/player/NavigationGuide";
 import { Tutorial } from "@/components/player/Tutorial";
+import { NarrationButton } from "@/components/player/NarrationButton";
+import { ReportError } from "@/components/player/ReportError";
+import { useNarration } from "@/hooks/useNarration";
 import dynamic from "next/dynamic";
 
 const GameMap = dynamic(
@@ -93,6 +96,85 @@ export default function PlayPage() {
   const [validatingCode, setValidatingCode] = useState(false);
   const [photoValidating, setPhotoValidating] = useState(false);
   const [photoFeedback, setPhotoFeedback] = useState<string | null>(null);
+  const [gpsTooFar, setGpsTooFar] = useState(false);
+  const [gpsTooFarDistance, setGpsTooFarDistance] = useState<number>(0);
+  const narration = useNarration(locale);
+  const [narrationText, setNarrationText] = useState("");
+  const [lastAutoNarrated, setLastAutoNarrated] = useState("");
+  const [navigationHint, setNavigationHint] = useState<string | null>(null);
+  const handleSpeak = (text: string) => {
+    if (narration.speaking && narrationText === text) {
+      narration.stop();
+      setNarrationText("");
+    } else {
+      setNarrationText(text);
+      narration.speak(text);
+    }
+  };
+  const autoSpeak = useCallback((text: string) => {
+    if (!text || !narration.supported) return;
+    // Avoid re-reading the same text
+    if (text === lastAutoNarrated) return;
+    setLastAutoNarrated(text);
+    setNarrationText(text);
+    narration.speak(text);
+  }, [narration, lastAutoNarrated]);
+
+  // Lazy-load walking directions for current step
+  useEffect(() => {
+    if (!gameState || gameState.currentStep <= 1 || gameState.status !== "active") {
+      setNavigationHint(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/game/${sessionId}/directions?lang=${locale}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled && data.directions) setNavigationHint(data.directions);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [gameState?.currentStep, sessionId, locale, gameState?.status]);
+
+  // Auto-narrate riddle when step changes
+  useEffect(() => {
+    if (gameState?.currentRiddle?.text && !showIntro && !stepSuccess && !skipAnswer && !showFinalCode) {
+      // Small delay to let the UI render first
+      const t = setTimeout(() => autoSpeak(gameState.currentRiddle!.text), 600);
+      return () => clearTimeout(t);
+    }
+  }, [gameState?.currentStep, gameState?.currentRiddle?.text, showIntro, stepSuccess, skipAnswer, showFinalCode]);
+
+  // Auto-narrate anecdote when it appears
+  useEffect(() => {
+    if (anecdote?.text && stepSuccess) {
+      const t = setTimeout(() => {
+        setLastAutoNarrated(""); // Reset to allow anecdote after riddle
+        autoSpeak(anecdote.text);
+      }, 500);
+      return () => clearTimeout(t);
+    }
+  }, [anecdote?.text, stepSuccess]);
+
+  // Auto-narrate scenario on briefing screen
+  useEffect(() => {
+    if (showIntro && gameState?.gameDescription && gameState.currentStep === 1 && gameState.completedSteps.length === 0 && videoWatched && tutorialDone) {
+      const t = setTimeout(() => autoSpeak(gameState.gameDescription!), 800);
+      return () => clearTimeout(t);
+    }
+  }, [showIntro, gameState?.gameDescription, videoWatched, tutorialDone]);
+
+  // Auto-narrate new hints
+  useEffect(() => {
+    if (hints.length > 0) {
+      const lastHint = hints[hints.length - 1];
+      if (lastHint?.text) {
+        setLastAutoNarrated(""); // Reset to allow hint
+        const t = setTimeout(() => autoSpeak(lastHint.text), 300);
+        return () => clearTimeout(t);
+      }
+    }
+  }, [hints.length]);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -145,12 +227,18 @@ export default function PlayPage() {
       if (data.success) {
         setStepSuccess(true);
         setHints([]);
+        setGpsTooFar(false);
         if (data.anecdote) {
           setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
         }
       } else if (data.error) {
         setError(data.error);
         setTimeout(() => setError(null), 3000);
+      } else if (data.success === false) {
+        // GPS too far — show distance and offer photo validation
+        setGpsTooFar(true);
+        setGpsTooFarDistance(data.distance || 0);
+        setTimeout(() => setGpsTooFar(false), 10000);
       }
     } catch {
       setError("Erreur de validation");
@@ -186,8 +274,8 @@ export default function PlayPage() {
     }
   };
 
-  // Validate by photo (AI)
-  const validateByPhoto = async () => {
+  // Validate by photo (AI) - supports both photo challenge and GPS fallback
+  const validateByPhoto = async (mode: "photo" | "location" = "photo") => {
     if (!gameState) return;
 
     // Create a file input and trigger it
@@ -218,16 +306,18 @@ export default function PlayPage() {
             photoBase64: base64,
             sessionId,
             stepOrder: gameState.currentStep,
+            mode: mode === "location" ? "location" : undefined,
           }),
         });
 
         const data = await res.json();
 
-        if (data.isValid) {
+        if (data.stepValidated || data.isValid) {
           setStepSuccess(true);
           setHints([]);
+          setGpsTooFar(false);
           if (data.anecdote) {
-            setAnecdote({ title: "Le saviez-vous ?", text: data.anecdote });
+            setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
           }
           setPhotoFeedback(null);
         } else {
@@ -386,9 +476,19 @@ export default function PlayPage() {
           {gameState.gameDescription && (
             <Card className="bg-slate-900/80 border-slate-800">
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-slate-400 uppercase tracking-wider">
-                  Scenario
-                </CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-sm text-slate-400 uppercase tracking-wider">
+                    Scenario
+                  </CardTitle>
+                  {narration.supported && gameState.gameDescription && (
+                    <NarrationButton
+                      text={gameState.gameDescription}
+                      speaking={narration.speaking}
+                      currentText={narrationText}
+                      onSpeak={handleSpeak}
+                    />
+                  )}
+                </div>
               </CardHeader>
               <CardContent>
                 <p className="text-slate-300 leading-relaxed text-sm">
@@ -481,9 +581,19 @@ export default function PlayPage() {
             {anecdote && (
               <Card className="bg-slate-900/95 border-emerald-800/50">
                 <CardHeader className="pb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">📖</span>
-                    <CardTitle className="text-sm text-emerald-400">Le saviez-vous ?</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📖</span>
+                      <CardTitle className="text-sm text-emerald-400">Le saviez-vous ?</CardTitle>
+                    </div>
+                    {narration.supported && (
+                      <NarrationButton
+                        text={anecdote.text}
+                        speaking={narration.speaking}
+                        currentText={narrationText}
+                        onSpeak={handleSpeak}
+                      />
+                    )}
                   </div>
                 </CardHeader>
                 <CardContent>
@@ -527,6 +637,8 @@ export default function PlayPage() {
                 setNotebookInput("");
                 setStepSuccess(false);
                 setAnecdote(null);
+                narration.stop();
+                setNarrationText("");
 
                 const isLastStep = gameState.currentStep >= gameState.totalSteps;
                 if (isLastStep) {
@@ -629,19 +741,30 @@ export default function PlayPage() {
           targetLon={gameState.approximateTarget?.longitude ?? null}
           distance={distance}
           label="Direction de l'objectif"
+          navigationHint={navigationHint}
         />
 
         {/* Current riddle */}
         {gameState.currentRiddle && (
           <Card className="bg-slate-900/80 border-slate-800">
             <CardHeader className="pb-2">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-emerald-500/10">
-                  <MapPin className="h-4 w-4 text-emerald-400" />
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="p-1.5 rounded-lg bg-emerald-500/10">
+                    <MapPin className="h-4 w-4 text-emerald-400" />
+                  </div>
+                  <CardTitle className="text-base text-emerald-300">
+                    {gameState.currentRiddle.title}
+                  </CardTitle>
                 </div>
-                <CardTitle className="text-base text-emerald-300">
-                  {gameState.currentRiddle.title}
-                </CardTitle>
+                {narration.supported && (
+                  <NarrationButton
+                    text={gameState.currentRiddle.text}
+                    speaking={narration.speaking}
+                    currentText={narrationText}
+                    onSpeak={handleSpeak}
+                  />
+                )}
               </div>
             </CardHeader>
             <CardContent>
@@ -659,6 +782,20 @@ export default function PlayPage() {
           </Card>
         )}
 
+        {/* Report error */}
+        {gameState.currentRiddle && (
+          <div className="flex justify-center">
+            <ReportError
+              gameId={gameState.gameId}
+              stepId={gameState.currentStepId ?? undefined}
+              sessionId={sessionId}
+              playerName={gameState.playerName}
+              stepOrder={gameState.currentStep}
+              locale={locale}
+            />
+          </div>
+        )}
+
         {/* Hints */}
         {hints.length > 0 && (
           <Card className="bg-yellow-500/5 border-yellow-500/20">
@@ -667,7 +804,16 @@ export default function PlayPage() {
                 {hints.map((hint, i) => (
                   <div key={i} className="flex items-start gap-2">
                     <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
-                    <p className="text-sm text-yellow-200">{hint.text}</p>
+                    <p className="text-sm text-yellow-200 flex-1">{hint.text}</p>
+                    {narration.supported && (
+                      <NarrationButton
+                        text={hint.text}
+                        speaking={narration.speaking}
+                        currentText={narrationText}
+                        onSpeak={handleSpeak}
+                        size="sm"
+                      />
+                    )}
                   </div>
                 ))}
               </div>
@@ -690,6 +836,36 @@ export default function PlayPage() {
               </Button>
             </CardContent>
           </Card>
+        )}
+
+        {/* GPS too far — offer photo validation */}
+        {gpsTooFar && (
+          <div className="bg-orange-500/10 border border-orange-500/40 rounded-xl px-4 py-4 space-y-3">
+            <div className="flex items-start gap-3">
+              <MapPin className="h-5 w-5 text-orange-400 mt-0.5 shrink-0" />
+              <div>
+                <p className="text-sm font-medium text-orange-300">
+                  Vous etes a {formatDistance(gpsTooFarDistance)} de l&apos;objectif
+                </p>
+                <p className="text-xs text-slate-400 mt-1">
+                  Rapprochez-vous du lieu, ou prenez une photo pour prouver que vous y etes !
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+              disabled={photoValidating}
+              onClick={() => validateByPhoto("location")}
+            >
+              {photoValidating ? (
+                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+              ) : (
+                <Camera className="h-4 w-4 mr-2" />
+              )}
+              Valider par photo
+            </Button>
+          </div>
         )}
 
         {/* Photo validation feedback */}
@@ -922,7 +1098,7 @@ export default function PlayPage() {
           <button
             className="inline-flex items-center justify-center rounded-md border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 h-11 px-4 disabled:opacity-50"
             disabled={photoValidating}
-            onClick={validateByPhoto}
+            onClick={() => validateByPhoto("location")}
             title="Valider par photo"
           >
             {photoValidating ? (

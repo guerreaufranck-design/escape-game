@@ -29,6 +29,7 @@ export const gameSchema = z.object({
   estimatedDurationMin: z.number().int().positive().optional(),
   maxHintsPerStep: z.number().int().min(0).max(10).default(3),
   hintPenaltySeconds: z.number().int().min(0).default(120),
+  coverImage: z.string().url().optional(),
 });
 
 export const stepSchema = z.object({

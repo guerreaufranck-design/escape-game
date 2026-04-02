@@ -56,6 +56,7 @@ export default function AdminGameEditPage() {
     estimatedDurationMin?: number;
     maxHintsPerStep: number;
     hintPenaltySeconds: number;
+    coverImage?: string;
   }) {
     const res = await fetch("/api/admin/games", {
       method: "PUT",

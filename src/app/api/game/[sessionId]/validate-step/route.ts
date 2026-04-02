@@ -3,7 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { validateStepSchema } from "@/lib/validators";
 import { haversineDistance } from "@/lib/geo";
 import { calculateScore } from "@/lib/scoring";
-import { t, detectLocale } from "@/lib/i18n";
+import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
+import { translateStepFields } from "@/lib/translate-service";
 import { MAX_VALIDATION_RATE_MS } from "@/lib/constants";
 
 export async function POST(
@@ -193,12 +194,31 @@ export async function POST(
         })
         .eq("id", sessionId);
 
+      // Translate anecdote + title if needed
+      let anecdoteText = step.anecdote ? t(step.anecdote, locale) : null;
+      let stepTitleText = t(step.title, locale);
+
+      if (!isStaticLocale(locale)) {
+        const enFields: Record<string, string> = {};
+        const enAnecdote = step.anecdote ? (typeof step.anecdote === "object" ? ((step.anecdote as Record<string,string>).en || (step.anecdote as Record<string,string>).fr || Object.values(step.anecdote as Record<string,string>)[0] || "") : String(step.anecdote)) : "";
+        const enTitle = typeof step.title === "object" ? ((step.title as Record<string,string>).en || (step.title as Record<string,string>).fr || Object.values(step.title as Record<string,string>)[0] || "") : String(step.title);
+        if (enAnecdote) enFields.anecdote = enAnecdote;
+        if (enTitle) enFields.title = enTitle;
+        if (Object.keys(enFields).length > 0) {
+          try {
+            const translated = await translateStepFields(step.id, enFields, locale);
+            if (translated.anecdote) anecdoteText = translated.anecdote;
+            if (translated.title) stepTitleText = translated.title;
+          } catch { /* keep fallback */ }
+        }
+      }
+
       return NextResponse.json({
         success: true,
         distance: Math.round(distance),
         completed: true,
-        anecdote: step.anecdote ? t(step.anecdote, locale) : null,
-        stepTitle: t(step.title, locale),
+        anecdote: anecdoteText,
+        stepTitle: stepTitleText,
       });
     }
 
@@ -208,13 +228,32 @@ export async function POST(
       .update({ current_step: stepOrder + 1 })
       .eq("id", sessionId);
 
+    // Translate anecdote + title if needed
+    let anecdoteText = step.anecdote ? t(step.anecdote, locale) : null;
+    let stepTitleText = t(step.title, locale);
+
+    if (!isStaticLocale(locale)) {
+      const enFields: Record<string, string> = {};
+      const enAnecdote = step.anecdote ? (typeof step.anecdote === "object" ? ((step.anecdote as Record<string,string>).en || (step.anecdote as Record<string,string>).fr || Object.values(step.anecdote as Record<string,string>)[0] || "") : String(step.anecdote)) : "";
+      const enTitle = typeof step.title === "object" ? ((step.title as Record<string,string>).en || (step.title as Record<string,string>).fr || Object.values(step.title as Record<string,string>)[0] || "") : String(step.title);
+      if (enAnecdote) enFields.anecdote = enAnecdote;
+      if (enTitle) enFields.title = enTitle;
+      if (Object.keys(enFields).length > 0) {
+        try {
+          const translated = await translateStepFields(step.id, enFields, locale);
+          if (translated.anecdote) anecdoteText = translated.anecdote;
+          if (translated.title) stepTitleText = translated.title;
+        } catch { /* keep fallback */ }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       distance: Math.round(distance),
       nextStep: stepOrder + 1,
       completed: false,
-      anecdote: step.anecdote ? t(step.anecdote, locale) : null,
-      stepTitle: t(step.title, locale),
+      anecdote: anecdoteText,
+      stepTitle: stepTitleText,
     });
   } catch {
     return NextResponse.json(

@@ -11,6 +11,7 @@ interface NavigationGuideProps {
   targetLon: number | null;
   distance: number | null;
   label?: string;
+  navigationHint?: string | null;
 }
 
 export function NavigationGuide({
@@ -20,6 +21,7 @@ export function NavigationGuide({
   targetLon,
   distance,
   label = "Suivez la direction",
+  navigationHint,
 }: NavigationGuideProps) {
   const [heading, setHeading] = useState<number>(0);
   const [hasCompass, setHasCompass] = useState(false);
@@ -80,7 +82,7 @@ export function NavigationGuide({
   };
 
   return (
-    <div className="flex items-center gap-4 p-4 rounded-xl bg-slate-900/80 border border-emerald-900/30">
+    <div className="flex flex-wrap items-center gap-4 p-4 rounded-xl bg-slate-900/80 border border-emerald-900/30">
       {/* Compass arrow */}
       <div className="relative flex-shrink-0">
         <div className="w-16 h-16 rounded-full border-2 border-emerald-800/50 bg-slate-950 flex items-center justify-center shadow-inner overflow-hidden">
@@ -160,6 +162,16 @@ export function NavigationGuide({
           </p>
         )}
       </div>
+
+      {/* Textual walking directions */}
+      {navigationHint && (
+        <div className="w-full mt-2 pt-2 border-t border-emerald-900/30">
+          <div className="flex items-start gap-2">
+            <Footprints className="h-3.5 w-3.5 text-emerald-500 mt-0.5 shrink-0" />
+            <p className="text-xs text-slate-400 leading-relaxed">{navigationHint}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

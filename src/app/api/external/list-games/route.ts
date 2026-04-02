@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
 
     const { data: games, error } = await supabase
       .from("games")
-      .select("id, title, city, difficulty, estimated_duration, description")
+      .select("id, title, city, difficulty, estimated_duration_min, description, cover_image")
       .eq("is_published", true)
       .order("city", { ascending: true });
 
@@ -51,8 +51,9 @@ export async function GET(request: NextRequest) {
       title: g.title,
       city: g.city,
       difficulty: g.difficulty,
-      estimatedDuration: g.estimated_duration,
+      estimatedDuration: g.estimated_duration_min,
       description: g.description,
+      coverImage: g.cover_image,
     }));
 
     return NextResponse.json({ games: formatted }, { headers: corsHeaders });

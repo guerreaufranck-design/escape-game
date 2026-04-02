@@ -15,11 +15,14 @@ export interface PlayerPosition {
 
 export interface GameState {
   sessionId: string;
+  gameId: string;
   gameTitle: string;
   gameDescription: string | null;
   introVideoUrl: string | null;
   estimatedDuration: string | null;
+  playerName: string;
   currentStep: number;
+  currentStepId: string | null;
   totalSteps: number;
   status: "active" | "completed" | "abandoned";
   startedAt: string;
@@ -34,6 +37,7 @@ export interface GameState {
     longitude: number;
   } | null;
   validationRadius: number;
+  navigationHint: string | null;
   hintsAvailable: number;
   hintsUsed: number;
   completedSteps: CompletedStepInfo[];

@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { formatTime, formatScore } from "@/lib/scoring";
 import { useLocale } from "@/components/player/LocaleSelector";
+import { ReportError } from "@/components/player/ReportError";
 import type { GameResults } from "@/types/game";
 
 export default function ResultsPage() {
@@ -287,6 +288,15 @@ export default function ResultsPage() {
             <Trophy className="h-4 w-4 mr-2" />
             Classement
           </Button>
+        </div>
+
+        {/* Report error */}
+        <div className="flex justify-center pt-2">
+          <ReportError
+            sessionId={sessionId}
+            playerName={results.playerName}
+            locale={locale}
+          />
         </div>
 
         <Button

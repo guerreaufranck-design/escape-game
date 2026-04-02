@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { hintSchema } from "@/lib/validators";
-import { t, detectLocale } from "@/lib/i18n";
+import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
+import { translateGameField } from "@/lib/translate-service";
 import type { Hint } from "@/types/game";
 
 export async function POST(
@@ -106,11 +107,29 @@ export async function POST(
     }
 
     const hint = hints[hintIndex];
+    let hintText = t(hint.text, locale);
+
+    // Translate hint text for non-static locales
+    if (!isStaticLocale(locale)) {
+      const enText = typeof hint.text === "object"
+        ? (hint.text as Record<string, string>).en || (hint.text as Record<string, string>).fr || Object.values(hint.text as Record<string, string>)[0] || ""
+        : String(hint.text);
+      if (enText) {
+        try {
+          hintText = await translateGameField(
+            `hint-${session.game_id}-${stepOrder}-${hintIndex}`,
+            "game_steps", "hint_text", enText, locale
+          );
+        } catch {
+          // Keep fallback
+        }
+      }
+    }
 
     return NextResponse.json({
       hint: {
         order: hint.order,
-        text: t(hint.text, locale),
+        text: hintText,
         image: hint.image || null,
       },
       totalHintsUsed: session.total_hints_used + 1,

@@ -15,14 +15,18 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: {
-    default: "Escape Game Outdoor",
-    template: "%s | Escape Game Outdoor",
+    default: "Oddball Trip — Outdoor Escape Games",
+    template: "%s | Oddball Trip",
   },
   description: "Vivez des aventures d'escape game en plein air avec geolocalisation",
+  icons: {
+    icon: "/favicon.ico",
+    apple: "/icons/apple-touch-icon.png",
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "EscapeGame",
+    title: "Oddball Trip",
   },
   formatDetection: {
     telephone: false,

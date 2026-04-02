@@ -1,7 +1,8 @@
 import Link from "next/link";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
-import { Plus, MapPin, Star, Eye, EyeOff, ChevronRight } from "lucide-react";
+import { Plus, MapPin, Star, Eye, EyeOff, ChevronRight, ImageIcon } from "lucide-react";
 import { t } from "@/lib/i18n";
 
 export default async function AdminGamesPage() {
@@ -39,8 +40,24 @@ export default async function AdminGamesPage() {
               <Link
                 key={game.id}
                 href={`/admin/games/${game.id}`}
-                className="group rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 transition hover:border-zinc-700 hover:bg-zinc-900"
+                className="group rounded-xl border border-zinc-800 bg-zinc-900/60 overflow-hidden transition hover:border-zinc-700 hover:bg-zinc-900"
               >
+                {game.cover_image ? (
+                  <div className="relative w-full h-40 bg-zinc-800">
+                    <Image
+                      src={game.cover_image}
+                      alt={t(game.title)}
+                      fill
+                      className="object-cover"
+                      sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw"
+                    />
+                  </div>
+                ) : (
+                  <div className="w-full h-28 bg-zinc-800/50 flex items-center justify-center">
+                    <ImageIcon className="size-8 text-zinc-700" />
+                  </div>
+                )}
+                <div className="p-5">
                 <div className="mb-3 flex items-start justify-between">
                   <h3 className="font-semibold text-zinc-100 group-hover:text-emerald-400 transition">
                     {t(game.title)}
@@ -71,6 +88,7 @@ export default async function AdminGamesPage() {
                   </span>
                   <span>{stepCount} etape{stepCount !== 1 ? "s" : ""}</span>
                   <ChevronRight className="ml-auto size-4 text-zinc-600 group-hover:text-zinc-400 transition" />
+                </div>
                 </div>
               </Link>
             );

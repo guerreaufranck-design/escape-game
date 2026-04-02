@@ -63,13 +63,35 @@ export default async function AdminDashboardPage() {
     .order("started_at", { ascending: false })
     .limit(20);
 
+  function extractText(val: unknown): string {
+    if (!val) return "";
+    if (typeof val === "number") return String(val);
+    if (typeof val === "string") {
+      // Handle double-encoded JSON strings like '{"fr": "...", "en": "..."}'
+      if (val.startsWith("{") && val.includes('"fr"')) {
+        try {
+          const parsed = JSON.parse(val) as Record<string, string>;
+          return parsed.fr || parsed.en || parsed.es || Object.values(parsed)[0] || val;
+        } catch {
+          return val;
+        }
+      }
+      return val;
+    }
+    if (typeof val === "object" && val !== null) {
+      const obj = val as Record<string, string>;
+      return obj.fr || obj.en || obj.es || Object.values(obj)[0] || "";
+    }
+    return String(val);
+  }
+
   const sessions =
     recentSessions?.map((s) => ({
       id: s.id,
-      player_name: s.player_name,
-      team_name: s.team_name,
-      game_title: (s.games as unknown as { title: string })?.title ?? "Inconnu",
-      status: s.status,
+      player_name: extractText(s.player_name) || "Anonyme",
+      team_name: s.team_name ? extractText(s.team_name) : null,
+      game_title: extractText((s.games as unknown as { title: unknown })?.title) || "Inconnu",
+      status: s.status as "active" | "completed" | "abandoned",
       current_step: s.current_step,
       total_steps: s.total_steps,
       started_at: s.started_at,

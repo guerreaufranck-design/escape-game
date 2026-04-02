@@ -42,17 +42,24 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(url);
     }
 
-    // Check if user is admin
-    const { data: adminUser } = await supabase
-      .from("admin_users")
-      .select("id")
-      .eq("id", user.id)
-      .single();
-
-    if (!adminUser) {
-      const url = request.nextUrl.clone();
-      url.pathname = "/admin/login";
-      return NextResponse.redirect(url);
+    // Check if user is admin using service role (bypasses RLS)
+    const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    if (serviceKey) {
+      const adminCheck = await fetch(
+        `${process.env.NEXT_PUBLIC_SUPABASE_URL}/rest/v1/admin_users?select=id&id=eq.${user.id}`,
+        {
+          headers: {
+            apikey: serviceKey,
+            Authorization: `Bearer ${serviceKey}`,
+          },
+        }
+      );
+      const adminData = await adminCheck.json();
+      if (!Array.isArray(adminData) || adminData.length === 0) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/admin/login";
+        return NextResponse.redirect(url);
+      }
     }
   }
 

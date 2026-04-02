@@ -1,35 +1,30 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Locale, SUPPORTED_LOCALES, LOCALE_LABELS, DEFAULT_LOCALE } from '@/lib/i18n';
+import { SUPPORTED_LOCALES, DEFAULT_LOCALE } from '@/lib/i18n';
+import { ui } from '@/lib/translations';
+import type { StaticLocale } from '@/lib/i18n';
 
-const FLAGS: Record<Locale, string> = {
-  fr: '\u{1F1EB}\u{1F1F7}',
-  en: '\u{1F1EC}\u{1F1E7}',
-  de: '\u{1F1E9}\u{1F1EA}',
-  es: '\u{1F1EA}\u{1F1F8}',
-  it: '\u{1F1EE}\u{1F1F9}',
-};
-
-function getBrowserLocale(): Locale {
+function getBrowserLocale(): string {
   if (typeof window === 'undefined') return DEFAULT_LOCALE;
   const lang = navigator.language.slice(0, 2).toLowerCase();
-  return SUPPORTED_LOCALES.includes(lang as Locale) ? (lang as Locale) : DEFAULT_LOCALE;
+  const found = SUPPORTED_LOCALES.find(l => l.code === lang);
+  return found ? lang : DEFAULT_LOCALE;
 }
 
-export function useLocale(): [Locale, (l: Locale) => void] {
-  const [locale, setLocaleState] = useState<Locale>(DEFAULT_LOCALE);
+export function useLocale(): [string, (l: string) => void] {
+  const [locale, setLocaleState] = useState<string>(DEFAULT_LOCALE);
 
   useEffect(() => {
-    const stored = localStorage.getItem('escape-game-locale') as Locale | null;
-    if (stored && SUPPORTED_LOCALES.includes(stored)) {
+    const stored = localStorage.getItem('escape-game-locale');
+    if (stored) {
       setLocaleState(stored);
     } else {
       setLocaleState(getBrowserLocale());
     }
   }, []);
 
-  const setLocale = useCallback((l: Locale) => {
+  const setLocale = useCallback((l: string) => {
     setLocaleState(l);
     localStorage.setItem('escape-game-locale', l);
   }, []);
@@ -37,9 +32,83 @@ export function useLocale(): [Locale, (l: Locale) => void] {
   return [locale, setLocale];
 }
 
+const STATIC_LOCALE_SET = new Set(['fr', 'en', 'de', 'es', 'it']);
+
+/**
+ * Hook to load translated UI strings.
+ * For static locales (fr/en/de/es/it), returns instantly from translations.ts.
+ * For dynamic locales (zh, ja, etc.), fetches from /api/translations and caches in localStorage.
+ */
+export function useTranslatedUI(locale: string): {
+  tt: (key: string) => string;
+  loading: boolean;
+} {
+  const [dynamicStrings, setDynamicStrings] = useState<Record<string, string> | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const isStatic = STATIC_LOCALE_SET.has(locale);
+
+  useEffect(() => {
+    if (isStatic) {
+      setDynamicStrings(null);
+      return;
+    }
+
+    // Check localStorage cache first
+    const cacheKey = `escape-game-ui-${locale}`;
+    const cached = localStorage.getItem(cacheKey);
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        if (parsed && Object.keys(parsed).length > 0) {
+          setDynamicStrings(parsed);
+          return;
+        }
+      } catch {
+        // Invalid cache, fetch fresh
+      }
+    }
+
+    // Fetch from API
+    setLoading(true);
+    fetch(`/api/translations?lang=${locale}`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.strings && Object.keys(data.strings).length > 0) {
+          setDynamicStrings(data.strings);
+          localStorage.setItem(cacheKey, JSON.stringify(data.strings));
+        }
+      })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [locale, isStatic]);
+
+  const ttFn = useCallback((key: string): string => {
+    if (isStatic) {
+      const entry = ui[key];
+      if (!entry) return key;
+      return entry[locale as StaticLocale] || entry.en || entry.fr || key;
+    }
+
+    // Use dynamic translations
+    if (dynamicStrings && dynamicStrings[key]) {
+      return dynamicStrings[key];
+    }
+
+    // Fallback to English while loading
+    const entry = ui[key];
+    if (!entry) return key;
+    return entry.en || entry.fr || key;
+  }, [locale, isStatic, dynamicStrings]);
+
+  return { tt: ttFn, loading };
+}
+
 export function LocaleSelector() {
   const [locale, setLocale] = useLocale();
   const [open, setOpen] = useState(false);
+
+  const currentLang = SUPPORTED_LOCALES.find(l => l.code === locale);
 
   return (
     <div className="relative">
@@ -47,8 +116,8 @@ export function LocaleSelector() {
         onClick={() => setOpen(!open)}
         className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-zinc-800 hover:bg-zinc-700 border border-zinc-700 text-sm transition-colors"
       >
-        <span>{FLAGS[locale]}</span>
-        <span className="hidden sm:inline text-zinc-300">{LOCALE_LABELS[locale]}</span>
+        <span>{currentLang?.flag || '\u{1F310}'}</span>
+        <span className="hidden sm:inline text-zinc-300">{currentLang?.label || locale}</span>
         <svg className="w-3 h-3 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
         </svg>
@@ -56,17 +125,17 @@ export function LocaleSelector() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full mt-1 z-50 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl overflow-hidden min-w-[140px]">
+          <div className="absolute right-0 top-full mt-1 z-50 bg-zinc-800 border border-zinc-700 rounded-lg shadow-xl overflow-hidden min-w-[180px] max-h-[60vh] overflow-y-auto">
             {SUPPORTED_LOCALES.map((l) => (
               <button
-                key={l}
-                onClick={() => { setLocale(l); setOpen(false); }}
+                key={l.code}
+                onClick={() => { setLocale(l.code); setOpen(false); }}
                 className={`w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-zinc-700 transition-colors ${
-                  l === locale ? 'bg-emerald-900/30 text-emerald-400' : 'text-zinc-300'
+                  l.code === locale ? 'bg-emerald-900/30 text-emerald-400' : 'text-zinc-300'
                 }`}
               >
-                <span>{FLAGS[l]}</span>
-                <span>{LOCALE_LABELS[l]}</span>
+                <span>{l.flag}</span>
+                <span>{l.label}</span>
               </button>
             ))}
           </div>

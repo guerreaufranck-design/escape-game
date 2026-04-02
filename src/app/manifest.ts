@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Escape Game Outdoor",
-    short_name: "EscapeGame",
+    name: "Oddball Trip — Outdoor Escape Games",
+    short_name: "Oddball Trip",
     description: "Vivez des aventures d'escape game en plein air",
     start_url: "/",
     display: "standalone",

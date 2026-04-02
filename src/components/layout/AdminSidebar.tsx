@@ -11,6 +11,8 @@ import {
   KeyRound,
   Users,
   Trophy,
+  AlertTriangle,
+  Sparkles,
   LogOut,
   Menu,
   X,
@@ -19,9 +21,11 @@ import {
 const navItems = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/games", label: "Jeux", icon: Gamepad2 },
+  { href: "/admin/generate", label: "Generator", icon: Sparkles },
   { href: "/admin/codes", label: "Codes", icon: KeyRound },
   { href: "/admin/sessions", label: "Sessions", icon: Users },
   { href: "/admin/leaderboard", label: "Classement", icon: Trophy },
+  { href: "/admin/reports", label: "Signalements", icon: AlertTriangle },
 ];
 
 export function AdminSidebar() {

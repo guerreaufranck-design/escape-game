@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { gameSchema } from "@/lib/validators";
 import { Button } from "@/components/ui/button";
-import { Loader2, Save, X } from "lucide-react";
+import { Loader2, Save, X, ImageIcon } from "lucide-react";
 import type { Game } from "@/types/database";
 import { t } from "@/lib/i18n";
 
@@ -17,6 +17,7 @@ interface GameFormProps {
     estimatedDurationMin?: number;
     maxHintsPerStep: number;
     hintPenaltySeconds: number;
+    coverImage?: string;
   }) => Promise<void>;
   onCancel?: () => void;
 }
@@ -38,6 +39,7 @@ export function GameForm({ game, onSubmit, onCancel }: GameFormProps) {
   const [hintPenaltySeconds, setHintPenaltySeconds] = useState(
     game?.hint_penalty_seconds ?? 120
   );
+  const [coverImage, setCoverImage] = useState(game?.cover_image ?? "");
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -53,6 +55,7 @@ export function GameForm({ game, onSubmit, onCancel }: GameFormProps) {
         : undefined,
       maxHintsPerStep,
       hintPenaltySeconds,
+      coverImage: coverImage || undefined,
     };
 
     const result = gameSchema.safeParse(data);
@@ -137,6 +140,32 @@ export function GameForm({ game, onSubmit, onCancel }: GameFormProps) {
           className={inputClass}
           placeholder="Paris, Lyon, Marseille..."
         />
+      </div>
+
+      {/* Cover Image */}
+      <div>
+        <label htmlFor="coverImage" className={labelClass}>
+          <ImageIcon className="inline size-3.5 mr-1" />
+          Image de couverture (URL)
+        </label>
+        <input
+          id="coverImage"
+          type="url"
+          value={coverImage}
+          onChange={(e) => setCoverImage(e.target.value)}
+          className={inputClass}
+          placeholder="https://...supabase.co/storage/v1/object/public/game-covers/..."
+        />
+        {coverImage && (
+          <div className="mt-2 rounded-lg overflow-hidden border border-zinc-700 h-32 relative">
+            <img
+              src={coverImage}
+              alt="Preview"
+              className="w-full h-full object-cover"
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+            />
+          </div>
+        )}
       </div>
 
       {/* Difficulty */}
