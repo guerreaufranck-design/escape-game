@@ -6,7 +6,7 @@
 # The pipeline takes 3-7 minutes (Perplexity deep research is slow)
 
 API_URL="${1:-http://localhost:3000}"
-API_SECRET="esc_live_k7Hm9PxQr2Yw5TjN8FbA3CdE6GhI1JlO4RsU0VwX"
+API_SECRET="${EXTERNAL_API_SECRET:?Set EXTERNAL_API_SECRET env var}"
 
 echo "🎮 Testing Game Generation Pipeline..."
 echo "📍 City: Toledo, Spain"

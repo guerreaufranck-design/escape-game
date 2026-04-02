@@ -106,7 +106,7 @@ export default function GenerateGamePage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: "Bearer esc_live_k7Hm9PxQr2Yw5TjN8FbA3CdE6GhI1JlO4RsU0VwX",
+          Authorization: `Bearer ${process.env.NEXT_PUBLIC_GENERATE_API_SECRET || ""}`,
         },
         body: JSON.stringify(body),
       });
