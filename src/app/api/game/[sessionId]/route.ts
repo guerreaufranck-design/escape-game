@@ -63,8 +63,10 @@ export async function GET(
     };
 
     // Translate game title & description
+    console.log(`[game] locale=${locale} title_type=${typeof game.title} title_value=${JSON.stringify(game.title).slice(0, 120)}`);
     let gameTitle = t(game.title, locale);
     let gameDescription = t(game.description, locale);
+    console.log(`[game] resolved gameTitle=${gameTitle.slice(0, 80)}`);
 
     if (needsTranslation) {
       const enTitle = getEnglishBase(game.title);
