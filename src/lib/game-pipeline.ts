@@ -174,6 +174,7 @@ async function insertGameIntoDatabase(
   // Insert game (English only — translated on demand by the app)
   const { error: gameError } = await supabase.from("games").insert({
     id: gameId,
+    slug: template.slug,
     title: template.theme,
     description: template.themeDescription,
     city: template.city,

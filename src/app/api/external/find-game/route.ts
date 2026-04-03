@@ -32,7 +32,29 @@ export async function GET(request: NextRequest) {
 
   const supabase = createAdminClient();
 
-  // Get all published games (there won't be thousands, this is fine)
+  // 1. Try exact slug match first (fast path for pipeline-generated games)
+  const { data: exactMatch } = await supabase
+    .from("games")
+    .select("id, title, city")
+    .eq("slug", slug)
+    .eq("is_published", true)
+    .single();
+
+  if (exactMatch) {
+    console.log(`[find-game] EXACT slug match "${slug}" → gameId=${exactMatch.id}`);
+    return NextResponse.json(
+      {
+        found: true,
+        gameId: exactMatch.id,
+        title: extractTitle(exactMatch.title),
+        city: exactMatch.city,
+        slug,
+      },
+      { headers: corsHeaders }
+    );
+  }
+
+  // 2. Fallback: keyword matching for legacy games without slug
   const { data: games, error } = await supabase
     .from("games")
     .select("id, title, city, is_published")
@@ -118,12 +140,16 @@ export async function GET(request: NextRequest) {
   }
 
   if (!bestMatch || bestScore === 0) {
+    console.log(`[find-game] NO MATCH for slug="${slug}" keywords=[${keywords.join(",")}] games=${games.length}`);
+    // Log top 3 game titles for debugging
+    games.slice(0, 3).forEach((g) => console.log(`[find-game]   game: title=${JSON.stringify(g.title).slice(0, 80)} city=${g.city}`));
     return NextResponse.json(
       { found: false, slug },
       { status: 404, headers: corsHeaders }
     );
   }
 
+  console.log(`[find-game] MATCH slug="${slug}" → gameId=${bestMatch.id} title=${JSON.stringify(bestMatch.title).slice(0, 80)} score=${bestScore}/${keywords.length}`);
   return NextResponse.json(
     {
       found: true,
