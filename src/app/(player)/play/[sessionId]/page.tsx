@@ -9,6 +9,7 @@ import { useGameStore } from "@/stores/game-store";
 import { useLocale } from "@/components/player/LocaleSelector";
 import { formatTime } from "@/lib/scoring";
 import { formatDistance } from "@/lib/geo";
+import { tt } from "@/lib/translations";
 import type { GameState, Hint } from "@/types/game";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -445,7 +446,7 @@ export default function PlayPage() {
             onClick={() => setVideoWatched(true)}
             className="absolute top-4 right-4 px-3 py-1.5 bg-black/60 backdrop-blur border border-zinc-700 rounded-full text-xs text-zinc-400 hover:text-white transition-colors"
           >
-            Passer la video &rarr;
+            {tt('play.skipVideo', locale)} &rarr;
           </button>
         </div>
       </div>
@@ -467,7 +468,7 @@ export default function PlayPage() {
             </h1>
             <div className="flex items-center justify-center gap-2 text-sm text-slate-400">
               <Badge variant="outline" className="text-xs">
-                {gameState.totalSteps} etapes
+                {gameState.totalSteps} {tt('play.steps', locale)}
               </Badge>
             </div>
           </div>
@@ -478,7 +479,7 @@ export default function PlayPage() {
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
                   <CardTitle className="text-sm text-slate-400 uppercase tracking-wider">
-                    Scenario
+                    {tt('play.scenario', locale)}
                   </CardTitle>
                   {narration.supported && gameState.gameDescription && (
                     <NarrationButton
@@ -505,13 +506,13 @@ export default function PlayPage() {
                 <div className="flex items-center gap-2">
                   <Navigation className="h-4 w-4 text-emerald-400" />
                   <CardTitle className="text-sm text-emerald-300">
-                    Point de depart
+                    {tt('play.startingPoint', locale)}
                   </CardTitle>
                 </div>
               </CardHeader>
               <CardContent className="pb-3">
                 <p className="text-xs text-slate-400 mb-3">
-                  Rendez-vous a ce point pour commencer l&apos;aventure. La premiere enigme vous y attend !
+                  {tt('play.startingPointDesc', locale)}
                 </p>
                 <GameMap
                   playerLat={geo.latitude}
@@ -519,6 +520,7 @@ export default function PlayPage() {
                   targetLat={gameState.approximateTarget.latitude}
                   targetLon={gameState.approximateTarget.longitude}
                   validationRadius={gameState.validationRadius}
+                  locale={locale}
                 />
                 <div className="mt-3">
                   <NavigationGuide
@@ -527,7 +529,8 @@ export default function PlayPage() {
                     targetLat={gameState.approximateTarget.latitude}
                     targetLon={gameState.approximateTarget.longitude}
                     distance={distance}
-                    label="Direction du point de depart"
+                    label={tt('play.startingPointDirection', locale)}
+                    locale={locale}
                   />
                 </div>
               </CardContent>
@@ -538,7 +541,7 @@ export default function PlayPage() {
           {!geo.latitude && (
             <div className="flex items-center gap-2 text-sm text-yellow-400 bg-yellow-500/10 border border-yellow-500/20 rounded-lg px-4 py-3">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Activation du GPS en cours...
+              {tt('play.gpsActivating', locale)}
             </div>
           )}
 
@@ -549,7 +552,7 @@ export default function PlayPage() {
             onClick={() => setShowIntro(false)}
           >
             <Flame className="h-5 w-5 mr-2" />
-            C&apos;est parti !
+            {tt('play.letsGo', locale)}
           </Button>
         </div>
       </div>
@@ -573,7 +576,7 @@ export default function PlayPage() {
                 <CheckCircle2 className="h-10 w-10 text-emerald-400" />
               </div>
               <p className="text-2xl font-bold text-emerald-300">
-                Etape validee !
+                {tt('play.stepValidated', locale)}
               </p>
             </div>
 
@@ -609,7 +612,7 @@ export default function PlayPage() {
               <CardContent className="pt-4 pb-3">
                 <div className="flex items-center gap-2 mb-2">
                   <span className="text-lg">📝</span>
-                  <p className="text-sm font-medium text-emerald-400">Notez votre reponse</p>
+                  <p className="text-sm font-medium text-emerald-400">{tt('play.noteAnswer', locale)}</p>
                 </div>
                 <p className="text-xs text-slate-500 mb-2">
                   Ce chiffre/mot fera partie du code final a la fin du jeu.
@@ -618,7 +621,7 @@ export default function PlayPage() {
                   type="text"
                   value={notebookInput}
                   onChange={(e) => setNotebookInput(e.target.value)}
-                  placeholder="Votre reponse pour cette etape..."
+                  placeholder={tt('play.answerPlaceholder', locale)}
                   className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-center text-lg font-mono focus:border-emerald-500 focus:outline-none"
                   autoFocus
                 />
@@ -649,8 +652,8 @@ export default function PlayPage() {
               }}
             >
               {gameState.currentStep >= gameState.totalSteps
-                ? "Entrer le code final"
-                : "Etape suivante"
+                ? tt('play.finalCode', locale)
+                : tt('play.nextStep', locale)
               }
             </Button>
           </div>
@@ -666,8 +669,8 @@ export default function PlayPage() {
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-500/10">
                   <Trophy className="h-8 w-8 text-orange-400" />
                 </div>
-                <p className="text-sm text-orange-300">Etape passee (+45 min de penalite)</p>
-                <p className="text-lg font-bold text-white">La reponse etait :</p>
+                <p className="text-sm text-orange-300">{tt('play.stepSkipped', locale)}</p>
+                <p className="text-lg font-bold text-white">{tt('play.answerWas', locale)}</p>
                 <p className="text-2xl font-bold text-orange-400">{skipAnswer}</p>
               </CardContent>
             </Card>
@@ -676,7 +679,7 @@ export default function PlayPage() {
               className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold h-12 rounded-xl"
               onClick={dismissSkip}
             >
-              Etape suivante
+              {tt('play.nextStep', locale)}
             </Button>
           </div>
         </div>
@@ -691,7 +694,7 @@ export default function PlayPage() {
                 {gameState.gameTitle}
               </h1>
               <p className="text-xs text-slate-400">
-                Etape {gameState.currentStep}/{gameState.totalSteps}
+                {tt('play.step', locale)} {gameState.currentStep}/{gameState.totalSteps}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -730,6 +733,7 @@ export default function PlayPage() {
             targetLat={gameState.approximateTarget?.latitude ?? null}
             targetLon={gameState.approximateTarget?.longitude ?? null}
             validationRadius={gameState.validationRadius}
+            locale={locale}
           />
         </div>
 
@@ -740,7 +744,8 @@ export default function PlayPage() {
           targetLat={gameState.approximateTarget?.latitude ?? null}
           targetLon={gameState.approximateTarget?.longitude ?? null}
           distance={distance}
-          label="Direction de l'objectif"
+          label={tt('play.targetDirection', locale)}
+          locale={locale}
           navigationHint={navigationHint}
         />
 
@@ -832,7 +837,7 @@ export default function PlayPage() {
                 className="mt-2"
                 onClick={geo.startTracking}
               >
-                Reactiver le GPS
+                {tt('play.reactivateGps', locale)}
               </Button>
             </CardContent>
           </Card>
@@ -845,7 +850,7 @@ export default function PlayPage() {
               <MapPin className="h-5 w-5 text-orange-400 mt-0.5 shrink-0" />
               <div>
                 <p className="text-sm font-medium text-orange-300">
-                  Vous etes a {formatDistance(gpsTooFarDistance)} de l&apos;objectif
+                  {tt('play.tooFar', locale).replace('{distance}', formatDistance(gpsTooFarDistance))}
                 </p>
                 <p className="text-xs text-slate-400 mt-1">
                   Rapprochez-vous du lieu, ou prenez une photo pour prouver que vous y etes !
@@ -915,7 +920,7 @@ export default function PlayPage() {
                       : "bg-slate-800/30 border border-slate-800/50"
                   }`}
                 >
-                  <span className="text-xs text-slate-500 w-14 shrink-0">Etape {step}</span>
+                  <span className="text-xs text-slate-500 w-14 shrink-0">{tt('play.step', locale)} {step}</span>
                   {step <= gameState.currentStep ? (
                     <input
                       type="text"
@@ -931,7 +936,7 @@ export default function PlayPage() {
               ))}
             </div>
             <p className="text-[10px] text-slate-600 text-center mt-2">
-              Notez vos reponses ici pour le code final
+              {tt('play.notebookHint', locale)}
             </p>
           </div>
         </div>
@@ -945,9 +950,9 @@ export default function PlayPage() {
               <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 mb-3">
                 <Trophy className="h-10 w-10 text-emerald-400" />
               </div>
-              <h2 className="text-2xl font-bold text-emerald-400">Code Final</h2>
+              <h2 className="text-2xl font-bold text-emerald-400">{tt('play.finalCode', locale)}</h2>
               <p className="text-sm text-slate-400 mt-1">
-                Assemblez toutes vos reponses pour former le code secret !
+                {tt('play.assembleAnswers', locale)}
               </p>
             </div>
 
@@ -958,7 +963,7 @@ export default function PlayPage() {
                 <div className="space-y-1">
                   {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step) => (
                     <div key={step} className="flex items-center gap-2 text-sm">
-                      <span className="text-slate-500 w-16 shrink-0">Etape {step}</span>
+                      <span className="text-slate-500 w-16 shrink-0">{tt('play.step', locale)} {step}</span>
                       <span className="font-mono font-bold text-emerald-400">
                         {notebook[step] || "???"}
                       </span>
@@ -972,7 +977,7 @@ export default function PlayPage() {
             <Card className={`bg-slate-900/95 ${codeResult?.valid ? 'border-emerald-500' : 'border-emerald-500/30'}`}>
               <CardContent className="pt-4">
                 <p className="text-sm text-slate-300 mb-2 text-center">
-                  Assemblez vos reponses separees par des tirets :
+                  {tt('play.assembleDashes', locale)}
                 </p>
                 <p className="text-xs text-slate-500 mb-3 text-center font-mono">
                   ex: {Array.from({ length: gameState.totalSteps }, (_, i) => notebook[i + 1] || "?").join("-")}
@@ -1006,7 +1011,7 @@ export default function PlayPage() {
                 }}
               >
                 <Trophy className="h-5 w-5 mr-2" />
-                Voir mes resultats !
+                {tt('play.seeResults', locale)}
               </Button>
             ) : (
               <div className="flex gap-3">
@@ -1019,7 +1024,7 @@ export default function PlayPage() {
                     router.push(`/results/${sessionId}`);
                   }}
                 >
-                  Passer
+                  {tt('play.skip', locale)}
                 </Button>
                 <Button
                   size="lg"
@@ -1064,7 +1069,7 @@ export default function PlayPage() {
             disabled={hintLoading || hints.length >= gameState.hintsAvailable}
             onClick={() => {
               const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
-              if (confirm(`Demander l'indice ${hints.length + 1}/${gameState.hintsAvailable} ?\n\nPenalite : +${penalty}`)) {
+              if (confirm(tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty))) {
                 requestHint(hints.length);
               }
             }}
@@ -1091,7 +1096,7 @@ export default function PlayPage() {
             ) : (
               <MapPin className="h-5 w-5 mr-2" />
             )}
-            Valider GPS
+            {tt('play.validateGps', locale)}
           </Button>
 
           {/* Validate by photo (AI) */}
@@ -1113,7 +1118,7 @@ export default function PlayPage() {
             className="inline-flex items-center justify-center rounded-md border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 h-11 px-4 disabled:opacity-50"
             disabled={skipping}
             onClick={() => {
-              if (confirm("Passer cette etape ?\n\nVous serez penalise de 45 minutes sur votre temps final.\nLa reponse vous sera revelee.")) {
+              if (confirm(tt('play.skipConfirm', locale))) {
                 skipStep();
               }
             }}

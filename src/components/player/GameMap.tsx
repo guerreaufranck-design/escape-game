@@ -9,6 +9,7 @@ interface GameMapProps {
   targetLon: number | null;
   validationRadius: number;
   zoom?: number;
+  locale?: string;
 }
 
 const GameMapInner = dynamic(() => import("./GameMapInner"), {

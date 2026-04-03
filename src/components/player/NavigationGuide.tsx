@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { calculateBearing, formatDistance } from "@/lib/geo";
 import { Navigation, Footprints } from "lucide-react";
+import { tt } from "@/lib/translations";
 
 interface NavigationGuideProps {
   playerLat: number | null;
@@ -11,6 +12,7 @@ interface NavigationGuideProps {
   targetLon: number | null;
   distance: number | null;
   label?: string;
+  locale?: string;
   navigationHint?: string | null;
 }
 
@@ -20,7 +22,8 @@ export function NavigationGuide({
   targetLat,
   targetLon,
   distance,
-  label = "Suivez la direction",
+  label,
+  locale = "fr",
   navigationHint,
 }: NavigationGuideProps) {
   const [heading, setHeading] = useState<number>(0);
@@ -140,25 +143,25 @@ export function NavigationGuide({
             <p className="text-lg font-bold text-white">
               {formatDistance(distance)}
               <span className="text-xs text-zinc-500 font-normal ml-2">
-                {hasCompass ? `vers le ${getCardinalDirection(bearing)}` : `direction ${getCardinalDirection(bearing)}`}
+                {hasCompass ? `${tt('nav.towards', locale)} ${getCardinalDirection(bearing)}` : `${tt('nav.direction', locale)} ${getCardinalDirection(bearing)}`}
               </span>
             </p>
             {walkingMinutes !== null && (
               <div className="flex items-center gap-1 mt-0.5">
                 <Footprints className="h-3 w-3 text-zinc-500" />
                 <span className="text-xs text-zinc-500">
-                  ~{walkingMinutes} min a pied
+                  ~{walkingMinutes} {tt('nav.walkMin', locale)}
                 </span>
               </div>
             )}
           </>
         ) : (
-          <p className="text-sm text-zinc-500">Localisation en cours...</p>
+          <p className="text-sm text-zinc-500">{tt('nav.locating', locale)}</p>
         )}
 
         {!hasCompass && distance !== null && (
           <p className="text-[10px] text-zinc-600 mt-1">
-            Bougez votre telephone pour activer la boussole
+            {tt('nav.movePhone', locale)}
           </p>
         )}
       </div>

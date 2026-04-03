@@ -11,6 +11,7 @@ import {
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { MAP_TILE_URL, MAP_ATTRIBUTION } from "@/lib/constants";
+import { tt } from "@/lib/translations";
 
 // Fix Leaflet default icon issue with Next.js bundler
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
@@ -44,6 +45,7 @@ interface GameMapInnerProps {
   targetLon: number | null;
   validationRadius: number;
   zoom?: number;
+  locale?: string;
 }
 
 function MapUpdater({
@@ -112,6 +114,7 @@ export default function GameMapInner({
   targetLon,
   validationRadius,
   zoom = 15,
+  locale = "fr",
 }: GameMapInnerProps) {
   const centerLat = playerLat ?? targetLat ?? 48.8566;
   const centerLon = playerLon ?? targetLon ?? 2.3522;
@@ -185,7 +188,7 @@ export default function GameMapInner({
               <line x1="14" y1="10" x2="21" y2="3" />
               <line x1="3" y1="21" x2="10" y2="14" />
             </svg>
-            Reduire
+            {tt('nav.reduce', locale)}
           </>
         ) : (
           <>
@@ -195,7 +198,7 @@ export default function GameMapInner({
               <line x1="21" y1="3" x2="14" y2="10" />
               <line x1="3" y1="21" x2="10" y2="14" />
             </svg>
-            Agrandir
+            {tt('nav.enlarge', locale)}
           </>
         )}
       </button>
