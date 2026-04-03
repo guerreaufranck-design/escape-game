@@ -167,6 +167,9 @@ export function Tutorial({ locale, gameTitle, totalSteps, estimatedDuration, onC
   const slide = slides[currentSlide];
   const isLast = currentSlide === slides.length - 1;
 
+  // Helper: fallback to en then fr for non-static locales (e.g. nl, pt, etc.)
+  const l = (dict: Record<string, string>) => dict[locale] || dict.en || dict.fr || '';
+
   const welcomeTitle: Record<Locale, string> = {
     fr: "Bienvenue dans",
     en: "Welcome to",
@@ -195,9 +198,9 @@ export function Tutorial({ locale, gameTitle, totalSteps, estimatedDuration, onC
     <div className="min-h-screen bg-slate-950 text-white flex flex-col">
       {/* Header */}
       <div className="text-center pt-8 pb-4 px-4">
-        <p className="text-sm text-slate-500">{welcomeTitle[locale]}</p>
+        <p className="text-sm text-slate-500">{l(welcomeTitle)}</p>
         <h1 className="text-xl font-bold text-emerald-400 mt-1">{gameTitle}</h1>
-        <p className="text-xs text-slate-500 mt-1">{totalSteps} {stepsLabel[locale]}</p>
+        <p className="text-xs text-slate-500 mt-1">{totalSteps} {l(stepsLabel)}</p>
       </div>
 
       {/* Slide content */}
@@ -206,10 +209,10 @@ export function Tutorial({ locale, gameTitle, totalSteps, estimatedDuration, onC
           {slide.icon}
         </div>
         <h2 className="text-lg font-bold text-center mb-3">
-          {slide.title[locale]}
+          {l(slide.title)}
         </h2>
         <p className="text-sm text-slate-400 text-center leading-relaxed">
-          {slide.text[locale]}
+          {l(slide.text)}
         </p>
       </div>
 
@@ -250,7 +253,7 @@ export function Tutorial({ locale, gameTitle, totalSteps, estimatedDuration, onC
               className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-14 rounded-xl text-base"
               onClick={onComplete}
             >
-              {startLabel[locale]}
+              {l(startLabel)}
             </Button>
           ) : (
             <Button
@@ -269,11 +272,7 @@ export function Tutorial({ locale, gameTitle, totalSteps, estimatedDuration, onC
             onClick={onComplete}
             className="w-full text-center text-xs text-slate-600 hover:text-slate-400 transition-colors"
           >
-            {locale === "fr" ? "Passer le tutoriel" :
-             locale === "en" ? "Skip tutorial" :
-             locale === "de" ? "Tutorial uberspringen" :
-             locale === "es" ? "Saltar tutorial" :
-             "Salta il tutorial"}
+            {l({ fr: "Passer le tutoriel", en: "Skip tutorial", de: "Tutorial uberspringen", es: "Saltar tutorial", it: "Salta il tutorial" })}
           </button>
         )}
       </div>
