@@ -26,6 +26,7 @@ import {
   generateGameFromTemplate,
   type GameTemplate,
 } from "@/lib/game-pipeline";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
 export const maxDuration = 600; // 10 minutes max
@@ -91,6 +92,45 @@ export async function POST(request: NextRequest) {
       coverImage: body.coverImage || null,
       stops,
     };
+
+    // Idempotency: if a game with this slug already exists, return it
+    const supabase = createAdminClient();
+    const { data: existingGame } = await supabase
+      .from("games")
+      .select("id")
+      .eq("slug", template.slug)
+      .eq("is_published", true)
+      .single();
+
+    if (existingGame) {
+      console.log(`[GenerateGame] Game already exists for slug "${template.slug}" → ${existingGame.id}`);
+
+      // Still send callback so oddballtrip can process pending purchases
+      if (body.callbackUrl) {
+        try {
+          await fetch(body.callbackUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(body.callbackSecret && { Authorization: `Bearer ${body.callbackSecret}` }),
+            },
+            body: JSON.stringify({ gameId: existingGame.id, slug: template.slug }),
+          });
+        } catch (err) {
+          console.error(`[GenerateGame] Callback failed: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+
+      return NextResponse.json(
+        {
+          success: true,
+          gameId: existingGame.id,
+          alreadyExists: true,
+          message: `Game "${template.slug}" already exists`,
+        },
+        { status: 200 }
+      );
+    }
 
     // Run the pipeline
     const result = await generateGameFromTemplate(template);
