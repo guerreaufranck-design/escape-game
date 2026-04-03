@@ -109,8 +109,13 @@ export async function POST(
     const hint = hints[hintIndex];
     let hintText = t(hint.text, locale);
 
-    // Translate hint text for non-static locales
-    if (!isStaticLocale(locale)) {
+    // Translate hint text when needed:
+    // - non-static locales (Chinese, etc.) always need Gemini
+    // - static locales != 'en' also need Gemini when hint is plain English (pipeline-generated)
+    const hintIsPlainEnglish = typeof hint.text === "string" && !String(hint.text).startsWith("{");
+    const hintNeedsGemini = !isStaticLocale(locale) || (locale !== "en" && hintIsPlainEnglish);
+
+    if (hintNeedsGemini) {
       const enText = typeof hint.text === "object"
         ? (hint.text as Record<string, string>).en || (hint.text as Record<string, string>).fr || Object.values(hint.text as Record<string, string>)[0] || ""
         : String(hint.text);
