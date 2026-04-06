@@ -306,7 +306,7 @@ export default function AdminReportsPage() {
                             200
                           )}
                         </p>
-                        {report.game_steps.answer_text && (
+                        {!!report.game_steps.answer_text && (
                           <p className="text-zinc-500">
                             <span className="font-medium text-emerald-500">
                               Reponse:
