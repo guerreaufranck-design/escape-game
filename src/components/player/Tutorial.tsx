@@ -44,11 +44,11 @@ const getSlides = (estimatedDuration?: string): Slide[] => [
       it: "Prima di iniziare",
     },
     text: {
-      fr: `Duree estimee : ${estimatedDuration || "1h30 a 2h"} (sans compter le temps de retour au point de depart). Ce parcours se fait entierement a pied en exterieur. Attention : le parcours n'est pas adapte aux poussettes. Les enfants en bas age devront etre portes. Prevoyez de l'eau, de la creme solaire et de bonnes chaussures !`,
-      en: `Estimated duration: ${estimatedDuration || "1h30 to 2h"} (not including walk back to the starting point). This route is entirely on foot outdoors. Warning: the route is not suitable for strollers. Young children will need to be carried. Bring water, sunscreen and good shoes!`,
-      de: `Geschatzte Dauer: ${estimatedDuration || "1h30 bis 2h"} (ohne Ruckweg zum Startpunkt). Diese Route findet komplett zu Fuss im Freien statt. Achtung: Die Strecke ist nicht fur Kinderwagen geeignet. Kleinkinder mussen getragen werden. Bringen Sie Wasser, Sonnencreme und gute Schuhe mit!`,
-      es: `Duracion estimada: ${estimatedDuration || "1h30 a 2h"} (sin contar el tiempo de regreso al punto de partida). Este recorrido es totalmente a pie al aire libre. Atencion: el recorrido no es apto para cochecitos de bebe. Los ninos pequenos tendran que ir en brazos. Lleva agua, proteccion solar y buen calzado!`,
-      it: `Durata stimata: ${estimatedDuration || "1h30 a 2h"} (senza contare il ritorno al punto di partenza). Questo percorso e interamente a piedi all'aperto. Attenzione: il percorso non e adatto ai passeggini. I bambini piccoli dovranno essere portati in braccio. Portate acqua, crema solare e buone scarpe!`,
+      fr: `Duree estimee : ${estimatedDuration || "1h30 a 2h"} (sans compter le temps de retour au point de depart). Ce parcours se fait entierement a pied en exterieur. Attention : certains passages peuvent etre difficiles d'acces avec une poussette. Prevoyez de l'eau, de la creme solaire et de bonnes chaussures !`,
+      en: `Estimated duration: ${estimatedDuration || "1h30 to 2h"} (not including walk back to the starting point). This route is entirely on foot outdoors. Note: some sections may be tricky with a stroller. Bring water, sunscreen and good shoes!`,
+      de: `Geschatzte Dauer: ${estimatedDuration || "1h30 bis 2h"} (ohne Ruckweg zum Startpunkt). Diese Route findet komplett zu Fuss im Freien statt. Hinweis: Einige Abschnitte konnen mit einem Kinderwagen schwierig sein. Bringen Sie Wasser, Sonnencreme und gute Schuhe mit!`,
+      es: `Duracion estimada: ${estimatedDuration || "1h30 a 2h"} (sin contar el tiempo de regreso al punto de partida). Este recorrido es totalmente a pie al aire libre. Nota: algunos tramos pueden ser complicados con cochecito de bebe. Lleva agua, proteccion solar y buen calzado!`,
+      it: `Durata stimata: ${estimatedDuration || "1h30 a 2h"} (senza contare il ritorno al punto di partenza). Questo percorso e interamente a piedi all'aperto. Nota: alcuni tratti possono essere difficili con un passeggino. Portate acqua, crema solare e buone scarpe!`,
     },
   },
   {
@@ -98,11 +98,11 @@ const getSlides = (estimatedDuration?: string): Slide[] => [
       it: "Annotate le vostre risposte",
     },
     text: {
-      fr: "Chaque enigme vous donne un chiffre a trouver. Notez-le dans votre carnet (icone livre en haut). A la fin du jeu, vous devrez assembler tous les chiffres pour former le code final et valider votre victoire !",
-      en: "Each riddle gives you a number to find. Note it in your notebook (book icon at top). At the end of the game, you'll need to assemble all numbers to form the final code and validate your victory!",
-      de: "Jedes Ratsel gibt Ihnen eine Zahl zum Finden. Notieren Sie sie in Ihrem Notizbuch (Buchsymbol oben). Am Ende des Spiels mussen Sie alle Zahlen zum Endcode zusammensetzen und Ihren Sieg bestatigen!",
-      es: "Cada enigma te da un numero que encontrar. Anotalo en tu cuaderno (icono de libro arriba). Al final del juego, deberas reunir todos los numeros para formar el codigo final y validar tu victoria!",
-      it: "Ogni enigma vi da un numero da trovare. Annotatelo nel vostro taccuino (icona libro in alto). Alla fine del gioco, dovrete assemblare tutti i numeri per formare il codice finale e convalidare la vostra vittoria!",
+      fr: "Chaque enigme vous donne une reponse a trouver : un chiffre, un mot ou une phrase. Notez-la dans votre carnet (icone livre en haut). A la fin du jeu, assemblez toutes vos reponses pour former le code final et valider votre victoire !",
+      en: "Each riddle gives you an answer to find: a number, a word or a phrase. Note it in your notebook (book icon at top). At the end of the game, assemble all your answers to form the final code and validate your victory!",
+      de: "Jedes Ratsel gibt Ihnen eine Antwort zum Finden: eine Zahl, ein Wort oder einen Satz. Notieren Sie sie in Ihrem Notizbuch (Buchsymbol oben). Am Ende des Spiels setzen Sie alle Antworten zum Endcode zusammen und bestatigen Ihren Sieg!",
+      es: "Cada enigma te da una respuesta que encontrar: un numero, una palabra o una frase. Anotala en tu cuaderno (icono de libro arriba). Al final del juego, reune todas tus respuestas para formar el codigo final y validar tu victoria!",
+      it: "Ogni enigma vi da una risposta da trovare: un numero, una parola o una frase. Annotatela nel vostro taccuino (icona libro in alto). Alla fine del gioco, assemblate tutte le risposte per formare il codice finale e convalidare la vostra vittoria!",
     },
   },
   {

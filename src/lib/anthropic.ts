@@ -56,16 +56,18 @@ export async function generateGameSteps(
     )
     .join("\n\n");
 
-  const prompt = `You are an expert escape game designer with a talent for immersive storytelling. I am giving you ${locations.length} verified locations in ${city}, ${country}, with confirmed answers. Your job is to select the best 6 and create an unforgettable escape game around them.
+  const stepCount = Math.min(locations.length, 6);
 
-ABSOLUTE RULE: The answer_text field must contain ONLY the short answer provided below. It will be a number, a year, or a single word/name. Do NOT expand it into a sentence. Do NOT add any description. Copy it EXACTLY as shown. Example: if the answer is 5, write "5" not "five stone arches".
+  const prompt = `You are an expert escape game designer with a talent for immersive storytelling. I am giving you ${locations.length} verified locations in ${city}, ${country}, with confirmed answers. Your job is to select the best ${stepCount} and create an unforgettable escape game around them.
+
+ABSOLUTE RULE: The answer_text field must contain ONLY the short answer provided below. It will be a number, a year, a single word/name, or a short phrase. Do NOT expand it into a sentence. Do NOT add any description. Copy it EXACTLY as shown. Example: if the answer is 5, write "5" not "five stone arches".
 
 GAME PARAMETERS:
 - City: ${city}, ${country}
 - Theme: ${theme}
 - Narrative: ${narrative}
 - Difficulty: ${difficulty}/5
-- Steps: 6 (select the best 6 from the ${locations.length} locations below for narrative flow and walking route)
+- Steps: ${stepCount} (select the best ${stepCount} from the ${locations.length} locations below for narrative flow and walking route)
 - Language: English (will be auto-translated by the app)
 
 FOR EACH OF THE 6 STEPS, create a JSON object with:
@@ -74,17 +76,18 @@ FOR EACH OF THE 6 STEPS, create a JSON object with:
 2. "latitude": Use EXACTLY the coordinates provided below — do not modify them
 3. "longitude": Use EXACTLY the coordinates provided below — do not modify them
 4. "validation_radius_meters": Between 15 and 50 meters (adjust based on location size)
-5. "riddle_text": An immersive riddle (3-5 sentences) that:
+5. "riddle_text": An immersive riddle (4-6 sentences) that:
    - Does NOT name the location or the answer directly
-   - Weaves into the ongoing narrative
+   - Weaves into the ongoing narrative and references the previous step's discovery
    - Guides the player toward the location through atmospheric clues
-   - Tells them exactly WHAT to observe or count, without revealing the answer
-   - References the previous step's discovery to create narrative continuity
-6. "answer_text": Copy ONLY the short answer from the data below. A number must stay a number. A year must stay a year. NEVER turn it into a sentence.
+   - CRITICAL: Clearly tells the player WHAT TYPE of answer to look for: "Find the number engraved on...", "Read the word inscribed on the plaque...", "Count the arches...", "Look for the date carved in stone above the entrance..." etc.
+   - CRITICAL: Describes WHERE to look physically: on a wall, on a plaque, on a statue's pedestal, above a door, on a commemorative stone, on a sign, etc.
+   - The riddle IS the puzzle — the clues to solve it must be embedded in the poetic text
+6. "answer_text": Copy ONLY the short answer from the data below. A number must stay a number. A year must stay a year. A word must stay a word. NEVER turn it into a sentence.
 7. "hints": Array of EXACTLY 3 hints:
-   - Hint 1 (order: 1): Poetic and vague — sets the mood, gives a subtle direction
-   - Hint 2 (order: 2): Moderate — tells the player what TYPE of thing to look for and roughly where
-   - Hint 3 (order: 3): Very direct — nearly gives the answer without stating it explicitly
+   - Hint 1 (order: 1): Atmospheric hint — sets the mood and gives a general direction toward the right area of the location
+   - Hint 2 (order: 2): Practical hint — tells the player exactly what type of object to examine (a plaque, an inscription, a carving, a sign...) and where to look (facade, entrance, pedestal, floor...)
+   - Hint 3 (order: 3): Almost the answer — describes the answer's format (e.g. "It's a 4-digit year", "It's a single word in Latin", "Count them carefully — there are fewer than 10") without stating it
 8. "anecdote": A fascinating, true historical anecdote (2-3 sentences). Make it captivating — this is the player's reward.
 9. "bonus_time_seconds": 0 for straightforward steps, 30-60 for harder ones
 
