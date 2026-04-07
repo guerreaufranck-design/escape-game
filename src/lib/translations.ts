@@ -269,6 +269,16 @@ export const ui: Translations = {
     fr: 'Voir mes resultats !', en: 'See my results!', de: 'Meine Ergebnisse sehen!', es: 'Ver mis resultados!', it: 'Vedi i miei risultati!',
   },
 
+  'play.answerLocked': {
+    fr: 'Attention : votre reponse sera verrouillee et ne pourra plus etre modifiee.', en: 'Warning: your answer will be locked and cannot be changed later.', de: 'Achtung: Ihre Antwort wird gesperrt und kann spater nicht mehr geandert werden.', es: 'Atencion: tu respuesta sera bloqueada y no podra modificarse despues.', it: 'Attenzione: la vostra risposta sara bloccata e non potra essere modificata.',
+  },
+  'play.mustNoteAnswer': {
+    fr: 'Notez votre reponse ci-dessus avant de continuer', en: 'Write your answer above before continuing', de: 'Notieren Sie Ihre Antwort oben, bevor Sie fortfahren', es: 'Anota tu respuesta arriba antes de continuar', it: 'Annota la tua risposta sopra prima di continuare',
+  },
+  'play.upcoming': {
+    fr: 'A venir', en: 'Upcoming', de: 'Kommt noch', es: 'Proximo', it: 'In arrivo',
+  },
+
   // Play page - Dialogs
   'play.askHint': {
     fr: 'Demander l\'indice {n}/{total} ?\n\nPenalite : +{penalty}', en: 'Request hint {n}/{total}?\n\nPenalty: +{penalty}', de: 'Hinweis {n}/{total} anfordern?\n\nStrafe: +{penalty}', es: 'Pedir pista {n}/{total}?\n\nPenalizacion: +{penalty}', it: 'Richiedere indizio {n}/{total}?\n\nPenalita: +{penalty}',

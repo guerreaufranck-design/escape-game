@@ -614,8 +614,8 @@ export default function PlayPage() {
                   <span className="text-lg">📝</span>
                   <p className="text-sm font-medium text-emerald-400">{tt('play.noteAnswer', locale)}</p>
                 </div>
-                <p className="text-xs text-slate-500 mb-2">
-                  Ce chiffre/mot fera partie du code final a la fin du jeu.
+                <p className="text-xs text-orange-400/80 mb-2">
+                  {tt('play.answerLocked', locale)}
                 </p>
                 <input
                   type="text"
@@ -628,15 +628,19 @@ export default function PlayPage() {
               </CardContent>
             </Card>
 
-            {/* Continue button */}
+            {/* Continue button — disabled until notebook entry is filled */}
+            {!notebookInput.trim() && (
+              <p className="text-center text-xs text-orange-400 animate-pulse">
+                {tt('play.mustNoteAnswer', locale)}
+              </p>
+            )}
             <Button
               size="lg"
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed"
+              disabled={!notebookInput.trim()}
               onClick={() => {
-                // Save notebook entry
-                if (notebookInput.trim()) {
-                  setNotebook((prev) => ({ ...prev, [gameState.currentStep]: notebookInput.trim() }));
-                }
+                // Save notebook entry (locked — cannot be changed later)
+                setNotebook((prev) => ({ ...prev, [gameState.currentStep]: notebookInput.trim() }));
                 setNotebookInput("");
                 setStepSuccess(false);
                 setAnecdote(null);
@@ -921,16 +925,20 @@ export default function PlayPage() {
                   }`}
                 >
                   <span className="text-xs text-slate-500 w-14 shrink-0">{tt('play.step', locale)} {step}</span>
-                  {step <= gameState.currentStep ? (
+                  {notebook[step] ? (
+                    <span className="flex-1 text-sm font-mono font-bold text-emerald-400">
+                      {notebook[step]} <span className="text-emerald-600 text-[10px]">🔒</span>
+                    </span>
+                  ) : step <= gameState.currentStep ? (
                     <input
                       type="text"
-                      value={notebook[step] || ""}
+                      value=""
                       onChange={(e) => setNotebook((prev) => ({ ...prev, [step]: e.target.value }))}
-                      placeholder="Votre reponse..."
+                      placeholder={tt('play.answerPlaceholder', locale)}
                       className="flex-1 bg-transparent border-none text-sm font-mono font-bold text-emerald-400 placeholder-slate-600 focus:outline-none"
                     />
                   ) : (
-                    <span className="text-slate-600 italic text-xs">A venir</span>
+                    <span className="text-slate-600 italic text-xs">{tt('play.upcoming', locale)}</span>
                   )}
                 </div>
               ))}
