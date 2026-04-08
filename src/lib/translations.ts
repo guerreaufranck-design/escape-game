@@ -245,6 +245,21 @@ export const ui: Translations = {
   'play.correctAnswerLabel': {
     fr: 'La bonne reponse etait :', en: 'The correct answer was:', de: 'Die richtige Antwort war:', es: 'La respuesta correcta era:', it: 'La risposta corretta era:',
   },
+  'play.understood': {
+    fr: 'J\'ai compris, en route !', en: 'Got it, let\'s go!', de: 'Verstanden, los geht\'s!', es: 'Entendido, vamos!', it: 'Capito, andiamo!',
+  },
+  'play.reviewRiddle': {
+    fr: 'Revoir l\'enigme', en: 'Review riddle', de: 'Ratsel nochmal lesen', es: 'Revisar enigma', it: 'Rivedere l\'enigma',
+  },
+  'play.didYouKnow': {
+    fr: 'Le saviez-vous ?', en: 'Did you know?', de: 'Wussten Sie?', es: 'Sabias que?', it: 'Lo sapevate?',
+  },
+  'play.validatePhoto': {
+    fr: 'Valider par photo', en: 'Validate by photo', de: 'Per Foto bestatigen', es: 'Validar por foto', it: 'Valida con foto',
+  },
+  'play.hint': {
+    fr: 'Indice', en: 'Hint', de: 'Hinweis', es: 'Pista', it: 'Indizio',
+  },
   'play.reactivateGps': {
     fr: 'Reactiver le GPS', en: 'Reactivate GPS', de: 'GPS reaktivieren', es: 'Reactivar GPS', it: 'Riattiva GPS',
   },

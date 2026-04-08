@@ -41,6 +41,7 @@ import {
   SkipForward,
   BookOpen,
   Send,
+  ChevronLeft,
 } from "lucide-react";
 import { NavigationGuide } from "@/components/player/NavigationGuide";
 import { Tutorial } from "@/components/player/Tutorial";
@@ -99,6 +100,7 @@ export default function PlayPage() {
   const [photoValidating, setPhotoValidating] = useState(false);
   const [photoFeedback, setPhotoFeedback] = useState<string | null>(null);
   const [gpsTooFar, setGpsTooFar] = useState(false);
+  const [view, setView] = useState<"riddle" | "navigation">("riddle");
   const [gpsTooFarDistance, setGpsTooFarDistance] = useState<number>(0);
   const narration = useNarration(locale);
   const [narrationText, setNarrationText] = useState("");
@@ -207,6 +209,11 @@ export default function PlayPage() {
       timer.start();
     }
   }, [gameState?.startedAt, timer]);
+
+  // Reset to riddle view when step changes
+  useEffect(() => {
+    setView("riddle");
+  }, [gameState?.currentStep]);
 
   // Validate step
   const validateStep = async () => {
@@ -568,7 +575,7 @@ export default function PlayPage() {
     ((gameState.currentStep - 1) / gameState.totalSteps) * 100;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white pb-32">
+    <div className="min-h-screen bg-slate-950 text-white">
       {/* Step success overlay with anecdote */}
       {stepSuccess && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
@@ -598,7 +605,7 @@ export default function PlayPage() {
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                       <span className="text-lg">📖</span>
-                      <CardTitle className="text-sm text-emerald-400">Le saviez-vous ?</CardTitle>
+                      <CardTitle className="text-sm text-emerald-400">{tt('play.didYouKnow', locale)}</CardTitle>
                     </div>
                     {narration.supported && (
                       <NarrationButton
@@ -650,7 +657,6 @@ export default function PlayPage() {
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed"
               disabled={!notebookInput.trim()}
               onClick={() => {
-                // Save notebook entry (locked — cannot be changed later)
                 setNotebook((prev) => ({ ...prev, [gameState.currentStep]: notebookInput.trim() }));
                 setNotebookInput("");
                 setStepSuccess(false);
@@ -701,20 +707,17 @@ export default function PlayPage() {
         </div>
       )}
 
-      {/* Header */}
+      {/* Compact header */}
       <div className="bg-slate-900/80 backdrop-blur-sm border-b border-slate-800 sticky top-0 z-40">
-        <div className="max-w-lg mx-auto px-4 py-3">
+        <div className="max-w-lg mx-auto px-4 py-2.5">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="font-bold text-sm text-emerald-400 truncate max-w-[180px]">
-                {gameState.gameTitle}
-              </h1>
-              <p className="text-xs text-slate-400">
+            <div className="flex items-center gap-3">
+              <p className="text-xs font-medium text-emerald-400">
                 {tt('play.step', locale)} {gameState.currentStep}/{gameState.totalSteps}
               </p>
+              <Progress value={progressPercent} className="w-20 h-1.5" />
             </div>
             <div className="flex items-center gap-2">
-              {/* Notebook toggle */}
               <button
                 onClick={() => setShowNotebook(!showNotebook)}
                 className={`relative p-1.5 rounded-lg transition-colors ${
@@ -728,102 +731,66 @@ export default function PlayPage() {
                   </span>
                 )}
               </button>
-              <div className="flex items-center gap-1.5 text-sm">
-                <Clock className="h-4 w-4 text-slate-400" />
-                <span className="font-mono text-white">
+              <div className="flex items-center gap-1 text-sm">
+                <Clock className="h-3.5 w-3.5 text-slate-500" />
+                <span className="font-mono text-slate-300 text-xs">
                   {formatTime(timer.elapsedSeconds)}
                 </span>
               </div>
             </div>
           </div>
-          <Progress value={progressPercent} className="mt-2 h-1.5" />
         </div>
       </div>
 
-      <div className="max-w-lg mx-auto px-4 py-4 space-y-4">
-        {/* Map */}
-        <div className="rounded-xl overflow-hidden border border-slate-800">
-          <GameMap
-            playerLat={geo.latitude}
-            playerLon={geo.longitude}
-            targetLat={gameState.approximateTarget?.latitude ?? null}
-            targetLon={gameState.approximateTarget?.longitude ?? null}
-            validationRadius={gameState.validationRadius}
-            locale={locale}
-          />
-        </div>
-
-        {/* Navigation guide with compass */}
-        <NavigationGuide
-          playerLat={geo.latitude}
-          playerLon={geo.longitude}
-          targetLat={gameState.approximateTarget?.latitude ?? null}
-          targetLon={gameState.approximateTarget?.longitude ?? null}
-          distance={distance}
-          label={tt('play.targetDirection', locale)}
-          locale={locale}
-          navigationHint={navigationHint}
-        />
-
-        {/* Current riddle */}
-        {gameState.currentRiddle && (
-          <Card className="bg-slate-900/80 border-slate-800">
-            <CardHeader className="pb-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <div className="p-1.5 rounded-lg bg-emerald-500/10">
-                    <MapPin className="h-4 w-4 text-emerald-400" />
+      {/* ============ VIEW: RIDDLE ============ */}
+      {view === "riddle" && (
+        <div className="flex flex-col min-h-[calc(100vh-44px)]">
+          <div className="flex-1 flex flex-col justify-center max-w-lg mx-auto w-full px-6 py-8">
+            {/* Step title */}
+            {gameState.currentRiddle && (
+              <>
+                <div className="text-center mb-8">
+                  <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 mb-4">
+                    <MapPin className="h-6 w-6 text-emerald-400" />
                   </div>
-                  <CardTitle className="text-base text-emerald-300">
+                  <h2 className="text-xl font-bold text-emerald-300">
                     {gameState.currentRiddle.title}
-                  </CardTitle>
+                  </h2>
                 </div>
-                {narration.supported && (
-                  <NarrationButton
-                    text={gameState.currentRiddle.text}
-                    speaking={narration.speaking}
-                    currentText={narrationText}
-                    onSpeak={handleSpeak}
+
+                {/* Riddle text - immersive */}
+                <div className="relative mb-6">
+                  <div className="absolute -left-3 top-0 bottom-0 w-0.5 bg-gradient-to-b from-emerald-500/50 via-emerald-500/20 to-transparent" />
+                  <p className="text-slate-200 leading-relaxed text-[15px] pl-3 whitespace-pre-wrap">
+                    {gameState.currentRiddle.text}
+                  </p>
+                  {narration.supported && (
+                    <div className="mt-3 pl-3">
+                      <NarrationButton
+                        text={gameState.currentRiddle.text}
+                        speaking={narration.speaking}
+                        currentText={narrationText}
+                        onSpeak={handleSpeak}
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {gameState.currentRiddle.image && (
+                  <img
+                    src={gameState.currentRiddle.image}
+                    alt="Indice visuel"
+                    className="rounded-xl w-full max-h-48 object-cover mb-6"
                   />
                 )}
-              </div>
-            </CardHeader>
-            <CardContent>
-              <p className="text-slate-300 leading-relaxed whitespace-pre-wrap">
-                {gameState.currentRiddle.text}
-              </p>
-              {gameState.currentRiddle.image && (
-                <img
-                  src={gameState.currentRiddle.image}
-                  alt="Indice visuel"
-                  className="mt-3 rounded-lg w-full max-h-48 object-cover"
-                />
-              )}
-            </CardContent>
-          </Card>
-        )}
+              </>
+            )}
 
-        {/* Report error */}
-        {gameState.currentRiddle && (
-          <div className="flex justify-center">
-            <ReportError
-              gameId={gameState.gameId}
-              stepId={gameState.currentStepId ?? undefined}
-              sessionId={sessionId}
-              playerName={gameState.playerName}
-              stepOrder={gameState.currentStep}
-              locale={locale}
-            />
-          </div>
-        )}
-
-        {/* Hints */}
-        {hints.length > 0 && (
-          <Card className="bg-yellow-500/5 border-yellow-500/20">
-            <CardContent className="py-3">
-              <div className="space-y-2">
+            {/* Hints */}
+            {hints.length > 0 && (
+              <div className="space-y-2 mb-6">
                 {hints.map((hint, i) => (
-                  <div key={i} className="flex items-start gap-2">
+                  <div key={i} className="flex items-start gap-2 bg-yellow-500/5 border border-yellow-500/20 rounded-lg px-3 py-2.5">
                     <Lightbulb className="h-4 w-4 text-yellow-500 mt-0.5 shrink-0" />
                     <p className="text-sm text-yellow-200 flex-1">{hint.text}</p>
                     {narration.supported && (
@@ -838,84 +805,216 @@ export default function PlayPage() {
                   </div>
                 ))}
               </div>
-            </CardContent>
-          </Card>
-        )}
+            )}
 
-        {/* GPS error */}
-        {geo.error && (
-          <Card className="bg-red-500/10 border-red-500/30">
-            <CardContent className="py-3">
-              <p className="text-sm text-red-400">{geo.error}</p>
+            {/* Report error - discreet */}
+            {gameState.currentRiddle && (
+              <div className="flex justify-center mb-4">
+                <ReportError
+                  gameId={gameState.gameId}
+                  stepId={gameState.currentStepId ?? undefined}
+                  sessionId={sessionId}
+                  playerName={gameState.playerName}
+                  stepOrder={gameState.currentStep}
+                  locale={locale}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Bottom actions for riddle view */}
+          <div className="sticky bottom-0 bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
+            <div className="max-w-lg mx-auto space-y-3">
+              {/* Main CTA: go to navigation */}
               <Button
-                size="sm"
-                variant="outline"
-                className="mt-2"
-                onClick={geo.startTracking}
+                size="lg"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-14 rounded-xl text-base"
+                onClick={() => setView("navigation")}
               >
-                {tt('play.reactivateGps', locale)}
+                <Navigation className="h-5 w-5 mr-2" />
+                {tt('play.understood', locale)}
               </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* GPS too far — offer photo validation */}
-        {gpsTooFar && (
-          <div className="bg-orange-500/10 border border-orange-500/40 rounded-xl px-4 py-4 space-y-3">
-            <div className="flex items-start gap-3">
-              <MapPin className="h-5 w-5 text-orange-400 mt-0.5 shrink-0" />
-              <div>
-                <p className="text-sm font-medium text-orange-300">
-                  {tt('play.tooFar', locale).replace('{distance}', formatDistance(gpsTooFarDistance))}
-                </p>
-                <p className="text-xs text-slate-400 mt-1">
-                  Rapprochez-vous du lieu, ou prenez une photo pour prouver que vous y etes !
-                </p>
+              {/* Secondary actions */}
+              <div className="flex justify-center gap-4">
+                <button
+                  className="inline-flex items-center gap-1.5 text-xs text-yellow-500 hover:text-yellow-400 disabled:opacity-50"
+                  disabled={hintLoading || hints.length >= gameState.hintsAvailable}
+                  onClick={() => {
+                    const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
+                    if (confirm(tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty))) {
+                      requestHint(hints.length);
+                    }
+                  }}
+                >
+                  {hintLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lightbulb className="h-4 w-4" />}
+                  {tt('play.hint', locale)} ({hints.length}/{gameState.hintsAvailable})
+                </button>
+                <button
+                  className="inline-flex items-center gap-1.5 text-xs text-orange-400 hover:text-orange-300 disabled:opacity-50"
+                  disabled={skipping}
+                  onClick={() => {
+                    if (confirm(tt('play.skipConfirm', locale))) {
+                      skipStep();
+                    }
+                  }}
+                >
+                  {skipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <SkipForward className="h-4 w-4" />}
+                  {tt('play.skip', locale)}
+                </button>
               </div>
             </div>
-            <Button
-              size="sm"
-              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-              disabled={photoValidating}
-              onClick={() => validateByPhoto("location")}
-            >
-              {photoValidating ? (
-                <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              ) : (
-                <Camera className="h-4 w-4 mr-2" />
-              )}
-              Valider par photo
-            </Button>
           </div>
-        )}
+        </div>
+      )}
 
-        {/* Photo validation feedback */}
-        {photoFeedback && (
-          <div className="bg-blue-500/10 border border-blue-500/30 rounded-lg px-4 py-3 text-sm text-blue-300 flex items-start gap-2">
-            <Camera className="h-4 w-4 mt-0.5 shrink-0" />
-            <div>
-              <p>{photoFeedback}</p>
-              <button
-                onClick={() => setPhotoFeedback(null)}
-                className="text-xs text-blue-500 mt-1 hover:underline"
+      {/* ============ VIEW: NAVIGATION ============ */}
+      {view === "navigation" && (
+        <div className="flex flex-col h-[calc(100vh-44px)]">
+          {/* Back to riddle button */}
+          <button
+            onClick={() => setView("riddle")}
+            className="flex items-center gap-1.5 px-4 py-2 text-xs text-emerald-400 hover:text-emerald-300 bg-slate-900/50"
+          >
+            <ChevronLeft className="h-3.5 w-3.5" />
+            {tt('play.reviewRiddle', locale)}
+          </button>
+
+          {/* Map — takes most of the space */}
+          <div className="flex-1 relative">
+            <GameMap
+              playerLat={geo.latitude}
+              playerLon={geo.longitude}
+              targetLat={gameState.approximateTarget?.latitude ?? null}
+              targetLon={gameState.approximateTarget?.longitude ?? null}
+              validationRadius={gameState.validationRadius}
+              locale={locale}
+            />
+            {/* Temperature badge overlay on map */}
+            <div className={`absolute top-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-sm border border-slate-700 ${temp.color}`}>
+              <TempIcon className="h-4 w-4" />
+              <span className="text-xs font-medium">{temp.label}</span>
+            </div>
+          </div>
+
+          {/* Navigation guide */}
+          <div className="bg-slate-900/95 border-t border-slate-800">
+            <div className="max-w-lg mx-auto px-4 py-3">
+              <NavigationGuide
+                playerLat={geo.latitude}
+                playerLon={geo.longitude}
+                targetLat={gameState.approximateTarget?.latitude ?? null}
+                targetLon={gameState.approximateTarget?.longitude ?? null}
+                distance={distance}
+                label={tt('play.targetDirection', locale)}
+                locale={locale}
+                navigationHint={navigationHint}
+              />
+            </div>
+          </div>
+
+          {/* GPS error */}
+          {geo.error && (
+            <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/30">
+              <p className="text-xs text-red-400">{geo.error}</p>
+              <Button size="sm" variant="outline" className="mt-1 h-7 text-xs" onClick={geo.startTracking}>
+                {tt('play.reactivateGps', locale)}
+              </Button>
+            </div>
+          )}
+
+          {/* GPS too far — photo fallback */}
+          {gpsTooFar && (
+            <div className="px-4 py-3 bg-orange-500/10 border-t border-orange-500/40">
+              <p className="text-sm font-medium text-orange-300 mb-2">
+                {tt('play.tooFar', locale).replace('{distance}', formatDistance(gpsTooFarDistance))}
+              </p>
+              <Button
+                size="sm"
+                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+                disabled={photoValidating}
+                onClick={() => validateByPhoto("location")}
               >
+                {photoValidating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Camera className="h-4 w-4 mr-2" />}
+                {tt('play.validatePhoto', locale)}
+              </Button>
+            </div>
+          )}
+
+          {/* Photo feedback */}
+          {photoFeedback && (
+            <div className="px-4 py-2 bg-blue-500/10 border-t border-blue-500/30 text-sm text-blue-300 flex items-center justify-between">
+              <p>{photoFeedback}</p>
+              <button onClick={() => setPhotoFeedback(null)} className="text-xs text-blue-500 hover:underline ml-2 shrink-0">
                 Fermer
               </button>
             </div>
-          </div>
-        )}
+          )}
 
-        {/* Error message */}
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 rounded-lg px-4 py-2 text-sm text-red-400">
-            {error}
+          {/* Error message */}
+          {error && (
+            <div className="px-4 py-2 bg-red-500/10 border-t border-red-500/30 text-sm text-red-400">
+              {error}
+            </div>
+          )}
+
+          {/* Bottom action bar */}
+          <div className="bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
+            <div className="max-w-lg mx-auto flex gap-3">
+              {/* Hint */}
+              <button
+                className="inline-flex items-center justify-center rounded-xl border border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/10 h-12 px-4 disabled:opacity-50"
+                disabled={hintLoading || hints.length >= gameState.hintsAvailable}
+                onClick={() => {
+                  const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
+                  if (confirm(tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty))) {
+                    requestHint(hints.length);
+                  }
+                }}
+              >
+                {hintLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Lightbulb className="h-5 w-5" />}
+                <span className="ml-1.5 text-xs">{hints.length}/{gameState.hintsAvailable}</span>
+              </button>
+
+              {/* Validate GPS */}
+              <Button
+                size="lg"
+                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
+                disabled={!geo.latitude || !geo.longitude || validating}
+                onClick={validateStep}
+              >
+                {validating ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <MapPin className="h-5 w-5 mr-2" />}
+                {tt('play.validateGps', locale)}
+              </Button>
+
+              {/* Photo validate */}
+              <button
+                className="inline-flex items-center justify-center rounded-xl border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 h-12 px-4 disabled:opacity-50"
+                disabled={photoValidating}
+                onClick={() => validateByPhoto("location")}
+              >
+                {photoValidating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Camera className="h-5 w-5" />}
+              </button>
+
+              {/* Skip */}
+              <button
+                className="inline-flex items-center justify-center rounded-xl border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 h-12 px-4 disabled:opacity-50"
+                disabled={skipping}
+                onClick={() => {
+                  if (confirm(tt('play.skipConfirm', locale))) {
+                    skipStep();
+                  }
+                }}
+              >
+                {skipping ? <Loader2 className="h-5 w-5 animate-spin" /> : <SkipForward className="h-5 w-5" />}
+              </button>
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* Notebook panel (slide down) */}
       {showNotebook && (
-        <div className="fixed top-[60px] left-0 right-0 z-[1000] bg-slate-900 border-b border-emerald-800/30 shadow-2xl">
+        <div className="fixed top-[44px] left-0 right-0 z-[1000] bg-slate-900 border-b border-emerald-800/30 shadow-2xl">
           <div className="max-w-lg mx-auto px-4 py-3">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
@@ -1080,77 +1179,6 @@ export default function PlayPage() {
         </div>
       )}
 
-      {/* Bottom action bar */}
-      <div className="fixed bottom-0 left-0 right-0 bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
-        <div className="max-w-lg mx-auto flex gap-3">
-          {/* Hint button */}
-          <button
-            className="inline-flex items-center justify-center rounded-md border border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/10 h-11 px-4 disabled:opacity-50"
-            disabled={hintLoading || hints.length >= gameState.hintsAvailable}
-            onClick={() => {
-              const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
-              if (confirm(tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty))) {
-                requestHint(hints.length);
-              }
-            }}
-          >
-            {hintLoading ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <Lightbulb className="h-5 w-5" />
-            )}
-            <span className="ml-1.5 text-xs">
-              {hints.length}/{gameState.hintsAvailable}
-            </span>
-          </button>
-
-          {/* Validate position button */}
-          <Button
-            size="lg"
-            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-            disabled={!geo.latitude || !geo.longitude || validating}
-            onClick={validateStep}
-          >
-            {validating ? (
-              <Loader2 className="h-5 w-5 animate-spin mr-2" />
-            ) : (
-              <MapPin className="h-5 w-5 mr-2" />
-            )}
-            {tt('play.validateGps', locale)}
-          </Button>
-
-          {/* Validate by photo (AI) */}
-          <button
-            className="inline-flex items-center justify-center rounded-md border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 h-11 px-4 disabled:opacity-50"
-            disabled={photoValidating}
-            onClick={() => validateByPhoto("location")}
-            title="Valider par photo"
-          >
-            {photoValidating ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <Camera className="h-5 w-5" />
-            )}
-          </button>
-
-          {/* Skip step button */}
-          <button
-            className="inline-flex items-center justify-center rounded-md border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 h-11 px-4 disabled:opacity-50"
-            disabled={skipping}
-            onClick={() => {
-              if (confirm(tt('play.skipConfirm', locale))) {
-                skipStep();
-              }
-            }}
-          >
-            {skipping ? (
-              <Loader2 className="h-5 w-5 animate-spin" />
-            ) : (
-              <SkipForward className="h-5 w-5" />
-            )}
-          </button>
-        </div>
-      </div>
     </div>
   );
 }
