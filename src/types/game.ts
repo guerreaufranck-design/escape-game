@@ -24,8 +24,8 @@ export interface GameState {
   currentStep: number;
   currentStepId: string | null;
   totalSteps: number;
-  status: "active" | "completed" | "abandoned";
-  startedAt: string;
+  status: "pending" | "active" | "completed" | "abandoned";
+  startedAt: string | null;
   currentRiddle: {
     title: string;
     text: string;

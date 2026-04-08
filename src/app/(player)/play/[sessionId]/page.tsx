@@ -101,6 +101,7 @@ export default function PlayPage() {
   const [photoFeedback, setPhotoFeedback] = useState<string | null>(null);
   const [gpsTooFar, setGpsTooFar] = useState(false);
   const [view, setView] = useState<"riddle" | "navigation">("riddle");
+  const [startingGame, setStartingGame] = useState(false);
   const [gpsTooFarDistance, setGpsTooFarDistance] = useState<number>(0);
   const narration = useNarration(locale);
   const [narrationText, setNarrationText] = useState("");
@@ -463,8 +464,8 @@ export default function PlayPage() {
     );
   }
 
-  // Intro / briefing screen with starting point
-  if (showIntro && gameState.currentStep === 1 && gameState.completedSteps.length === 0) {
+  // Intro / briefing screen with starting point (show for pending sessions or first visit)
+  if ((showIntro || gameState.status === "pending") && gameState.currentStep === 1 && gameState.completedSteps.length === 0) {
     return (
       <div className="min-h-screen bg-slate-950 text-white">
         <div className="max-w-lg mx-auto px-4 py-6 space-y-5">
@@ -555,13 +556,32 @@ export default function PlayPage() {
             </div>
           )}
 
-          {/* Start button */}
+          {/* Start button — starts the timer via API */}
           <Button
             size="lg"
             className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg h-14 rounded-xl"
-            onClick={() => setShowIntro(false)}
+            disabled={startingGame}
+            onClick={async () => {
+              setStartingGame(true);
+              try {
+                const res = await fetch(`/api/game/${sessionId}/start`, { method: "POST" });
+                const data = await res.json();
+                if (data.success) {
+                  await fetchGameState();
+                  setShowIntro(false);
+                }
+              } catch {
+                setError("Erreur lors du demarrage");
+              } finally {
+                setStartingGame(false);
+              }
+            }}
           >
-            <Flame className="h-5 w-5 mr-2" />
+            {startingGame ? (
+              <Loader2 className="h-5 w-5 animate-spin mr-2" />
+            ) : (
+              <Flame className="h-5 w-5 mr-2" />
+            )}
             {tt('play.letsGo', locale)}
           </Button>
         </div>

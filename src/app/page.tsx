@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useRef, useEffect, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -100,8 +100,9 @@ function LanguageSelect({ onSelect }: { onSelect: (code: string) => void }) {
   );
 }
 
-export default function HomePage() {
+function HomePageInner() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [locale, setLocale] = useLocale();
   const { tt, loading: uiLoading } = useTranslatedUI(locale);
   const [langChosen, setLangChosen] = useState(false);
@@ -111,6 +112,17 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null]);
+
+  // Pre-fill code from URL ?code=XXXX-XXXX-XXXX
+  useEffect(() => {
+    const codeParam = searchParams.get("code");
+    if (codeParam) {
+      const codeParts = codeParam.toUpperCase().replace(/[^A-Z0-9-]/g, "").split("-").filter(p => p.length > 0);
+      if (codeParts.length >= 3) {
+        setParts([codeParts[0].slice(0, 4), codeParts[1].slice(0, 4), codeParts[2].slice(0, 4)]);
+      }
+    }
+  }, [searchParams]);
 
   const code = parts.join("-");
 
@@ -377,5 +389,13 @@ export default function HomePage() {
         Oddball Trip — Outdoor Escape Games
       </footer>
     </div>
+  );
+}
+
+export default function HomePage() {
+  return (
+    <Suspense>
+      <HomePageInner />
+    </Suspense>
   );
 }

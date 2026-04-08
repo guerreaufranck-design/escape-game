@@ -88,7 +88,7 @@ export async function GET(
     let hintsAvailable = 0;
     let currentStepId: string | null = null;
 
-    if (session.status === "active" && session.current_step <= session.total_steps) {
+    if ((session.status === "active" || session.status === "pending") && session.current_step <= session.total_steps) {
       const { data: step } = await supabase
         .from("game_steps")
         .select("*")
