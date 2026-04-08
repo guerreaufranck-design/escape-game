@@ -88,6 +88,7 @@ export default function PlayPage() {
   const [videoWatched, setVideoWatched] = useState(false);
   const [tutorialDone, setTutorialDone] = useState(false);
   const [anecdote, setAnecdote] = useState<{ title: string; text: string } | null>(null);
+  const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [notebook, setNotebook] = useState<Record<number, string>>({});
   const [notebookInput, setNotebookInput] = useState("");
   const [showNotebook, setShowNotebook] = useState(false);
@@ -229,6 +230,7 @@ export default function PlayPage() {
         setStepSuccess(true);
         setHints([]);
         setGpsTooFar(false);
+        if (data.answerText) setCorrectAnswer(data.answerText);
         if (data.anecdote) {
           setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
         }
@@ -317,6 +319,7 @@ export default function PlayPage() {
           setStepSuccess(true);
           setHints([]);
           setGpsTooFar(false);
+          if (data.answerText) setCorrectAnswer(data.answerText);
           if (data.anecdote) {
             setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
           }
@@ -580,6 +583,14 @@ export default function PlayPage() {
               </p>
             </div>
 
+            {/* Correct answer */}
+            {correctAnswer && (
+              <div className="text-center space-y-1">
+                <p className="text-sm text-slate-400">{tt('play.correctAnswerLabel', locale)}</p>
+                <p className="text-2xl font-bold text-emerald-400">{correctAnswer}</p>
+              </div>
+            )}
+
             {/* Anecdote card */}
             {anecdote && (
               <Card className="bg-slate-900/95 border-emerald-800/50">
@@ -644,6 +655,7 @@ export default function PlayPage() {
                 setNotebookInput("");
                 setStepSuccess(false);
                 setAnecdote(null);
+                setCorrectAnswer(null);
                 narration.stop();
                 setNarrationText("");
 
