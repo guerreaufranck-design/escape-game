@@ -880,7 +880,7 @@ export default function PlayPage() {
           </button>
 
           {/* Map — takes most of the space */}
-          <div className="flex-1 relative min-h-0">
+          <div className="flex-1 relative min-h-0 z-0">
             <GameMap
               playerLat={geo.latitude}
               playerLon={geo.longitude}
