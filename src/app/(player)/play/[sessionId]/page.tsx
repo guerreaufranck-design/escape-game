@@ -880,7 +880,7 @@ export default function PlayPage() {
           </button>
 
           {/* Map — takes most of the space */}
-          <div className="flex-1 relative">
+          <div className="flex-1 relative min-h-0">
             <GameMap
               playerLat={geo.latitude}
               playerLon={geo.longitude}
@@ -888,6 +888,7 @@ export default function PlayPage() {
               targetLon={gameState.approximateTarget?.longitude ?? null}
               validationRadius={gameState.validationRadius}
               locale={locale}
+              fullHeight
             />
             {/* Temperature badge overlay on map */}
             <div className={`absolute top-3 right-3 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-900/80 backdrop-blur-sm border border-slate-700 ${temp.color}`}>

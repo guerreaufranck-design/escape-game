@@ -46,6 +46,7 @@ interface GameMapInnerProps {
   validationRadius: number;
   zoom?: number;
   locale?: string;
+  fullHeight?: boolean;
 }
 
 function MapUpdater({
@@ -115,17 +116,22 @@ export default function GameMapInner({
   validationRadius,
   zoom = 15,
   locale = "fr",
+  fullHeight = false,
 }: GameMapInnerProps) {
   const centerLat = playerLat ?? targetLat ?? 48.8566;
   const centerLon = playerLon ?? targetLon ?? 2.3522;
   const [expanded, setExpanded] = useState(false);
 
+  const mapHeightClass = fullHeight
+    ? "h-full"
+    : expanded ? "h-[70vh]" : "h-56";
+
   return (
-    <div className="relative overflow-hidden rounded-xl border border-emerald-900/50 shadow-lg shadow-emerald-900/10">
+    <div className={`relative overflow-hidden ${fullHeight ? "h-full" : "rounded-xl border border-emerald-900/50 shadow-lg shadow-emerald-900/10"}`}>
       <MapContainer
         center={[centerLat, centerLon]}
         zoom={zoom}
-        className={`w-full transition-all duration-300 ${expanded ? "h-[70vh]" : "h-56"}`}
+        className={`w-full transition-all duration-300 ${mapHeightClass}`}
         zoomControl={false}
         attributionControl={false}
       >
@@ -175,8 +181,8 @@ export default function GameMapInner({
         )}
       </MapContainer>
 
-      {/* Expand / Collapse toggle */}
-      <button
+      {/* Expand / Collapse toggle — hidden in fullHeight mode */}
+      {!fullHeight && <button
         onClick={() => setExpanded(!expanded)}
         className="absolute bottom-2 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-1.5 px-3 py-1.5 bg-zinc-900/90 backdrop-blur border border-zinc-700 rounded-full text-xs text-zinc-300 hover:text-emerald-400 hover:border-emerald-700 transition-colors shadow-lg"
       >
@@ -201,7 +207,7 @@ export default function GameMapInner({
             {tt('nav.enlarge', locale)}
           </>
         )}
-      </button>
+      </button>}
     </div>
   );
 }

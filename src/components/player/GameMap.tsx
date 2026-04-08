@@ -10,6 +10,7 @@ interface GameMapProps {
   validationRadius: number;
   zoom?: number;
   locale?: string;
+  fullHeight?: boolean;
 }
 
 const GameMapInner = dynamic(() => import("./GameMapInner"), {
