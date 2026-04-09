@@ -98,7 +98,17 @@ export default function PlayPage() {
   const [codeResult, setCodeResult] = useState<{ valid: boolean; message: string } | null>(null);
   const [validatingCode, setValidatingCode] = useState(false);
   const [photoValidating, setPhotoValidating] = useState(false);
-  const [photoFeedback, setPhotoFeedback] = useState<string | null>(null);
+  const [photoFeedback, setPhotoFeedback] = useState<{
+    message: string;
+    recognizedObject?: string;
+    anecdote?: string;
+    proximityHint?: string;
+  } | null>(null);
+  // Per-session cap: after this many rich recognitions we fall back to
+  // the plain feedback to preserve the surprise effect and avoid turning
+  // the game into an AI tour guide.
+  const MAX_PHOTO_RECOGNITIONS = 2;
+  const [photoRecognitionCount, setPhotoRecognitionCount] = useState(0);
   const [gpsTooFar, setGpsTooFar] = useState(false);
   const [view, setView] = useState<"riddle" | "navigation">("riddle");
   const [startingGame, setStartingGame] = useState(false);
@@ -333,10 +343,27 @@ export default function PlayPage() {
           }
           setPhotoFeedback(null);
         } else {
-          setPhotoFeedback(data.feedback || "Ce n'est pas le bon lieu. Reessayez !");
+          const hasRichData = !!(data.recognizedObject || data.anecdote);
+          const canShowRich = photoRecognitionCount < MAX_PHOTO_RECOGNITIONS;
+
+          if (hasRichData && canShowRich) {
+            setPhotoRecognitionCount((c) => c + 1);
+            setPhotoFeedback({
+              message: data.feedback || "Ce n'est pas le bon lieu. Reessayez !",
+              recognizedObject: data.recognizedObject || undefined,
+              anecdote: data.anecdote || undefined,
+              proximityHint: data.proximityHint || undefined,
+            });
+          } else {
+            // Over limit or no rich identification — show plain feedback only
+            setPhotoFeedback({
+              message: data.feedback || "Ce n'est pas le bon lieu. Reessayez !",
+              proximityHint: data.proximityHint || undefined,
+            });
+          }
         }
       } catch {
-        setPhotoFeedback("Erreur lors de la validation photo");
+        setPhotoFeedback({ message: "Erreur lors de la validation photo" });
       } finally {
         setPhotoValidating(false);
       }
@@ -963,11 +990,52 @@ export default function PlayPage() {
 
           {/* Photo feedback */}
           {photoFeedback && (
-            <div className="px-4 py-2 bg-blue-500/10 border-t border-blue-500/30 text-sm text-blue-300 flex items-center justify-between">
-              <p>{photoFeedback}</p>
-              <button onClick={() => setPhotoFeedback(null)} className="text-xs text-blue-500 hover:underline ml-2 shrink-0">
-                Fermer
-              </button>
+            <div className="px-4 py-3 bg-gradient-to-b from-blue-500/10 to-purple-500/10 border-t border-blue-500/30">
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div className="flex-1">
+                  {photoFeedback.recognizedObject ? (
+                    <>
+                      <p className="text-xs uppercase tracking-wider text-blue-400 font-semibold mb-1">
+                        {tt('play.notTheTarget', locale)}
+                      </p>
+                      <p className="text-sm text-white font-medium">
+                        {tt('play.youPhotographed', locale)}{" "}
+                        <span className="text-blue-300 font-bold">{photoFeedback.recognizedObject}</span>
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-blue-300">{photoFeedback.message}</p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setPhotoFeedback(null)}
+                  className="text-xs text-blue-400 hover:text-blue-300 shrink-0"
+                  aria-label="Fermer"
+                >
+                  ✕
+                </button>
+              </div>
+              {photoFeedback.anecdote && (
+                <div className="mt-2 p-3 bg-slate-900/60 border border-blue-500/20 rounded-lg">
+                  <p className="text-xs uppercase tracking-wider text-amber-400 font-semibold mb-1">
+                    {tt('play.didYouKnow', locale)}
+                  </p>
+                  <p className="text-xs text-slate-300 leading-relaxed italic">
+                    {photoFeedback.anecdote}
+                  </p>
+                </div>
+              )}
+              {(photoFeedback.recognizedObject || photoFeedback.anecdote) && (
+                <p className="mt-2 text-[10px] text-slate-500 italic text-right">
+                  {tt('play.aiDisclaimer', locale)}
+                </p>
+              )}
+              {photoFeedback.proximityHint && (
+                <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1.5">
+                  <Navigation className="h-3 w-3 shrink-0" />
+                  {photoFeedback.proximityHint}
+                </p>
+              )}
             </div>
           )}
 

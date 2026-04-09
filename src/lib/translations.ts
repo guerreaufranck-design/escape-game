@@ -254,6 +254,15 @@ export const ui: Translations = {
   'play.didYouKnow': {
     fr: 'Le saviez-vous ?', en: 'Did you know?', de: 'Wussten Sie?', es: 'Sabias que?', it: 'Lo sapevate?',
   },
+  'play.notTheTarget': {
+    fr: 'Ce n\'est pas le bon endroit', en: 'Not the right place', de: 'Nicht der richtige Ort', es: 'No es el lugar correcto', it: 'Non e il posto giusto',
+  },
+  'play.youPhotographed': {
+    fr: 'Vous avez photographie', en: 'You photographed', de: 'Sie haben fotografiert', es: 'Has fotografiado', it: 'Hai fotografato',
+  },
+  'play.aiDisclaimer': {
+    fr: 'Reconnaissance IA, peut contenir des imprecisions', en: 'AI recognition, may contain inaccuracies', de: 'KI-Erkennung, kann Ungenauigkeiten enthalten', es: 'Reconocimiento IA, puede contener imprecisiones', it: 'Riconoscimento IA, puo contenere imprecisioni',
+  },
   'play.validatePhoto': {
     fr: 'Valider par photo', en: 'Validate by photo', de: 'Per Foto bestatigen', es: 'Validar por foto', it: 'Valida con foto',
   },

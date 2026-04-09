@@ -104,8 +104,8 @@ export async function POST(request: NextRequest) {
       ? photoBase64.split(",")[1]
       : photoBase64;
 
-    // Valider la photo avec Gemini
-    const result = await validatePhotoWithAI(base64Data, referenceDescription);
+    // Valider la photo avec Gemini (avec identification + anecdote en cas d'echec)
+    const result = await validatePhotoWithAI(base64Data, referenceDescription, locale);
 
     if (mode === "location" && result.confidence > 0.6 && result.isValid) {
       // Photo validates location — treat as step completion (same as GPS validation)
@@ -201,10 +201,21 @@ export async function POST(request: NextRequest) {
         .eq("step_order", stepOrder);
     }
 
+    // Confidence threshold: only expose recognizedObject/anecdote if Gemini
+    // is highly confident it identified the right thing. Otherwise keep it
+    // vague to avoid hallucinations being shown to the player.
+    const RECOGNITION_THRESHOLD = 0.7;
+    const highConfidence =
+      typeof result.recognitionConfidence === "number" &&
+      result.recognitionConfidence >= RECOGNITION_THRESHOLD;
+
     return NextResponse.json({
       isValid: result.isValid,
       confidence: result.confidence,
       feedback: result.feedback,
+      recognizedObject: highConfidence ? result.recognizedObject : undefined,
+      anecdote: highConfidence ? result.anecdote : undefined,
+      proximityHint: result.proximityHint,
     });
   } catch (err) {
     console.error("Erreur route ai/validate-photo:", err);

@@ -6,7 +6,7 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
  * Returns a Gemini 2.5 Flash model instance.
  */
 export function getGeminiModel() {
-  return genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+  return genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 }
 
 /**
@@ -44,12 +44,28 @@ export async function translateText(
 /**
  * Compares a player's photo (base64) with the expected landmark description.
  * Returns validation result with confidence score and feedback.
+ *
+ * When the photo does NOT match the expected target, Gemini is asked to
+ * identify what the player actually photographed and provide a short
+ * anecdote about it, to reinforce the discovery experience.
  */
 export async function validatePhotoWithAI(
   playerPhotoBase64: string,
-  expectedDescription: string
-): Promise<{ isValid: boolean; confidence: number; feedback: string }> {
+  expectedDescription: string,
+  lang: string = "fr"
+): Promise<{
+  isValid: boolean;
+  confidence: number;
+  feedback: string;
+  recognizedObject?: string;
+  recognitionConfidence?: number;
+  anecdote?: string;
+  proximityHint?: string;
+}> {
   const model = getGeminiModel();
+
+  const { getLanguageName } = await import("@/lib/i18n");
+  const langName = getLanguageName(lang);
 
   const result = await model.generateContent({
     contents: [
@@ -57,20 +73,35 @@ export async function validatePhotoWithAI(
         role: "user",
         parts: [
           {
-            text: `Tu es un validateur de photos pour un jeu de piste en exterieur.
+            text: `You are a photo validator for an outdoor treasure hunt game.
 
-Le joueur devait photographier : "${expectedDescription}"
+The player was supposed to photograph: "${expectedDescription}"
 
-Analyse la photo fournie et determine :
-1. Est-ce que l'image montre le lieu ou le sujet decrit ?
-2. Quel est ton niveau de confiance ?
-3. Donne un court feedback encourageant en francais.
+TASK 1 — Match the photo against the target:
+- Does the image show the place or subject described above?
+- What is your confidence (0.0 to 1.0)?
 
-Reponds UNIQUEMENT en JSON valide avec ce format exact :
+TASK 2 — Only if the photo does NOT match the target, try to identify what it is.
+
+CRITICAL RULES for identification (anti-hallucination):
+- Only set "recognizedObject" if you are HIGHLY CONFIDENT of the specific, verifiable name (e.g. a famous monument you actually know). Use the "recognitionConfidence" field to report this confidence.
+- If you only see a generic object (a fountain, a statue, a church, a building) without being certain of its specific identity, LEAVE "recognizedObject" EMPTY. Do not guess. Do not invent.
+- Only write an "anecdote" if you know VERIFIABLE historical or cultural facts about the specific object you named. If unsure, leave it empty. Never fabricate dates, architects, or events.
+- The "anecdote" MUST be ONE short sentence (maximum 20 words) — a teaser, not a lecture. It should intrigue, not distract from the game.
+- Better to return empty fields than to hallucinate.
+- All text MUST be written in ${langName}.
+
+If the photo DOES match the target, just fill the "feedback" field with a short encouraging message in ${langName} and leave all other optional fields empty.
+
+Reply ONLY with valid JSON in this exact format:
 {
-  "isValid": true ou false,
-  "confidence": 0.0 a 1.0,
-  "feedback": "Message court et encourageant en francais"
+  "isValid": true or false,
+  "confidence": 0.0 to 1.0,
+  "feedback": "Short encouraging message in ${langName}",
+  "recognizedObject": "Specific verified name, or empty string if not certain",
+  "recognitionConfidence": 0.0 to 1.0,
+  "anecdote": "ONE short VERIFIABLE sentence (max 20 words), or empty string",
+  "proximityHint": "Short encouragement to keep searching nearby in ${langName}, or empty string"
 }`,
           },
           {
@@ -84,7 +115,7 @@ Reponds UNIQUEMENT en JSON valide avec ce format exact :
     ],
     generationConfig: {
       responseMimeType: "application/json",
-      temperature: 0.2,
+      temperature: 0.3,
     },
   });
 
@@ -96,6 +127,10 @@ Reponds UNIQUEMENT en JSON valide avec ce format exact :
       isValid?: boolean;
       confidence?: number;
       feedback?: string;
+      recognizedObject?: string;
+      recognitionConfidence?: number;
+      anecdote?: string;
+      proximityHint?: string;
     };
     return {
       isValid: parsed.isValid === true,
@@ -107,6 +142,22 @@ Reponds UNIQUEMENT en JSON valide avec ce format exact :
         typeof parsed.feedback === "string"
           ? parsed.feedback
           : "Photo analysee.",
+      recognizedObject:
+        typeof parsed.recognizedObject === "string" && parsed.recognizedObject.trim()
+          ? parsed.recognizedObject.trim()
+          : undefined,
+      recognitionConfidence:
+        typeof parsed.recognitionConfidence === "number"
+          ? Math.min(1, Math.max(0, parsed.recognitionConfidence))
+          : undefined,
+      anecdote:
+        typeof parsed.anecdote === "string" && parsed.anecdote.trim()
+          ? parsed.anecdote.trim()
+          : undefined,
+      proximityHint:
+        typeof parsed.proximityHint === "string" && parsed.proximityHint.trim()
+          ? parsed.proximityHint.trim()
+          : undefined,
     };
   } catch {
     console.error("Erreur de parsing de la reponse Gemini:", text);
