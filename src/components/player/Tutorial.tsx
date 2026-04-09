@@ -15,6 +15,7 @@ import {
   ChevronLeft,
   Clock,
   AlertTriangle,
+  Camera,
 } from "lucide-react";
 
 interface TutorialProps {
@@ -85,6 +86,24 @@ const getSlides = (estimatedDuration?: string): Slide[] => [
       de: "Der grune Pfeil zeigt immer nach oben auf Ihrem Telefon. Drehen Sie sich: Wenn das \"N\" des Kreises mit dem Pfeil ubereinstimmt, gehen Sie in die richtige Richtung. Entfernung und Gehzeit werden in Echtzeit aktualisiert.",
       es: "La flecha verde siempre apunta hacia arriba en tu telefono. Gira sobre ti mismo: cuando la \"N\" del circulo se alinea con la flecha, vas en la direccion correcta. La distancia y el tiempo de caminata se actualizan en tiempo real.",
       it: "La freccia verde punta sempre verso l'alto del vostro telefono. Giratevi: quando la \"N\" del cerchio si allinea con la freccia, state andando nella direzione giusta. Distanza e tempo di camminata si aggiornano in tempo reale.",
+    },
+  },
+  {
+    icon: <Camera className="h-10 w-10" />,
+    color: "text-blue-400",
+    title: {
+      fr: "Perdu ? Prenez une photo",
+      en: "Lost? Take a photo",
+      de: "Verlaufen? Machen Sie ein Foto",
+      es: "Perdido? Haz una foto",
+      it: "Persi? Scattate una foto",
+    },
+    text: {
+      fr: "Si le GPS vous dit que vous etes trop loin du bon endroit, vous pouvez prendre une photo de ce que vous voyez. Si c'est la bonne cible, l'etape se valide. Sinon, notre IA reconnait parfois un monument ou une statue et vous partage une petite anecdote pour enrichir votre decouverte. A utiliser avec moderation : l'enigme reste le cœur du jeu !",
+      en: "If the GPS says you're too far from the right spot, you can take a photo of what you see. If it's the right target, the step is validated. Otherwise, our AI sometimes recognizes a monument or statue and shares a short fact to enrich your discovery. Use sparingly: the riddle is still the heart of the game!",
+      de: "Wenn GPS sagt, dass Sie zu weit vom richtigen Ort entfernt sind, konnen Sie ein Foto machen. Wenn es das richtige Ziel ist, wird die Etappe bestatigt. Andernfalls erkennt unsere KI manchmal ein Denkmal oder eine Statue und teilt eine kurze Anekdote. Sparsam verwenden: Das Ratsel bleibt das Herz des Spiels!",
+      es: "Si el GPS te dice que estas demasiado lejos del lugar correcto, puedes hacer una foto de lo que ves. Si es el objetivo correcto, la etapa se valida. De lo contrario, nuestra IA a veces reconoce un monumento o una estatua y comparte una breve anecdota. Usar con moderacion: el enigma sigue siendo el corazon del juego!",
+      it: "Se il GPS dice che siete troppo lontani dal posto giusto, potete scattare una foto di cio che vedete. Se e l'obiettivo corretto, la tappa si convalida. Altrimenti, la nostra IA a volte riconosce un monumento o una statua e condivide un breve aneddoto. Usare con moderazione: l'enigma resta il cuore del gioco!",
     },
   },
   {
