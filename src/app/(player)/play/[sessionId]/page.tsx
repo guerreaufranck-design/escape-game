@@ -43,6 +43,9 @@ import {
   Send,
   ChevronLeft,
   Sparkles,
+  Menu,
+  X,
+  ChevronRight,
 } from "lucide-react";
 import { NavigationGuide } from "@/components/player/NavigationGuide";
 import { ARCameraOverlay } from "@/components/player/ARCameraOverlay";
@@ -95,6 +98,7 @@ export default function PlayPage() {
   const [notebook, setNotebook] = useState<Record<number, string>>({});
   const [notebookInput, setNotebookInput] = useState("");
   const [showNotebook, setShowNotebook] = useState(false);
+  const [showActionMenu, setShowActionMenu] = useState(false);
   const [showFinalCode, setShowFinalCode] = useState(false);
   const [finalCodeInput, setFinalCodeInput] = useState("");
   const [codeResult, setCodeResult] = useState<{ valid: boolean; message: string } | null>(null);
@@ -816,25 +820,24 @@ export default function PlayPage() {
               <Progress value={progressPercent} className="w-20 h-1.5" />
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => setShowNotebook(!showNotebook)}
-                className={`relative p-1.5 rounded-lg transition-colors ${
-                  showNotebook ? "bg-emerald-500/20 text-emerald-400" : "text-slate-400 hover:text-slate-200"
-                }`}
-              >
-                <BookOpen className="h-4 w-4" />
-                {Object.keys(notebook).length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold">
-                    {Object.keys(notebook).length}
-                  </span>
-                )}
-              </button>
               <div className="flex items-center gap-1 text-sm">
                 <Clock className="h-3.5 w-3.5 text-slate-500" />
                 <span className="font-mono text-slate-300 text-xs">
                   {formatTime(timer.elapsedSeconds)}
                 </span>
               </div>
+              <button
+                onClick={() => setShowActionMenu(true)}
+                className="relative p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
+                aria-label={tt('play.menu', locale)}
+              >
+                <Menu className="h-5 w-5" />
+                {Object.keys(notebook).length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold">
+                    {Object.keys(notebook).length}
+                  </span>
+                )}
+              </button>
             </div>
           </div>
         </div>
@@ -993,15 +996,6 @@ export default function PlayPage() {
               <TempIcon className="h-4 w-4" />
               <span className="text-xs font-medium">{temp.label}</span>
             </div>
-            {/* AR mode toggle */}
-            <button
-              onClick={() => setArOpen(true)}
-              className="absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-2 rounded-full bg-emerald-600/90 hover:bg-emerald-500 text-white shadow-lg backdrop-blur-sm border border-emerald-400/50"
-              aria-label={tt('play.arMode', locale)}
-            >
-              <Camera className="h-4 w-4" />
-              <span className="text-xs font-bold uppercase tracking-wider">{tt('play.arMode', locale)}</span>
-            </button>
           </div>
 
           {/* Navigation guide */}
@@ -1106,59 +1100,160 @@ export default function PlayPage() {
             </div>
           )}
 
-          {/* Bottom action bar */}
-          <div className="bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
-            <div className="max-w-lg mx-auto flex gap-3">
-              {/* Hint */}
-              <button
-                className="inline-flex items-center justify-center rounded-xl border border-yellow-500/30 text-yellow-500 hover:bg-yellow-500/10 h-12 px-4 disabled:opacity-50"
-                disabled={hintLoading || hints.length >= gameState.hintsAvailable}
-                onClick={() => {
-                  const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
-                  if (confirm(tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty))) {
-                    requestHint(hints.length);
-                  }
-                }}
-              >
-                {hintLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Lightbulb className="h-5 w-5" />}
-                <span className="ml-1.5 text-xs">{hints.length}/{gameState.hintsAvailable}</span>
-              </button>
-
-              {/* Validate GPS */}
+          {/* Bottom action bar — one primary action, everything else in burger menu */}
+          <div className="bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
+            <div className="max-w-lg mx-auto">
               <Button
                 size="lg"
-                className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
+                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-14 rounded-xl text-base shadow-lg shadow-emerald-900/30"
                 disabled={!geo.latitude || !geo.longitude || validating}
                 onClick={validateStep}
               >
                 {validating ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <MapPin className="h-5 w-5 mr-2" />}
                 {tt('play.validateGps', locale)}
               </Button>
-
-              {/* Photo validate */}
-              <button
-                className="inline-flex items-center justify-center rounded-xl border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/10 h-12 px-4 disabled:opacity-50"
-                disabled={photoValidating}
-                onClick={() => validateByPhoto("location")}
-              >
-                {photoValidating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Camera className="h-5 w-5" />}
-              </button>
-
-              {/* Skip */}
-              <button
-                className="inline-flex items-center justify-center rounded-xl border border-orange-500/30 text-orange-400 hover:bg-orange-500/10 h-12 px-4 disabled:opacity-50"
-                disabled={skipping}
-                onClick={() => {
-                  if (confirm(tt('play.skipConfirm', locale))) {
-                    skipStep();
-                  }
-                }}
-              >
-                {skipping ? <Loader2 className="h-5 w-5 animate-spin" /> : <SkipForward className="h-5 w-5" />}
-              </button>
             </div>
           </div>
         </div>
+      )}
+
+      {/* Action menu drawer (slide from right) */}
+      {showActionMenu && (
+        <>
+          <div
+            className="fixed inset-0 z-[1100] bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => setShowActionMenu(false)}
+          />
+          <div
+            className="fixed top-0 right-0 bottom-0 z-[1101] w-[88%] max-w-sm bg-slate-950 border-l border-emerald-500/20 shadow-2xl flex flex-col animate-in slide-in-from-right duration-200"
+            style={{ paddingTop: "env(safe-area-inset-top, 0px)", paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Menu className="h-5 w-5 text-emerald-400" />
+                <span className="text-base font-bold text-white">{tt('play.menuActions', locale)}</span>
+              </div>
+              <button
+                onClick={() => setShowActionMenu(false)}
+                className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
+                aria-label="Close"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+              {/* Notebook */}
+              <button
+                onClick={() => {
+                  setShowActionMenu(false);
+                  setShowNotebook(true);
+                }}
+                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 hover:bg-emerald-500/20 transition-colors text-left"
+              >
+                <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-emerald-500/20 border border-emerald-500/40 flex items-center justify-center relative">
+                  <BookOpen className="h-6 w-6 text-emerald-300" />
+                  {Object.keys(notebook).length > 0 && (
+                    <span className="absolute -top-1 -right-1 w-5 h-5 bg-emerald-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold">
+                      {Object.keys(notebook).length}
+                    </span>
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-white">{tt('play.notebookTitle', locale)}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{tt('play.notebookDesc', locale)}</p>
+                </div>
+                <ChevronRight className="h-5 w-5 text-slate-500 flex-shrink-0" />
+              </button>
+
+              {/* AR Mode */}
+              <button
+                onClick={() => {
+                  setShowActionMenu(false);
+                  setArOpen(true);
+                }}
+                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-gradient-to-br from-fuchsia-500/10 to-emerald-500/10 border border-fuchsia-500/30 hover:from-fuchsia-500/20 hover:to-emerald-500/20 transition-colors text-left"
+              >
+                <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-gradient-to-br from-fuchsia-500/30 to-emerald-500/30 border border-fuchsia-400/40 flex items-center justify-center">
+                  <Sparkles className="h-6 w-6 text-fuchsia-200" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-white">{tt('play.arMode', locale)}</p>
+                    <span className="text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded bg-fuchsia-500/30 text-fuchsia-200 border border-fuchsia-400/40">NEW</span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">{tt('play.arModeDesc', locale)}</p>
+                </div>
+                <ChevronRight className="h-5 w-5 text-slate-500 flex-shrink-0" />
+              </button>
+
+              {/* Hint */}
+              <button
+                disabled={hintLoading || hints.length >= gameState.hintsAvailable}
+                onClick={() => {
+                  const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
+                  if (confirm(tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty))) {
+                    setShowActionMenu(false);
+                    requestHint(hints.length);
+                  }
+                }}
+                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-yellow-500/20 border border-yellow-500/40 flex items-center justify-center">
+                  {hintLoading ? <Loader2 className="h-6 w-6 text-yellow-300 animate-spin" /> : <Lightbulb className="h-6 w-6 text-yellow-300" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-bold text-white">{tt('play.hintAction', locale)}</p>
+                    <span className="text-[10px] font-mono font-bold text-yellow-400 bg-yellow-500/20 px-1.5 py-0.5 rounded">{hints.length}/{gameState.hintsAvailable}</span>
+                  </div>
+                  <p className="text-xs text-slate-400 mt-0.5">{tt('play.hintActionDesc', locale)}</p>
+                </div>
+                <ChevronRight className="h-5 w-5 text-slate-500 flex-shrink-0" />
+              </button>
+
+              {/* Photo validate */}
+              <button
+                disabled={photoValidating}
+                onClick={() => {
+                  setShowActionMenu(false);
+                  validateByPhoto("location");
+                }}
+                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-blue-500/10 border border-blue-500/30 hover:bg-blue-500/20 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center">
+                  {photoValidating ? <Loader2 className="h-6 w-6 text-blue-300 animate-spin" /> : <Camera className="h-6 w-6 text-blue-300" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-white">{tt('play.validateByPhoto', locale)}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{tt('play.validateByPhotoDesc', locale)}</p>
+                </div>
+                <ChevronRight className="h-5 w-5 text-slate-500 flex-shrink-0" />
+              </button>
+
+              {/* Skip step */}
+              <button
+                disabled={skipping}
+                onClick={() => {
+                  if (confirm(tt('play.skipConfirm', locale))) {
+                    setShowActionMenu(false);
+                    skipStep();
+                  }
+                }}
+                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/30 hover:bg-orange-500/20 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-orange-500/20 border border-orange-500/40 flex items-center justify-center">
+                  {skipping ? <Loader2 className="h-6 w-6 text-orange-300 animate-spin" /> : <SkipForward className="h-6 w-6 text-orange-300" />}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-bold text-white">{tt('play.skipAction', locale)}</p>
+                  <p className="text-xs text-slate-400 mt-0.5">{tt('play.skipActionDesc', locale)}</p>
+                </div>
+                <ChevronRight className="h-5 w-5 text-slate-500 flex-shrink-0" />
+              </button>
+            </div>
+          </div>
+        </>
       )}
 
       {/* Notebook panel (slide down) */}

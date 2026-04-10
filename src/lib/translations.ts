@@ -361,6 +361,36 @@ export const ui: Translations = {
   'play.skip': {
     fr: 'Passer', en: 'Skip', de: 'Uberspringen', es: 'Saltar', it: 'Salta',
   },
+  'play.menu': {
+    fr: 'Menu', en: 'Menu', de: 'Menu', es: 'Menu', it: 'Menu',
+  },
+  'play.menuActions': {
+    fr: 'Actions', en: 'Actions', de: 'Aktionen', es: 'Acciones', it: 'Azioni',
+  },
+  'play.notebookTitle': {
+    fr: 'Mon carnet', en: 'My notebook', de: 'Mein Notizbuch', es: 'Mi cuaderno', it: 'Il mio taccuino',
+  },
+  'play.notebookDesc': {
+    fr: 'Notez et relisez vos reponses', en: 'Write and review your answers', de: 'Antworten notieren und nachlesen', es: 'Anotar y revisar tus respuestas', it: 'Annota e rivedi le tue risposte',
+  },
+  'play.validateByPhoto': {
+    fr: 'Valider par photo', en: 'Validate by photo', de: 'Mit Foto bestatigen', es: 'Validar por foto', it: 'Convalida con foto',
+  },
+  'play.validateByPhotoDesc': {
+    fr: 'Si le GPS est imprecis, photographiez la cible', en: 'If GPS is inaccurate, photograph the target', de: 'Wenn GPS ungenau ist, fotografieren Sie das Ziel', es: 'Si el GPS es impreciso, fotografia el objetivo', it: 'Se il GPS e impreciso, fotografa l\'obiettivo',
+  },
+  'play.hintAction': {
+    fr: 'Demander un indice', en: 'Request a hint', de: 'Hinweis anfordern', es: 'Pedir una pista', it: 'Richiedi un indizio',
+  },
+  'play.hintActionDesc': {
+    fr: 'Penalite : +2 min (puis +10 min des le 4e)', en: 'Penalty: +2 min (then +10 min from the 4th)', de: 'Strafe: +2 Min. (ab dem 4. +10 Min.)', es: 'Penalizacion: +2 min (luego +10 min desde el 4º)', it: 'Penalita: +2 min (poi +10 min dal 4o)',
+  },
+  'play.skipAction': {
+    fr: 'Passer l\'etape', en: 'Skip the step', de: 'Schritt uberspringen', es: 'Saltar la etapa', it: 'Salta la tappa',
+  },
+  'play.skipActionDesc': {
+    fr: 'Penalite : +45 min · la reponse sera revelee', en: 'Penalty: +45 min · the answer will be revealed', de: 'Strafe: +45 Min. · die Antwort wird enthullt', es: 'Penalizacion: +45 min · se revelara la respuesta', it: 'Penalita: +45 min · la risposta sara rivelata',
+  },
 
   // Play page - Notebook
   'play.notebookHint': {
