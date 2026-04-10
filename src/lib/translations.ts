@@ -404,6 +404,27 @@ export const ui: Translations = {
   'nav.direction': {
     fr: 'direction', en: 'direction', de: 'Richtung', es: 'direccion', it: 'direzione',
   },
+  'map.divanArrow': {
+    fr: 'Fleche DIVAN',
+    en: 'DIVAN arrow',
+    de: 'DIVAN-Pfeil',
+    es: 'Flecha DIVAN',
+    it: 'Freccia DIVAN',
+  },
+  'play.divanIntroTitle': {
+    fr: 'Nouveau : mode DIVAN sur la carte',
+    en: 'New: DIVAN mode on the map',
+    de: 'Neu: DIVAN-Modus auf der Karte',
+    es: 'Nuevo: modo DIVAN en el mapa',
+    it: 'Nuovo: modalita DIVAN sulla mappa',
+  },
+  'play.divanIntroDesc': {
+    fr: 'Votre position est desormais entouree d\'une grande fleche verte qui pivote automatiquement vers le prochain objectif, et une ligne en pointilles relie les deux points avec la distance au milieu. Aucune boussole n\'est necessaire : tout est calcule a partir du GPS et s\'actualise en temps reel au fur et a mesure que vous avancez.',
+    en: 'Your position is now wrapped in a large green arrow that automatically pivots toward the next objective, and a dashed line connects the two points with the distance in the middle. No compass needed: everything is computed from GPS and refreshes in real time as you move.',
+    de: 'Ihre Position ist jetzt von einem grossen grunen Pfeil umgeben, der sich automatisch zum nachsten Ziel dreht, und eine gestrichelte Linie verbindet die beiden Punkte mit der Entfernung in der Mitte. Kein Kompass erforderlich: Alles wird aus dem GPS berechnet und aktualisiert sich in Echtzeit, wahrend Sie sich bewegen.',
+    es: 'Tu posicion esta ahora rodeada de una gran flecha verde que pivota automaticamente hacia el proximo objetivo, y una linea de puntos conecta los dos puntos con la distancia en el centro. No se necesita brujula: todo se calcula a partir del GPS y se actualiza en tiempo real mientras te mueves.',
+    it: 'La tua posizione e ora circondata da una grande freccia verde che ruota automaticamente verso il prossimo obiettivo, e una linea tratteggiata collega i due punti con la distanza al centro. Nessuna bussola necessaria: tutto e calcolato dal GPS e si aggiorna in tempo reale mentre ti muovi.',
+  },
   'nav.walkMin': {
     fr: 'min a pied', en: 'min walk', de: 'Min. zu Fuss', es: 'min a pie', it: 'min a piedi',
   },

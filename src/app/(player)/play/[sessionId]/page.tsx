@@ -586,6 +586,30 @@ export default function PlayPage() {
             </div>
           )}
 
+          {/* DIVAN mode teaser — always-on map enhancement */}
+          <Card className="bg-gradient-to-br from-emerald-950/60 to-slate-900/80 border-emerald-500/30">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40">
+                  <Navigation className="h-5 w-5 text-emerald-300" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-sm font-bold text-emerald-300">
+                      {tt('play.divanIntroTitle', locale)}
+                    </h3>
+                    <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[9px] font-bold uppercase tracking-wider">
+                      {tt('play.arIntroBadge', locale)}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    {tt('play.divanIntroDesc', locale)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* AR mode teaser — prominent feature announcement */}
           <Card className="bg-gradient-to-br from-emerald-950/60 to-slate-900/80 border-emerald-500/30">
             <CardContent className="p-4">

@@ -1,17 +1,19 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import {
   MapContainer,
   TileLayer,
   Marker,
   Circle,
+  Polyline,
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { MAP_TILE_URL, MAP_ATTRIBUTION } from "@/lib/constants";
 import { tt } from "@/lib/translations";
+import { calculateBearing, haversineDistance, formatDistance } from "@/lib/geo";
 
 // Fix Leaflet default icon issue with Next.js bundler
 delete (L.Icon.Default.prototype as unknown as Record<string, unknown>)._getIconUrl;
@@ -24,7 +26,7 @@ L.Icon.Default.mergeOptions({
     "https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/images/marker-shadow.png",
 });
 
-const playerIcon = new L.DivIcon({
+const plainPlayerIcon = new L.DivIcon({
   className: "player-marker",
   html: `<div style="
     width: 20px;
@@ -37,6 +39,70 @@ const playerIcon = new L.DivIcon({
   iconSize: [20, 20],
   iconAnchor: [10, 10],
 });
+
+/**
+ * DIVAN icon: the player dot surrounded by a large directional cone
+ * that points at the current target. The rotation is done with pure
+ * GPS bearing — no device compass required. The SVG is laid out so
+ * the arrow's tip is at the top of the viewport (0 degrees = north)
+ * and rotates clockwise as bearing increases.
+ */
+function buildDivanIcon(bearing: number): L.DivIcon {
+  return new L.DivIcon({
+    className: "player-marker-divan",
+    html: `
+      <div style="
+        position: relative;
+        width: 88px;
+        height: 88px;
+        pointer-events: none;
+      ">
+        <div style="
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          width: 88px;
+          height: 88px;
+          transform: translate(-50%, -50%) rotate(${bearing}deg);
+          transform-origin: center;
+          transition: transform 250ms ease-out;
+        ">
+          <svg viewBox="0 0 88 88" width="88" height="88" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <radialGradient id="divanGlow" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stop-color="#10b981" stop-opacity="0.4" />
+                <stop offset="70%" stop-color="#10b981" stop-opacity="0.05" />
+                <stop offset="100%" stop-color="#10b981" stop-opacity="0" />
+              </radialGradient>
+            </defs>
+            <circle cx="44" cy="44" r="44" fill="url(#divanGlow)" />
+            <path
+              d="M 44 4 L 58 36 L 44 28 L 30 36 Z"
+              fill="#10b981"
+              stroke="#064e3b"
+              stroke-width="1.5"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </div>
+        <div style="
+          position: absolute;
+          left: 50%;
+          top: 50%;
+          transform: translate(-50%, -50%);
+          width: 20px;
+          height: 20px;
+          background: #3b82f6;
+          border: 3px solid #ffffff;
+          border-radius: 50%;
+          box-shadow: 0 0 12px rgba(59,130,246,0.6);
+        "></div>
+      </div>
+    `,
+    iconSize: [88, 88],
+    iconAnchor: [44, 44],
+  });
+}
 
 interface GameMapInnerProps {
   playerLat: number | null;
@@ -126,6 +192,33 @@ export default function GameMapInner({
     ? "h-full"
     : expanded ? "h-[70vh]" : "h-56";
 
+  // DIVAN: compute live GPS bearing and distance between player and
+  // target. No device compass involved — purely derived from GPS
+  // coordinates, so it always points at the next point to reach.
+  const hasBothPoints =
+    playerLat !== null &&
+    playerLon !== null &&
+    targetLat !== null &&
+    targetLon !== null;
+
+  const divanBearing = hasBothPoints
+    ? calculateBearing(playerLat!, playerLon!, targetLat!, targetLon!)
+    : 0;
+  const divanDistance = hasBothPoints
+    ? haversineDistance(playerLat!, playerLon!, targetLat!, targetLon!)
+    : 0;
+  const divanMidpoint: [number, number] | null = hasBothPoints
+    ? [(playerLat! + targetLat!) / 2, (playerLon! + targetLon!) / 2]
+    : null;
+
+  // Memoise the icon so we only rebuild it when the bearing actually
+  // changes (every tiny GPS jitter would otherwise create a new icon
+  // and force Leaflet to redraw the DOM).
+  const playerIcon = useMemo(() => {
+    if (!hasBothPoints) return plainPlayerIcon;
+    return buildDivanIcon(divanBearing);
+  }, [hasBothPoints, divanBearing]);
+
   return (
     <div className={`relative overflow-hidden ${fullHeight ? "h-full" : "rounded-xl border border-emerald-900/50 shadow-lg shadow-emerald-900/10"}`}>
       <MapContainer
@@ -147,7 +240,49 @@ export default function GameMapInner({
           defaultZoom={zoom}
         />
 
-        {/* Player position */}
+        {/* DIVAN: live line from player to target with distance badge */}
+        {hasBothPoints && (
+          <>
+            <Polyline
+              positions={[
+                [playerLat!, playerLon!],
+                [targetLat!, targetLon!],
+              ]}
+              pathOptions={{
+                color: "#10b981",
+                weight: 3,
+                opacity: 0.65,
+                dashArray: "10 8",
+                lineCap: "round",
+              }}
+            />
+            {divanMidpoint && (
+              <Marker
+                position={divanMidpoint}
+                icon={new L.DivIcon({
+                  className: "divan-distance-label",
+                  html: `<div style="
+                    background: rgba(2, 6, 23, 0.9);
+                    border: 1px solid rgba(16, 185, 129, 0.5);
+                    color: #6ee7b7;
+                    padding: 2px 8px;
+                    border-radius: 9999px;
+                    font-size: 11px;
+                    font-weight: 700;
+                    white-space: nowrap;
+                    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+                    backdrop-filter: blur(4px);
+                  ">${formatDistance(divanDistance)}</div>`,
+                  iconSize: [0, 0],
+                  iconAnchor: [0, 0],
+                })}
+                interactive={false}
+              />
+            )}
+          </>
+        )}
+
+        {/* Player position (DIVAN arrow merged into the icon when target is known) */}
         {playerLat !== null && playerLon !== null && (
           <Marker position={[playerLat, playerLon]} icon={playerIcon} />
         )}

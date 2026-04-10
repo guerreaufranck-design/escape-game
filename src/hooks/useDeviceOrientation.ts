@@ -17,10 +17,17 @@ interface DeviceOrientationState {
 /**
  * Exponential moving average coefficient used to smooth noisy
  * orientation values. Lower = more stable (more lag), higher = more
- * reactive (more jitter). 0.15 is a good compromise for a handheld
- * phone in a walking use case.
+ * reactive (more jitter). 0.35 gives a perceptibly snappier response
+ * than the default 0.15 while still filtering most handheld jitter.
+ *
+ * If the raw delta is large (phone swung hard) we bypass the EMA to
+ * avoid the "molasses" feeling when the user turns quickly. See
+ * FAST_TRACK_THRESHOLD below.
  */
-const EMA_ALPHA = 0.15;
+const EMA_ALPHA = 0.35;
+/** Degrees of raw delta above which we snap to the new value instead
+ *  of smoothing — keeps the marker in sync during quick rotations. */
+const FAST_TRACK_THRESHOLD = 25;
 
 /**
  * Smooth a new angle value against a previous smoothed value using an
@@ -32,6 +39,10 @@ function smoothAngle(previous: number, next: number, alpha: number): number {
   let delta = next - previous;
   while (delta > 180) delta -= 360;
   while (delta < -180) delta += 360;
+  // Fast-track big rotations so the HUD stays glued to the real cap.
+  if (Math.abs(delta) > FAST_TRACK_THRESHOLD) {
+    return ((next % 360) + 360) % 360;
+  }
   const smoothed = previous + alpha * delta;
   // Normalise back to [0, 360)
   return ((smoothed % 360) + 360) % 360;

@@ -336,7 +336,7 @@ export function ARCameraOverlay({
       {/* World-anchored waypoint marker (inside FOV) */}
       {cameraReady && hasGps && orientation.hasCompass && insideFov && (
         <div
-          className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 transition-[left,top] duration-150 ease-out"
+          className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 transition-[left,top] duration-75 ease-out"
           style={{
             left: `${markerLeftPct}%`,
             top: `${markerTopPct}%`,
