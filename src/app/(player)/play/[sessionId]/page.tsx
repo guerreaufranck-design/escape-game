@@ -845,7 +845,7 @@ export default function PlayPage() {
 
       {/* ============ VIEW: RIDDLE ============ */}
       {view === "riddle" && (
-        <div className="flex flex-col min-h-[calc(100vh-44px)]">
+        <div className="flex flex-col min-h-[calc(100dvh-44px)]">
           <div className="flex-1 flex flex-col justify-center max-w-lg mx-auto w-full px-6 py-8">
             {/* Step title */}
             {gameState.currentRiddle && (
@@ -970,7 +970,7 @@ export default function PlayPage() {
 
       {/* ============ VIEW: NAVIGATION ============ */}
       {view === "navigation" && (
-        <div className="flex flex-col h-[calc(100vh-44px)]">
+        <div className="flex flex-col min-h-[calc(100dvh-44px)]">
           {/* Back to riddle button */}
           <button
             onClick={() => setView("riddle")}
@@ -980,8 +980,8 @@ export default function PlayPage() {
             {tt('play.reviewRiddle', locale)}
           </button>
 
-          {/* Map — takes most of the space */}
-          <div className="flex-1 relative min-h-0 z-0">
+          {/* Map — takes most of the space, at least half the viewport so it never collapses */}
+          <div className="flex-1 relative min-h-[50dvh] z-0">
             <GameMap
               playerLat={geo.latitude}
               playerLon={geo.longitude}
@@ -1100,8 +1100,8 @@ export default function PlayPage() {
             </div>
           )}
 
-          {/* Bottom action bar — one primary action, everything else in burger menu */}
-          <div className="bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
+          {/* Bottom action bar — sticky so the primary action stays visible even when content scrolls */}
+          <div className="sticky bottom-0 z-20 mt-auto bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
             <div className="max-w-lg mx-auto">
               <Button
                 size="lg"
