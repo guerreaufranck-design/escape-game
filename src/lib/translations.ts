@@ -221,6 +221,89 @@ export const ui: Translations = {
   'play.targetDirection': {
     fr: 'Direction de l\'objectif', en: 'Direction to target', de: 'Richtung zum Ziel', es: 'Direccion al objetivo', it: 'Direzione all\'obiettivo',
   },
+  'play.arMode': {
+    fr: 'Mode RA', en: 'AR mode', de: 'AR-Modus', es: 'Modo RA', it: 'Modalita AR',
+  },
+  'play.arModeDesc': {
+    fr: 'Suivre la fleche avec la camera', en: 'Follow the arrow with the camera', de: 'Folgen Sie dem Pfeil mit der Kamera', es: 'Seguir la flecha con la camara', it: 'Segui la freccia con la fotocamera',
+  },
+  'play.arIntroTitle': {
+    fr: 'Nouveau : mode realite augmentee',
+    en: 'New: augmented reality mode',
+    de: 'Neu: Augmented-Reality-Modus',
+    es: 'Nuevo: modo realidad aumentada',
+    it: 'Nuovo: modalita realta aumentata',
+  },
+  'play.arIntroBadge': {
+    fr: 'Nouveau', en: 'New', de: 'Neu', es: 'Nuevo', it: 'Nuovo',
+  },
+  'play.arIntroDesc': {
+    fr: 'Pendant le jeu, touchez le bouton "Mode RA" sur la carte pour ouvrir votre camera. Un marqueur flottant s\'ancre dans l\'espace a la position de votre objectif, un mini-radar en haut a gauche affiche sa direction sur 360°, et les anneaux de couleur indiquent la proximite. Quand vous etes aligne et proche, votre telephone vibre : cible verrouillee.',
+    en: 'During the game, tap the "AR mode" button on the map to open your camera. A floating marker is pinned in space at your target location, a mini-radar in the top-left shows its direction across 360°, and coloured rings indicate proximity. When you\'re lined up and close, your phone vibrates: target locked.',
+    de: 'Tippen Sie wahrend des Spiels auf der Karte auf "AR-Modus", um die Kamera zu offnen. Ein schwebender Marker wird im Raum an der Position Ihres Ziels verankert, ein Mini-Radar oben links zeigt die Richtung auf 360°, und farbige Ringe zeigen die Nahe. Wenn Sie ausgerichtet und nah sind, vibriert Ihr Telefon: Ziel erfasst.',
+    es: 'Durante el juego, pulsa el boton "Modo RA" en el mapa para abrir la camara. Un marcador flotante se ancla en el espacio en la posicion del objetivo, un mini radar arriba a la izquierda muestra su direccion en 360° y los anillos de colores indican la proximidad. Cuando estas alineado y cerca, el telefono vibra: objetivo fijado.',
+    it: 'Durante il gioco, tocca il pulsante "Modalita AR" sulla mappa per aprire la fotocamera. Un marcatore fluttuante viene ancorato nello spazio alla posizione del tuo obiettivo, un mini-radar in alto a sinistra ne mostra la direzione a 360° e gli anelli colorati indicano la prossimita. Quando sei allineato e vicino, il telefono vibra: obiettivo agganciato.',
+  },
+  'ar.label': {
+    fr: 'Realite augmentee', en: 'Augmented reality', de: 'Augmented Reality', es: 'Realidad aumentada', it: 'Realta aumentata',
+  },
+  'ar.close': {
+    fr: 'Fermer', en: 'Close', de: 'Schliessen', es: 'Cerrar', it: 'Chiudi',
+  },
+  'ar.cameraError': {
+    fr: 'Impossible d\'acceder a la camera. Verifiez les permissions.', en: 'Unable to access the camera. Check permissions.', de: 'Kamera nicht verfugbar. Berechtigungen prufen.', es: 'No se puede acceder a la camara. Verifica los permisos.', it: 'Impossibile accedere alla fotocamera. Verifica i permessi.',
+  },
+  'ar.enableCompass': {
+    fr: 'Activez la boussole pour suivre la direction', en: 'Enable the compass to follow the direction', de: 'Kompass aktivieren, um der Richtung zu folgen', es: 'Activa la brujula para seguir la direccion', it: 'Attiva la bussola per seguire la direzione',
+  },
+  'ar.activate': {
+    fr: 'Activer', en: 'Activate', de: 'Aktivieren', es: 'Activar', it: 'Attiva',
+  },
+  'ar.waitingGps': {
+    fr: 'En attente du signal GPS...', en: 'Waiting for GPS signal...', de: 'Warte auf GPS-Signal...', es: 'Esperando senal GPS...', it: 'In attesa del segnale GPS...',
+  },
+  'ar.movePhone': {
+    fr: 'Bougez le telephone en forme de 8 pour calibrer la boussole', en: 'Move the phone in a figure 8 to calibrate the compass', de: 'Bewegen Sie das Telefon in einer 8 zum Kalibrieren des Kompasses', es: 'Mueve el telefono en forma de 8 para calibrar la brujula', it: 'Muovi il telefono a forma di 8 per calibrare la bussola',
+  },
+  'ar.distance': {
+    fr: 'Distance', en: 'Distance', de: 'Entfernung', es: 'Distancia', it: 'Distanza',
+  },
+  'ar.bearing': {
+    fr: 'Cap', en: 'Bearing', de: 'Kurs', es: 'Rumbo', it: 'Rotta',
+  },
+  'ar.turn': {
+    fr: 'Ecart', en: 'Offset', de: 'Abweichung', es: 'Desvio', it: 'Scarto',
+  },
+  'ar.turnLeft': {
+    fr: 'A gauche', en: 'Turn left', de: 'Links', es: 'Izquierda', it: 'Sinistra',
+  },
+  'ar.turnRight': {
+    fr: 'A droite', en: 'Turn right', de: 'Rechts', es: 'Derecha', it: 'Destra',
+  },
+  'ar.radar': {
+    fr: 'Radar', en: 'Radar', de: 'Radar', es: 'Radar', it: 'Radar',
+  },
+  'ar.zone': {
+    fr: 'Zone', en: 'Zone', de: 'Zone', es: 'Zona', it: 'Zona',
+  },
+  'ar.zoneVeryClose': {
+    fr: 'Tout pres', en: 'Very close', de: 'Sehr nah', es: 'Muy cerca', it: 'Molto vicino',
+  },
+  'ar.zoneClose': {
+    fr: 'Proche', en: 'Close', de: 'Nah', es: 'Cerca', it: 'Vicino',
+  },
+  'ar.zoneMedium': {
+    fr: 'Moyen', en: 'Medium', de: 'Mittel', es: 'Medio', it: 'Medio',
+  },
+  'ar.zoneFar': {
+    fr: 'Loin', en: 'Far', de: 'Weit', es: 'Lejos', it: 'Lontano',
+  },
+  'ar.zoneVeryFar': {
+    fr: 'Tres loin', en: 'Very far', de: 'Sehr weit', es: 'Muy lejos', it: 'Molto lontano',
+  },
+  'ar.lockedOn': {
+    fr: 'Cible verrouillee !', en: 'Target locked!', de: 'Ziel erfasst!', es: 'Objetivo fijado!', it: 'Obiettivo agganciato!',
+  },
   'play.validateGps': {
     fr: 'Valider GPS', en: 'Validate GPS', de: 'GPS bestatigen', es: 'Validar GPS', it: 'Valida GPS',
   },

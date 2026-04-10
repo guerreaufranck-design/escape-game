@@ -16,6 +16,7 @@ import {
   Clock,
   AlertTriangle,
   Camera,
+  Sparkles,
 } from "lucide-react";
 
 interface TutorialProps {
@@ -86,6 +87,24 @@ const getSlides = (estimatedDuration?: string): Slide[] => [
       de: "Der grune Pfeil zeigt immer nach oben auf Ihrem Telefon. Drehen Sie sich: Wenn das \"N\" des Kreises mit dem Pfeil ubereinstimmt, gehen Sie in die richtige Richtung. Entfernung und Gehzeit werden in Echtzeit aktualisiert.",
       es: "La flecha verde siempre apunta hacia arriba en tu telefono. Gira sobre ti mismo: cuando la \"N\" del circulo se alinea con la flecha, vas en la direccion correcta. La distancia y el tiempo de caminata se actualizan en tiempo real.",
       it: "La freccia verde punta sempre verso l'alto del vostro telefono. Giratevi: quando la \"N\" del cerchio si allinea con la freccia, state andando nella direzione giusta. Distanza e tempo di camminata si aggiornano in tempo reale.",
+    },
+  },
+  {
+    icon: <Sparkles className="h-10 w-10" />,
+    color: "text-emerald-400",
+    title: {
+      fr: "Mode realite augmentee",
+      en: "Augmented reality mode",
+      de: "Augmented-Reality-Modus",
+      es: "Modo realidad aumentada",
+      it: "Modalita realta aumentata",
+    },
+    text: {
+      fr: "Depuis la carte, touchez \"Mode RA\" : la camera s'ouvre et un marqueur flottant s'ancre dans l'espace au-dessus de votre objectif. Un mini radar en haut a gauche montre la cible sur 360°, et les anneaux colores indiquent la proximite (rouge > vert). Quand vous etes aligne et proche, l'appareil vibre : cible verrouillee !",
+      en: "From the map, tap \"AR mode\": the camera opens and a floating marker is pinned in space above your target. A mini radar in the top-left shows the target on 360°, and coloured rings indicate proximity (red > green). When you're lined up and close, the device vibrates: target locked!",
+      de: "Tippen Sie auf der Karte auf \"AR-Modus\": Die Kamera offnet sich und ein schwebender Marker wird im Raum uber Ihrem Ziel verankert. Ein Mini-Radar oben links zeigt das Ziel auf 360°, farbige Ringe zeigen die Nahe (rot > grun). Wenn Sie ausgerichtet und nah sind, vibriert das Gerat: Ziel erfasst!",
+      es: "Desde el mapa, pulsa \"Modo RA\": se abre la camara y un marcador flotante se ancla en el espacio sobre tu objetivo. Un mini radar arriba a la izquierda muestra el objetivo en 360°, y los anillos de colores indican la proximidad (rojo > verde). Cuando estas alineado y cerca, el dispositivo vibra: objetivo fijado!",
+      it: "Dalla mappa, tocca \"Modalita AR\": la fotocamera si apre e un marcatore fluttuante viene ancorato nello spazio sopra l'obiettivo. Un mini radar in alto a sinistra mostra l'obiettivo a 360°, e gli anelli colorati indicano la prossimita (rosso > verde). Quando sei allineato e vicino, il dispositivo vibra: obiettivo agganciato!",
     },
   },
   {

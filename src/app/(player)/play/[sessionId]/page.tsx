@@ -42,8 +42,10 @@ import {
   BookOpen,
   Send,
   ChevronLeft,
+  Sparkles,
 } from "lucide-react";
 import { NavigationGuide } from "@/components/player/NavigationGuide";
+import { ARCameraOverlay } from "@/components/player/ARCameraOverlay";
 import { Tutorial } from "@/components/player/Tutorial";
 import { NarrationButton } from "@/components/player/NarrationButton";
 import { ReportError } from "@/components/player/ReportError";
@@ -111,6 +113,7 @@ export default function PlayPage() {
   const [photoRecognitionCount, setPhotoRecognitionCount] = useState(0);
   const [gpsTooFar, setGpsTooFar] = useState(false);
   const [view, setView] = useState<"riddle" | "navigation">("riddle");
+  const [arOpen, setArOpen] = useState(false);
   const [startingGame, setStartingGame] = useState(false);
   const [gpsTooFarDistance, setGpsTooFarDistance] = useState<number>(0);
   const narration = useNarration(locale);
@@ -583,6 +586,30 @@ export default function PlayPage() {
             </div>
           )}
 
+          {/* AR mode teaser — prominent feature announcement */}
+          <Card className="bg-gradient-to-br from-emerald-950/60 to-slate-900/80 border-emerald-500/30">
+            <CardContent className="p-4">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40">
+                  <Sparkles className="h-5 w-5 text-emerald-300" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <h3 className="text-sm font-bold text-emerald-300">
+                      {tt('play.arIntroTitle', locale)}
+                    </h3>
+                    <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[9px] font-bold uppercase tracking-wider">
+                      {tt('play.arIntroBadge', locale)}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-slate-300 leading-relaxed">
+                    {tt('play.arIntroDesc', locale)}
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Start button — starts the timer via API */}
           <Button
             size="lg"
@@ -942,6 +969,15 @@ export default function PlayPage() {
               <TempIcon className="h-4 w-4" />
               <span className="text-xs font-medium">{temp.label}</span>
             </div>
+            {/* AR mode toggle */}
+            <button
+              onClick={() => setArOpen(true)}
+              className="absolute bottom-3 right-3 flex items-center gap-1.5 px-3 py-2 rounded-full bg-emerald-600/90 hover:bg-emerald-500 text-white shadow-lg backdrop-blur-sm border border-emerald-400/50"
+              aria-label={tt('play.arMode', locale)}
+            >
+              <Camera className="h-4 w-4" />
+              <span className="text-xs font-bold uppercase tracking-wider">{tt('play.arMode', locale)}</span>
+            </button>
           </div>
 
           {/* Navigation guide */}
@@ -1268,6 +1304,18 @@ export default function PlayPage() {
         </div>
       )}
 
+      {/* AR camera overlay (fullscreen) */}
+      {arOpen && (
+        <ARCameraOverlay
+          playerLat={geo.latitude}
+          playerLon={geo.longitude}
+          targetLat={gameState.approximateTarget?.latitude ?? null}
+          targetLon={gameState.approximateTarget?.longitude ?? null}
+          distance={distance}
+          locale={locale}
+          onClose={() => setArOpen(false)}
+        />
+      )}
     </div>
   );
 }
