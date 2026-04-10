@@ -213,12 +213,20 @@ export async function POST(
         }
       }
 
+      // Extract answer text
+      const answerText = step.answer_text
+        ? (typeof step.answer_text === "object"
+            ? ((step.answer_text as Record<string,string>).en || (step.answer_text as Record<string,string>).fr || Object.values(step.answer_text as Record<string,string>)[0] || "")
+            : String(step.answer_text))
+        : null;
+
       return NextResponse.json({
         success: true,
         distance: Math.round(distance),
         completed: true,
         anecdote: anecdoteText,
         stepTitle: stepTitleText,
+        answerText,
       });
     }
 
@@ -247,6 +255,13 @@ export async function POST(
       }
     }
 
+    // Extract answer text
+    const answerText = step.answer_text
+      ? (typeof step.answer_text === "object"
+          ? ((step.answer_text as Record<string,string>).en || (step.answer_text as Record<string,string>).fr || Object.values(step.answer_text as Record<string,string>)[0] || "")
+          : String(step.answer_text))
+      : null;
+
     return NextResponse.json({
       success: true,
       distance: Math.round(distance),
@@ -254,6 +269,7 @@ export async function POST(
       completed: false,
       anecdote: anecdoteText,
       stepTitle: stepTitleText,
+      answerText,
     });
   } catch {
     return NextResponse.json(
