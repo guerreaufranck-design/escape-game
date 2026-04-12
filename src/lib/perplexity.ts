@@ -283,8 +283,8 @@ Research each location thoroughly with sources.`;
   // Step 2: Claude extracts structured JSON from the report
   const locations = await extractJsonWithClaude(researchReport, 8);
 
-  if (locations.length < 6) {
-    throw new Error(`Expected at least 6 locations, got ${locations.length}`);
+  if (locations.length < 8) {
+    throw new Error(`Expected at least 8 locations, got ${locations.length}`);
   }
 
   return locations;

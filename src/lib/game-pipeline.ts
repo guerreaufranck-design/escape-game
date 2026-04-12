@@ -95,7 +95,7 @@ export async function generateGameFromTemplate(
     const verifiedLocations = locations.filter(
       (l) => l.answer !== "UNVERIFIED"
     );
-    const minRequired = Math.max(4, template.stops?.length || 4);
+    const minRequired = Math.max(8, template.stops?.length || 8);
     if (verifiedLocations.length < minRequired) {
       throw new Error(
         `Only ${verifiedLocations.length} verified locations (need ${minRequired}). Unverified: ${locations.filter((l) => l.answer === "UNVERIFIED").map((l) => l.name).join(", ")}`

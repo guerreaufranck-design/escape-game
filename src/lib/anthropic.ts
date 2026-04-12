@@ -56,7 +56,7 @@ export async function generateGameSteps(
     )
     .join("\n\n");
 
-  const stepCount = Math.min(locations.length, 6);
+  const stepCount = Math.min(locations.length, 8);
 
   const prompt = `You are an expert escape game designer with a talent for immersive storytelling. I am giving you ${locations.length} verified locations in ${city}, ${country}, with confirmed answers. Your job is to select the best ${stepCount} and create an unforgettable escape game around them.
 
@@ -70,7 +70,7 @@ GAME PARAMETERS:
 - Steps: ${stepCount} (select the best ${stepCount} from the ${locations.length} locations below for narrative flow and walking route)
 - Language: English (will be auto-translated by the app)
 
-FOR EACH OF THE 6 STEPS, create a JSON object with:
+FOR EACH OF THE 8 STEPS, create a JSON object with:
 
 1. "title": An evocative, mysterious title (max 8 words)
 2. "latitude": Use EXACTLY the coordinates provided below — do not modify them
