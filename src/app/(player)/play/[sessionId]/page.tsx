@@ -970,18 +970,18 @@ export default function PlayPage() {
 
       {/* ============ VIEW: NAVIGATION ============ */}
       {view === "navigation" && (
-        <div className="flex flex-col min-h-[calc(100dvh-44px)]">
+        <div className="flex flex-col h-[calc(100dvh-44px)] overflow-y-auto">
           {/* Back to riddle button */}
           <button
             onClick={() => setView("riddle")}
-            className="flex items-center gap-1.5 px-4 py-2 text-xs text-emerald-400 hover:text-emerald-300 bg-slate-900/50"
+            className="shrink-0 flex items-center gap-1.5 px-4 py-2 text-xs text-emerald-400 hover:text-emerald-300 bg-slate-900/50"
           >
             <ChevronLeft className="h-3.5 w-3.5" />
             {tt('play.reviewRiddle', locale)}
           </button>
 
-          {/* Map — takes most of the space, at least half the viewport so it never collapses */}
-          <div className="flex-1 relative min-h-[50dvh] z-0">
+          {/* Map — takes most of the space; needs fixed flex height for Leaflet to render */}
+          <div className="flex-1 relative min-h-0 z-0">
             <GameMap
               playerLat={geo.latitude}
               playerLon={geo.longitude}
