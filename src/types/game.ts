@@ -41,6 +41,11 @@ export interface GameState {
   arFacadeText: string | null;
   /** Optional custom reward message revealed by tapping the AR chest */
   arTreasureReward: string | null;
+  /** Optional AR character (monk/knight/pirate…) that speaks when locked on */
+  arCharacter: {
+    type: string;
+    dialogue: string;
+  } | null;
   approximateTarget: {
     latitude: number;
     longitude: number;

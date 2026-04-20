@@ -1443,6 +1443,7 @@ export default function PlayPage() {
           treasureReward={gameState.arTreasureReward ?? null}
           stepKey={gameState.currentStepId}
           onChestOpen={() => setParticleBurst((n) => n + 1)}
+          character={gameState.arCharacter ?? null}
         />
       )}
 

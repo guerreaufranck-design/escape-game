@@ -16,10 +16,12 @@ import {
   Home,
   Loader2,
   Medal,
+  Camera,
 } from "lucide-react";
 import { formatTime, formatScore } from "@/lib/scoring";
 import { useLocale } from "@/components/player/LocaleSelector";
 import { ReportError } from "@/components/player/ReportError";
+import { SelfieARScreen } from "@/components/player/SelfieARScreen";
 import type { GameResults } from "@/types/game";
 
 export default function ResultsPage() {
@@ -31,6 +33,7 @@ export default function ResultsPage() {
   const [results, setResults] = useState<GameResults | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [selfieOpen, setSelfieOpen] = useState(false);
 
   useEffect(() => {
     async function fetchResults() {
@@ -272,6 +275,15 @@ export default function ResultsPage() {
         </Card>
 
         {/* Actions */}
+        {/* Selfie souvenir — AR mascotte overlay */}
+        <Button
+          onClick={() => setSelfieOpen(true)}
+          className="w-full bg-gradient-to-r from-amber-500 to-amber-600 py-6 text-base font-bold uppercase tracking-wider text-amber-950 shadow-lg hover:from-amber-400 hover:to-amber-500"
+        >
+          <Camera className="mr-2 h-5 w-5" />
+          Photo souvenir
+        </Button>
+
         <div className="flex gap-3">
           <Button
             variant="outline"
@@ -308,6 +320,16 @@ export default function ResultsPage() {
           Retour a l&apos;accueil
         </Button>
       </div>
+
+      {/* Selfie AR overlay */}
+      {selfieOpen && (
+        <SelfieARScreen
+          gameTitle={results.gameTitle}
+          city={null}
+          playerName={results.playerName}
+          onClose={() => setSelfieOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -13,6 +13,7 @@ import { tt } from "@/lib/translations";
 import { ARHistoricalPhotoLayer } from "./ARHistoricalPhotoLayer";
 import { ARFacadeTextLayer } from "./ARFacadeTextLayer";
 import { ARTreasureChest } from "./ARTreasureChest";
+import { ARCharacterSpeaker } from "./ARCharacterSpeaker";
 
 interface ARCameraOverlayProps {
   playerLat: number | null;
@@ -33,6 +34,8 @@ interface ARCameraOverlayProps {
   stepKey?: string | null;
   /** Fired when the player opens a treasure chest (used to launch particles) */
   onChestOpen?: () => void;
+  /** Optional animated character that talks to the player when locked on */
+  character?: { type: string; dialogue: string } | null;
 }
 
 // --- Tuning constants ----------------------------------------------------
@@ -62,6 +65,7 @@ export function ARCameraOverlay({
   treasureReward = null,
   stepKey = null,
   onChestOpen,
+  character = null,
 }: ARCameraOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -522,6 +526,16 @@ export function ARCameraOverlay({
           stepKey={stepKey}
           onOpen={onChestOpen}
           locale={locale}
+        />
+      )}
+
+      {/* Animated character — appears after the chest to keep the flow */}
+      {character && cameraReady && orientation.hasCompass && (
+        <ARCharacterSpeaker
+          lockedOn={lockedOn}
+          characterType={character.type}
+          dialogue={character.dialogue}
+          stepKey={stepKey}
         />
       )}
     </div>

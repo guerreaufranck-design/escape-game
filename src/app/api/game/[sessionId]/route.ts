@@ -86,6 +86,7 @@ export async function GET(
     let arHistoricalPhoto: GameState["arHistoricalPhoto"] = null;
     let arFacadeText: GameState["arFacadeText"] = null;
     let arTreasureReward: GameState["arTreasureReward"] = null;
+    let arCharacter: GameState["arCharacter"] = null;
     let approximateTarget: GameState["approximateTarget"] = null;
     let validationRadius = 30;
     let hintsAvailable = 0;
@@ -145,6 +146,17 @@ export async function GET(
         // works out-of-the-box even for games generated before this feature.
         arFacadeText = step.ar_facade_text || hints[1]?.text || null;
         arTreasureReward = step.ar_treasure_reward || null;
+
+        // AR character: if any dialogue is set (or fallback to atmospheric
+        // hint #1 so it works out-of-the-box), pick a character type based
+        // on what the admin set, defaulting to a generic "guardian".
+        const charDialogue = step.ar_character_dialogue || hints[0]?.text || null;
+        if (charDialogue) {
+          arCharacter = {
+            type: step.ar_character_type || "default",
+            dialogue: charDialogue,
+          };
+        }
       }
     }
 
@@ -218,6 +230,7 @@ export async function GET(
       arHistoricalPhoto,
       arFacadeText,
       arTreasureReward,
+      arCharacter,
       approximateTarget,
       validationRadius,
       navigationHint: null,
