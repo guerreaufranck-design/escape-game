@@ -5,6 +5,7 @@ import {
   generateActivationCode,
   corsHeaders,
 } from "@/lib/external-auth";
+import { sendCodeGenerationFailureAlert } from "@/lib/email";
 
 /**
  * OPTIONS /api/external/generate-code
@@ -92,7 +93,7 @@ export async function POST(request: NextRequest) {
     // Generate the activation code using the city prefix
     const code = generateActivationCode(game.city);
 
-    // Insert the code into activation_codes
+    // Insert the code into activation_codes (with buyer_email for traceability)
     const { error: insertError } = await supabase
       .from("activation_codes")
       .insert({
@@ -102,6 +103,7 @@ export async function POST(request: NextRequest) {
         max_uses: 1,
         current_uses: 0,
         team_name: buyerName || null,
+        buyer_email: buyerEmail,
         // expires_at stays null — set to now+8h upon activation
       });
 
@@ -117,10 +119,19 @@ export async function POST(request: NextRequest) {
           max_uses: 1,
           current_uses: 0,
           team_name: buyerName || null,
+          buyer_email: buyerEmail,
         });
 
       if (retryError) {
         console.error("Erreur insertion code:", retryError);
+        // Alert admin on failure
+        await sendCodeGenerationFailureAlert({
+          gameId,
+          gameCity: game.city,
+          buyerEmail,
+          error: retryError.message,
+          orderId,
+        });
         return NextResponse.json(
           { error: "Impossible de créer le code d'activation" },
           { status: 500, headers: corsHeaders }

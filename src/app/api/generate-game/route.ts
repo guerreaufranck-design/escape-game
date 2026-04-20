@@ -27,11 +27,14 @@ import {
   type GameTemplate,
 } from "@/lib/game-pipeline";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { sendPipelineFailureAlert } from "@/lib/email";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
 export const maxDuration = 600; // 10 minutes max
 
 export async function POST(request: NextRequest) {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let body: any = {};
   try {
     // Verify authorization
     const authHeader = request.headers.get("authorization");
@@ -41,12 +44,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
+    body = await request.json();
     console.log("[GenerateGame] Received body:", JSON.stringify({
       city: body.city, country: body.country, theme: body.theme,
       hasThemeDesc: !!body.themeDescription, hasNarrative: !!body.narrative,
       stopsCount: body.stops?.length, slug: body.slug,
-      hasCallback: !!body.callbackUrl
+      hasCallback: !!body.callbackUrl,
+      buyerEmail: body.buyerEmail || "N/A",
     }));
 
     // Validate required fields
@@ -173,6 +177,39 @@ export async function POST(request: NextRequest) {
       );
     } else {
       console.error("[GenerateGame] Pipeline failed:", result.error);
+
+      // Send failure alert email to admin
+      await sendPipelineFailureAlert({
+        city,
+        country,
+        theme,
+        slug: template.slug,
+        error: result.error || "Unknown pipeline error",
+        durationSeconds: Math.round((result.durationMs || 0) / 1000),
+        buyerEmail: body.buyerEmail,
+        orderId: body.orderId,
+      });
+
+      // Send failure callback to OddballTrip so it can handle the client
+      if (body.callbackUrl) {
+        try {
+          await fetch(body.callbackUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...(body.callbackSecret && { Authorization: `Bearer ${body.callbackSecret}` }),
+            },
+            body: JSON.stringify({
+              success: false,
+              error: result.error,
+              slug: template.slug,
+            }),
+          });
+        } catch (cbErr) {
+          console.error(`[GenerateGame] Failure callback failed: ${cbErr instanceof Error ? cbErr.message : cbErr}`);
+        }
+      }
+
       return NextResponse.json(
         {
           success: false,
@@ -183,11 +220,24 @@ export async function POST(request: NextRequest) {
       );
     }
   } catch (error) {
-    console.error("[GenerateGame] Unexpected error:", error instanceof Error ? error.message : error);
+    const errorMessage = error instanceof Error ? error.message : "Internal server error";
+    console.error("[GenerateGame] Unexpected error:", errorMessage);
+
+    // Send alert even for unexpected errors
+    await sendPipelineFailureAlert({
+      city: body?.city || "Unknown",
+      country: body?.country || "Unknown",
+      theme: body?.theme || "Unknown",
+      slug: body?.slug || "unknown",
+      error: errorMessage,
+      buyerEmail: body?.buyerEmail,
+      orderId: body?.orderId,
+    });
+
     return NextResponse.json(
       {
         success: false,
-        error: error instanceof Error ? error.message : "Internal server error",
+        error: errorMessage,
       },
       { status: 500 }
     );
