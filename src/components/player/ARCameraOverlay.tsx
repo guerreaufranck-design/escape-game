@@ -11,6 +11,8 @@ import { calculateBearing, formatDistance } from "@/lib/geo";
 import { useDeviceOrientation } from "@/hooks/useDeviceOrientation";
 import { tt } from "@/lib/translations";
 import { ARHistoricalPhotoLayer } from "./ARHistoricalPhotoLayer";
+import { ARFacadeTextLayer } from "./ARFacadeTextLayer";
+import { ARTreasureChest } from "./ARTreasureChest";
 
 interface ARCameraOverlayProps {
   playerLat: number | null;
@@ -23,6 +25,14 @@ interface ARCameraOverlayProps {
   /** Optional historical photo overlaid on the live camera feed */
   historicalPhotoUrl?: string | null;
   historicalPhotoCredit?: string | null;
+  /** Optional short "painted" text that appears on the facade when locked on */
+  facadeText?: string | null;
+  /** Optional reward text revealed when tapping the AR treasure chest */
+  treasureReward?: string | null;
+  /** Current step key — used to reset the treasure chest between steps */
+  stepKey?: string | null;
+  /** Fired when the player opens a treasure chest (used to launch particles) */
+  onChestOpen?: () => void;
 }
 
 // --- Tuning constants ----------------------------------------------------
@@ -48,6 +58,10 @@ export function ARCameraOverlay({
   onClose,
   historicalPhotoUrl = null,
   historicalPhotoCredit = null,
+  facadeText = null,
+  treasureReward = null,
+  stepKey = null,
+  onChestOpen,
 }: ARCameraOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -223,6 +237,15 @@ export function ARCameraOverlay({
           credit={historicalPhotoCredit}
           distance={distance}
           insideFov={insideFov}
+        />
+      )}
+
+      {/* Facade-painted cryptic hint — appears when locked on */}
+      {facadeText && cameraReady && orientation.hasCompass && (
+        <ARFacadeTextLayer
+          text={facadeText}
+          lockedOn={lockedOn}
+          horizontalAngle={horizontalAngle}
         />
       )}
 
@@ -490,6 +513,17 @@ export function ARCameraOverlay({
           )}
         </div>
       </div>
+
+      {/* Treasure chest — tappable, hovers near the target when locked on */}
+      {cameraReady && orientation.hasCompass && (
+        <ARTreasureChest
+          lockedOn={lockedOn}
+          rewardText={treasureReward}
+          stepKey={stepKey}
+          onOpen={onChestOpen}
+          locale={locale}
+        />
+      )}
     </div>
   );
 }

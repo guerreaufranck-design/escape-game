@@ -37,6 +37,10 @@ export interface GameState {
     url: string;
     credit: string | null;
   } | null;
+  /** Optional short phrase "painted" on the facade when locked on in AR */
+  arFacadeText: string | null;
+  /** Optional custom reward message revealed by tapping the AR chest */
+  arTreasureReward: string | null;
   approximateTarget: {
     latitude: number;
     longitude: number;

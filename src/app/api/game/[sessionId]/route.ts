@@ -84,6 +84,8 @@ export async function GET(
     // Fetch current step data if game is active
     let currentRiddle: GameState["currentRiddle"] = null;
     let arHistoricalPhoto: GameState["arHistoricalPhoto"] = null;
+    let arFacadeText: GameState["arFacadeText"] = null;
+    let arTreasureReward: GameState["arTreasureReward"] = null;
     let approximateTarget: GameState["approximateTarget"] = null;
     let validationRadius = 30;
     let hintsAvailable = 0;
@@ -137,6 +139,12 @@ export async function GET(
 
         const hints = (step.hints as unknown as Hint[]) || [];
         hintsAvailable = hints.length;
+
+        // AR facade text: use stored value, or fall back to hint #2 (the
+        // practical "where to look" hint) so the magical hint on the wall
+        // works out-of-the-box even for games generated before this feature.
+        arFacadeText = step.ar_facade_text || hints[1]?.text || null;
+        arTreasureReward = step.ar_treasure_reward || null;
       }
     }
 
@@ -208,6 +216,8 @@ export async function GET(
       startedAt: session.started_at,
       currentRiddle,
       arHistoricalPhoto,
+      arFacadeText,
+      arTreasureReward,
       approximateTarget,
       validationRadius,
       navigationHint: null,

@@ -1439,6 +1439,10 @@ export default function PlayPage() {
           onClose={() => setArOpen(false)}
           historicalPhotoUrl={gameState.arHistoricalPhoto?.url ?? null}
           historicalPhotoCredit={gameState.arHistoricalPhoto?.credit ?? null}
+          facadeText={gameState.arFacadeText ?? null}
+          treasureReward={gameState.arTreasureReward ?? null}
+          stepKey={gameState.currentStepId}
+          onChestOpen={() => setParticleBurst((n) => n + 1)}
         />
       )}
 
