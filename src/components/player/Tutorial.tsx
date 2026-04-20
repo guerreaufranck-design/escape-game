@@ -17,6 +17,8 @@ import {
   AlertTriangle,
   Camera,
   Sparkles,
+  Gift,
+  Image as ImageIcon,
 } from "lucide-react";
 
 interface TutorialProps {
@@ -108,6 +110,24 @@ const getSlides = (estimatedDuration?: string): Slide[] => [
     },
   },
   {
+    icon: <Gift className="h-10 w-10" />,
+    color: "text-amber-400",
+    title: {
+      fr: "Surprises en realite augmentee",
+      en: "Surprises in augmented reality",
+      de: "Uberraschungen in Augmented Reality",
+      es: "Sorpresas en realidad aumentada",
+      it: "Sorprese in realta aumentata",
+    },
+    text: {
+      fr: "Quand vous verrouillez la cible en RA, plusieurs surprises apparaissent : une photo ancienne du monument se superpose au reel (effet voyage dans le temps), un indice mystique se peint sur la facade, un coffre dore a tapoter revele un message secret, et un personnage (moine, chevalier, pirate, mage...) vient vous souffler un conseil. Regardez bien autour de vous !",
+      en: "When you lock onto the target in AR, several surprises appear: a historical photo of the monument overlays reality (time-travel feel), a mystical hint paints itself on the facade, a golden chest you can tap reveals a secret message, and a character (monk, knight, pirate, wizard...) whispers advice. Look carefully around you!",
+      de: "Wenn Sie das Ziel in AR erfassen, erscheinen mehrere Uberraschungen: ein historisches Foto des Denkmals legt sich uber die Realitat (Zeitreise-Gefuhl), ein mystischer Hinweis malt sich auf die Fassade, eine goldene Truhe zum Antippen offenbart eine geheime Botschaft, und ein Charakter (Monch, Ritter, Pirat, Magier...) flustert Ihnen einen Rat zu. Schauen Sie gut um sich!",
+      es: "Cuando fijes el objetivo en RA, aparecen varias sorpresas: una foto antigua del monumento se superpone a la realidad (sensacion de viaje en el tiempo), una pista mistica se pinta en la fachada, un cofre dorado para tocar revela un mensaje secreto, y un personaje (monje, caballero, pirata, mago...) te susurra un consejo. Mira bien a tu alrededor!",
+      it: "Quando agganciate l'obiettivo in AR, appaiono diverse sorprese: una foto antica del monumento si sovrappone alla realta (effetto viaggio nel tempo), un indizio mistico si dipinge sulla facciata, uno scrigno d'oro da toccare rivela un messaggio segreto, e un personaggio (monaco, cavaliere, pirata, mago...) vi sussurra un consiglio. Guardate bene intorno a voi!",
+    },
+  },
+  {
     icon: <Camera className="h-10 w-10" />,
     color: "text-blue-400",
     title: {
@@ -177,6 +197,24 @@ const getSlides = (estimatedDuration?: string): Slide[] => [
       de: "Die besten Zeiten steigen in der Gesamtrangliste auf! Weniger Strafen und schnellere Zeit = bessere Punktzahl. Am Ende entdecken Sie Ihren Rang unter allen Spielern und teilen Ihr Ergebnis.",
       es: "Los mejores tiempos suben en la clasificacion general! Menos penalizaciones y tiempo rapido = mejor puntuacion. Al final, descubre tu puesto entre todos los jugadores y comparte tu resultado.",
       it: "I migliori tempi salgono nella classifica generale! Meno penalita e tempo veloce = punteggio migliore. Alla fine, scoprite il vostro rango tra tutti i giocatori e condividete il vostro risultato.",
+    },
+  },
+  {
+    icon: <ImageIcon className="h-10 w-10" />,
+    color: "text-amber-400",
+    title: {
+      fr: "Photo souvenir",
+      en: "Keepsake photo",
+      de: "Erinnerungsfoto",
+      es: "Foto de recuerdo",
+      it: "Foto ricordo",
+    },
+    text: {
+      fr: "A la fin du jeu, capturez votre selfie souvenir : la camera s'ouvre avec votre banniere de victoire et la mascotte OddballTrip, puis partagez directement sur vos reseaux sociaux. Petit plus tout au long de la partie : chaque bonne reponse declenche une pluie d'etoiles dorees — parce que vous l'avez bien merite !",
+      en: "At the end of the game, capture your keepsake selfie: the camera opens with your victory banner and the OddballTrip mascot, then share directly on social media. Bonus throughout the game: every correct answer triggers a shower of golden stars — because you deserve it!",
+      de: "Am Ende des Spiels machen Sie Ihr Erinnerungs-Selfie: Die Kamera offnet sich mit Ihrem Siegerbanner und dem OddballTrip-Maskottchen, dann direkt in sozialen Medien teilen. Bonus wahrend des Spiels: Jede richtige Antwort lost einen goldenen Sternenregen aus — weil Sie es verdient haben!",
+      es: "Al final del juego, captura tu selfie de recuerdo: la camara se abre con tu banner de victoria y la mascota OddballTrip, luego comparte directamente en redes sociales. Extra durante toda la partida: cada respuesta correcta desata una lluvia de estrellas doradas — porque te lo mereces!",
+      it: "Alla fine del gioco, catturate il vostro selfie ricordo: la fotocamera si apre con il vostro striscione di vittoria e la mascotte OddballTrip, poi condividete direttamente sui social. Bonus durante tutta la partita: ogni risposta corretta scatena una pioggia di stelle dorate — perche ve lo meritate!",
     },
   },
   {
