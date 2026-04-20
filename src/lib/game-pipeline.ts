@@ -11,9 +11,11 @@ import {
   researchPredefinedStops,
   researchGameLocations,
   type PredefinedStop,
+  type ResearchedLocation,
 } from "./perplexity";
 import { generateGameSteps } from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
+import { fetchHistoricalPhoto, type HistoricalPhotoResult } from "./wikipedia";
 import { v4 as uuidv4 } from "uuid";
 
 export interface GameTemplate {
@@ -126,10 +128,20 @@ export async function generateGameFromTemplate(
     );
 
     // ============================================
+    // STEP 2b: Fetch Wikipedia historical photos for AR overlay
+    // ============================================
+    console.log("[Pipeline] Step 2b: Fetching historical photos from Wikipedia...");
+    const photoStart = Date.now();
+    const stepPhotos = await fetchPhotosForSteps(steps, verifiedLocations, template.city);
+    console.log(
+      `[Pipeline] Got ${stepPhotos.filter((p) => p !== null).length}/${steps.length} photos in ${Math.round((Date.now() - photoStart) / 1000)}s`
+    );
+
+    // ============================================
     // STEP 3: Insert into Supabase
     // ============================================
     console.log("[Pipeline] Step 3: Inserting into Supabase...");
-    const gameId = await insertGameIntoDatabase(template, steps);
+    const gameId = await insertGameIntoDatabase(template, steps, stepPhotos);
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
     const durationMs = Date.now() - startTime;
@@ -162,11 +174,50 @@ export async function generateGameFromTemplate(
 }
 
 /**
+ * Match each generated step to its source location by GPS proximity, then
+ * fetch a Wikipedia historical photo for that location. Runs in parallel.
+ * Returns one entry per step (null if no photo found).
+ */
+async function fetchPhotosForSteps(
+  steps: Awaited<ReturnType<typeof generateGameSteps>>,
+  locations: ResearchedLocation[],
+  city: string,
+): Promise<(HistoricalPhotoResult | null)[]> {
+  // Distance in metres between two GPS points (fast equirectangular approx)
+  const distance = (a: [number, number], b: [number, number]) => {
+    const R = 6371000;
+    const dLat = ((b[0] - a[0]) * Math.PI) / 180;
+    const dLon = ((b[1] - a[1]) * Math.PI) / 180;
+    const lat1 = (a[0] * Math.PI) / 180;
+    const lat2 = (b[0] * Math.PI) / 180;
+    const x = dLon * Math.cos((lat1 + lat2) / 2);
+    return R * Math.sqrt(x * x + dLat * dLat);
+  };
+
+  // For each step, find the nearest source location (usually <20m)
+  const queries = steps.map((step) => {
+    let best: ResearchedLocation | null = null;
+    let bestDist = Infinity;
+    for (const loc of locations) {
+      const d = distance([step.latitude, step.longitude], [loc.latitude, loc.longitude]);
+      if (d < bestDist) {
+        bestDist = d;
+        best = loc;
+      }
+    }
+    return best ? best.name : step.title;
+  });
+
+  return Promise.all(queries.map((name) => fetchHistoricalPhoto(name, city)));
+}
+
+/**
  * Insert a generated game and its steps into Supabase
  */
 async function insertGameIntoDatabase(
   template: GameTemplate,
-  steps: Awaited<ReturnType<typeof generateGameSteps>>
+  steps: Awaited<ReturnType<typeof generateGameSteps>>,
+  stepPhotos: (HistoricalPhotoResult | null)[] = []
 ): Promise<string> {
   const supabase = createAdminClient();
   const gameId = uuidv4();
@@ -208,6 +259,8 @@ async function insertGameIntoDatabase(
     anecdote: step.anecdote,
     bonus_time_seconds: step.bonus_time_seconds,
     has_photo_challenge: false,
+    ar_historical_photo_url: stepPhotos[index]?.url || null,
+    ar_historical_photo_credit: stepPhotos[index]?.credit || null,
   }));
 
   const { error: stepsError } = await supabase

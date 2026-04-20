@@ -49,6 +49,7 @@ import {
 } from "lucide-react";
 import { NavigationGuide } from "@/components/player/NavigationGuide";
 import { ARCameraOverlay } from "@/components/player/ARCameraOverlay";
+import { ValidationParticles } from "@/components/player/ValidationParticles";
 import { Tutorial } from "@/components/player/Tutorial";
 import { NarrationButton } from "@/components/player/NarrationButton";
 import { ReportError } from "@/components/player/ReportError";
@@ -118,6 +119,7 @@ export default function PlayPage() {
   const [gpsTooFar, setGpsTooFar] = useState(false);
   const [view, setView] = useState<"riddle" | "navigation">("riddle");
   const [arOpen, setArOpen] = useState(false);
+  const [particleBurst, setParticleBurst] = useState(0);
   const [startingGame, setStartingGame] = useState(false);
   const [gpsTooFarDistance, setGpsTooFarDistance] = useState<number>(0);
   const narration = useNarration(locale);
@@ -255,6 +257,7 @@ export default function PlayPage() {
         setStepSuccess(true);
         setHints([]);
         setGpsTooFar(false);
+        setParticleBurst((n) => n + 1);
         if (data.answerText) setCorrectAnswer(data.answerText);
         if (data.anecdote) {
           setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
@@ -1403,6 +1406,7 @@ export default function PlayPage() {
                       });
                       const data = await res.json();
                       setCodeResult({ valid: data.valid, message: data.message });
+                      if (data.valid) setParticleBurst((n) => n + 1);
                     } catch {
                       setCodeResult({ valid: false, message: "Erreur de verification" });
                     } finally {
@@ -1433,8 +1437,13 @@ export default function PlayPage() {
           distance={distance}
           locale={locale}
           onClose={() => setArOpen(false)}
+          historicalPhotoUrl={gameState.arHistoricalPhoto?.url ?? null}
+          historicalPhotoCredit={gameState.arHistoricalPhoto?.credit ?? null}
         />
       )}
+
+      {/* Celebratory particles on validation success */}
+      <ValidationParticles trigger={particleBurst} theme="gold" />
     </div>
   );
 }

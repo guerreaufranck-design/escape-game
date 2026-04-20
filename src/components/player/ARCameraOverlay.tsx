@@ -10,6 +10,7 @@ import {
 import { calculateBearing, formatDistance } from "@/lib/geo";
 import { useDeviceOrientation } from "@/hooks/useDeviceOrientation";
 import { tt } from "@/lib/translations";
+import { ARHistoricalPhotoLayer } from "./ARHistoricalPhotoLayer";
 
 interface ARCameraOverlayProps {
   playerLat: number | null;
@@ -19,6 +20,9 @@ interface ARCameraOverlayProps {
   distance: number | null;
   locale?: string;
   onClose: () => void;
+  /** Optional historical photo overlaid on the live camera feed */
+  historicalPhotoUrl?: string | null;
+  historicalPhotoCredit?: string | null;
 }
 
 // --- Tuning constants ----------------------------------------------------
@@ -42,6 +46,8 @@ export function ARCameraOverlay({
   distance,
   locale = "fr",
   onClose,
+  historicalPhotoUrl = null,
+  historicalPhotoCredit = null,
 }: ARCameraOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -209,6 +215,16 @@ export function ARCameraOverlay({
         muted
         className="absolute inset-0 h-full w-full object-cover"
       />
+
+      {/* Historical photo overlay — "time travel" layer above the camera feed */}
+      {historicalPhotoUrl && cameraReady && (
+        <ARHistoricalPhotoLayer
+          photoUrl={historicalPhotoUrl}
+          credit={historicalPhotoCredit}
+          distance={distance}
+          insideFov={insideFov}
+        />
+      )}
 
       {/* Darkening vignette */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-black/60 via-transparent to-black/70" />

@@ -32,6 +32,11 @@ export interface GameState {
     image: string | null;
     hasPhotoChallenge: boolean;
   } | null;
+  /** Historical photo of the current location, shown as an AR overlay */
+  arHistoricalPhoto: {
+    url: string;
+    credit: string | null;
+  } | null;
   approximateTarget: {
     latitude: number;
     longitude: number;

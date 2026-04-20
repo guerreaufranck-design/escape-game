@@ -83,6 +83,7 @@ export async function GET(
 
     // Fetch current step data if game is active
     let currentRiddle: GameState["currentRiddle"] = null;
+    let arHistoricalPhoto: GameState["arHistoricalPhoto"] = null;
     let approximateTarget: GameState["approximateTarget"] = null;
     let validationRadius = 30;
     let hintsAvailable = 0;
@@ -126,6 +127,13 @@ export async function GET(
 
         approximateTarget = obfuscateCoordinates(step.latitude, step.longitude);
         validationRadius = step.validation_radius_meters;
+
+        if (step.ar_historical_photo_url) {
+          arHistoricalPhoto = {
+            url: step.ar_historical_photo_url,
+            credit: step.ar_historical_photo_credit || null,
+          };
+        }
 
         const hints = (step.hints as unknown as Hint[]) || [];
         hintsAvailable = hints.length;
@@ -199,6 +207,7 @@ export async function GET(
       status: session.status,
       startedAt: session.started_at,
       currentRiddle,
+      arHistoricalPhoto,
       approximateTarget,
       validationRadius,
       navigationHint: null,
