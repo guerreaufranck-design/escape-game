@@ -23,6 +23,21 @@ export interface Suggestion {
   disclaimerLabel: string;
 }
 
+const LANG_NAMES: Record<string, string> = {
+  fr: "French",
+  en: "English",
+  es: "Spanish",
+  de: "German",
+  it: "Italian",
+  pt: "Portuguese",
+  nl: "Dutch",
+  ja: "Japanese",
+  zh: "Chinese",
+  ru: "Russian",
+  ar: "Arabic",
+  ko: "Korean",
+};
+
 const CTA_BY_LANG: Record<string, string> = {
   fr: "Voir le restaurant",
   en: "View restaurant",
@@ -93,10 +108,12 @@ function buildMidTourPrompt(
   restaurant: Restaurant,
 ): string {
   const weatherHint = weatherDescription(context, context.language);
+  const langName = LANG_NAMES[context.language] || "English";
   return `You are a warm local friend, not a salesperson.
 
-Generate ONE short recommendation (2 sentences max, in ${context.language})
-for a player doing a city tour in ${context.city}.
+LANGUAGE: Write ONLY in ${langName}. Do NOT use English if ${langName} is not English.
+
+Generate ONE short recommendation (2 sentences max) for a player doing a city tour in ${context.city}.
 
 Context:
 - Weather: ${context.weather.tempC}°C, ${context.weather.condition}
@@ -118,13 +135,14 @@ Rules:
 5. NEVER use: "exclusive offer", "limited time", "profitez", "cliquez maintenant", "dear customer", marketing clichés
 6. Tone: friendly, warm, local
 
-Output: ONLY the message text, no preamble, no quotes.`;
+Output: ONLY the message text in ${langName}, no preamble, no quotes, no language label.`;
 }
 
 function buildEndOfTourPrompt(
   context: ContextSnapshot,
   restaurants: Restaurant[],
 ): string {
+  const langName = LANG_NAMES[context.language] || "English";
   const list = restaurants
     .slice(0, 3)
     .map(
@@ -135,13 +153,15 @@ function buildEndOfTourPrompt(
 
   return `You are a warm local friend congratulating a player who just finished a city tour in ${context.city}.
 
+LANGUAGE: Write ONLY in ${langName}. Do NOT use English if ${langName} is not English.
+
 Local time: ${context.localTime} (hour: ${context.hourOfDay})
 Player just walked a full tour, they are likely tired and hungry.
 
 Three restaurants to suggest:
 ${list}
 
-Generate a celebratory + warm message (3 sentences max, in ${context.language}):
+Generate a celebratory + warm message (3 sentences max):
 1. Congrats for finishing the tour (sincere, not cheesy)
 2. Acknowledge they might be hungry
 3. Introduce the 3 places as "local favorites" / "spots we love", with warmth — NOT as ads
@@ -151,7 +171,7 @@ Rules:
 - Sound like a friend tipping off good spots
 - Don't list the restaurants again (the UI will show cards) — just introduce them
 
-Output: ONLY the message text, no preamble, no quotes.`;
+Output: ONLY the message text in ${langName}, no preamble, no quotes, no language label.`;
 }
 
 /**
@@ -210,22 +230,40 @@ export async function generateSuggestion(
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             temperature: 0.7,
-            maxOutputTokens: 300,
+            maxOutputTokens: 1024,
+            // Disable thinking mode — we don't need it for short conversational
+            // output. Thinking tokens would eat into maxOutputTokens and cause
+            // the visible output to be cut short mid-sentence.
+            thinkingConfig: { thinkingBudget: 0 },
           },
         }),
-        signal: AbortSignal.timeout(9000),
+        signal: AbortSignal.timeout(12000),
       },
     );
 
     if (!res.ok) {
-      console.warn(`[suggestion-generator] Gemini returned ${res.status}`);
+      console.warn(`[suggestion-generator] Gemini returned ${res.status}: ${await res.text().catch(() => "")}`);
       return null;
     }
 
     const data = await res.json();
-    const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+    // Concatenate all text parts (safer than just parts[0]) and ignore
+    // parts flagged as "thought" (internal reasoning).
+    const parts = data.candidates?.[0]?.content?.parts || [];
+    type GeminiPart = { text?: string; thought?: boolean };
+    const rawText = (parts as GeminiPart[])
+      .filter((p) => !p.thought)
+      .map((p) => p.text || "")
+      .join("")
+      .trim();
+
     const message = validateMessage(rawText);
-    if (!message) return null;
+    if (!message) {
+      console.warn(
+        `[suggestion-generator] Message failed validation (len=${rawText.length}, preview="${rawText.substring(0, 80)}")`,
+      );
+      return null;
+    }
 
     return {
       message,
