@@ -110,17 +110,13 @@ export async function searchGooglePlaces(
     );
 
     if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      console.error(
-        `[google-places] API returned ${res.status}: ${errText}`,
+      console.warn(
+        `[google-places] API returned ${res.status}: ${await res.text().catch(() => "")}`,
       );
       return [];
     }
 
     const data = (await res.json()) as GooglePlacesResponse;
-    console.log(
-      `[google-places] Response: ${data.places?.length || 0} places received (before filters)`,
-    );
     if (!data.places) return [];
 
     return data.places
