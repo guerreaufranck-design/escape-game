@@ -37,6 +37,61 @@ export async function GET(request: NextRequest) {
     | "end_of_tour";
   const language = searchParams.get("lang") || "fr";
 
+  // Env diagnostic — helps understand why a provider might return empty.
+  // Never leak actual values. Only presence + length (rough integrity check).
+  const envDiag = {
+    GOOGLE_PLACES_API_KEY: {
+      present: !!process.env.GOOGLE_PLACES_API_KEY,
+      length: process.env.GOOGLE_PLACES_API_KEY?.length || 0,
+      prefix: process.env.GOOGLE_PLACES_API_KEY?.substring(0, 4) || null,
+    },
+    GEMINI_API_KEY: { present: !!process.env.GEMINI_API_KEY },
+    THEFORK_PARTNER_ID: { present: !!process.env.THEFORK_PARTNER_ID },
+    THEFORK_API_KEY: { present: !!process.env.THEFORK_API_KEY },
+  };
+
+  // DEBUG mode: call Google Places directly and return raw response
+  if (searchParams.get("debug") === "1") {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+      return NextResponse.json({ error: "No Google key", envDiag }, { status: 500 });
+    }
+    try {
+      const debugRes = await fetch(
+        "https://places.googleapis.com/v1/places:searchNearby",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "X-Goog-Api-Key": apiKey,
+            "X-Goog-FieldMask": "places.id,places.displayName,places.rating,places.formattedAddress",
+          },
+          body: JSON.stringify({
+            includedTypes: ["restaurant"],
+            maxResultCount: 5,
+            locationRestriction: {
+              circle: { center: { latitude: lat, longitude: lon }, radius: 500 },
+            },
+          }),
+        },
+      );
+      const debugBody = await debugRes.text();
+      return NextResponse.json({
+        envDiag,
+        debug: {
+          status: debugRes.status,
+          statusText: debugRes.statusText,
+          body: debugBody.substring(0, 2000),
+        },
+      });
+    } catch (e) {
+      return NextResponse.json({
+        envDiag,
+        debugError: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   try {
     console.log(`[test-suggestion] Stage=${stage} at (${lat},${lon}) in ${city}`);
 

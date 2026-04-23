@@ -2,10 +2,11 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "dev",
+      "name": "escape-game-dev",
       "runtimeExecutable": "/usr/local/bin/node",
-      "runtimeArgs": ["/usr/local/bin/npx", "next", "dev"],
-      "port": 3000
+      "runtimeArgs": ["./node_modules/next/dist/bin/next", "dev", "--webpack"],
+      "port": 3001,
+      "autoPort": true
     }
   ]
 }
