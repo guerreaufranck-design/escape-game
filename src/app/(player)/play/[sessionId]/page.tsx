@@ -1440,6 +1440,7 @@ export default function PlayPage() {
           historicalPhotoUrl={gameState.arHistoricalPhoto?.url ?? null}
           historicalPhotoCredit={gameState.arHistoricalPhoto?.credit ?? null}
           facadeText={gameState.arFacadeText ?? null}
+          facadeTextIsAnswer={gameState.currentRiddle?.answerSource === "virtual_ar"}
           treasureReward={gameState.arTreasureReward ?? null}
           stepKey={gameState.currentStepId}
           onChestOpen={() => setParticleBurst((n) => n + 1)}

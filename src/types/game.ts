@@ -31,6 +31,12 @@ export interface GameState {
     text: string;
     image: string | null;
     hasPhotoChallenge: boolean;
+    /**
+     * Where the answer lives: "physical" (real inscription on monument) or
+     * "virtual_ar" (answer appears as AR overlay when locked on target).
+     * Drives the riddle tone and the AR display behaviour.
+     */
+    answerSource: "physical" | "virtual_ar";
   } | null;
   /** Historical photo of the current location, shown as an AR overlay */
   arHistoricalPhoto: {

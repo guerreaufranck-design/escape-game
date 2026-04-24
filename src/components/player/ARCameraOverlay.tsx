@@ -28,6 +28,11 @@ interface ARCameraOverlayProps {
   historicalPhotoCredit?: string | null;
   /** Optional short "painted" text that appears on the facade when locked on */
   facadeText?: string | null;
+  /**
+   * When true, the facadeText is THE answer (virtual_ar stop). Rendered
+   * bigger and with a "Réponse révélée" label. When false, it's a hint.
+   */
+  facadeTextIsAnswer?: boolean;
   /** Optional reward text revealed when tapping the AR treasure chest */
   treasureReward?: string | null;
   /** Current step key — used to reset the treasure chest between steps */
@@ -62,6 +67,7 @@ export function ARCameraOverlay({
   historicalPhotoUrl = null,
   historicalPhotoCredit = null,
   facadeText = null,
+  facadeTextIsAnswer = false,
   treasureReward = null,
   stepKey = null,
   onChestOpen,
@@ -244,12 +250,14 @@ export function ARCameraOverlay({
         />
       )}
 
-      {/* Facade-painted cryptic hint — appears when locked on */}
+      {/* Facade-painted text — appears when locked on. Either a hint
+          (physical stops) or the actual answer (virtual_ar stops). */}
       {facadeText && cameraReady && orientation.hasCompass && (
         <ARFacadeTextLayer
           text={facadeText}
           lockedOn={lockedOn}
           horizontalAngle={horizontalAngle}
+          isAnswer={facadeTextIsAnswer}
         />
       )}
 

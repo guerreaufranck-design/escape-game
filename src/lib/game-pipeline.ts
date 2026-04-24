@@ -93,21 +93,43 @@ export async function generateGameFromTemplate(
       `[Pipeline] Found ${locations.length} locations in ${Math.round(researchDurationMs / 1000)}s`
     );
 
-    // Filter out UNVERIFIED locations
-    const verifiedLocations = locations.filter(
-      (l) => l.answer !== "UNVERIFIED"
-    );
-    // Different games have different stop counts (3 to 8 typically). When
-    // OddballTrip provides predefined stops, honor that count. When we're in
-    // discovery mode (no stops), default to 8 as the target.
+    // No more UNVERIFIED filtering: Claude extraction now always returns a
+    // concrete answer (physical OR virtual_ar). The pipeline only fails if the
+    // number of extracted locations is lower than expected (i.e. Claude
+    // dropped some entries entirely, which is a real extraction bug).
+    //
+    // Legacy safety net: if for any reason an entry still has "UNVERIFIED",
+    // we promote it to virtual_ar with a fallback answer rather than drop it.
+    const normalizedLocations = locations.map((l) => {
+      if (l.answer === "UNVERIFIED" || !l.answer) {
+        return {
+          ...l,
+          answer: "III", // fallback virtual answer (Roman 3, works for most themes)
+          answerType: "number" as const,
+          answerSource: "virtual_ar" as const,
+          whatToObserve:
+            "Point your camera at the facade in AR mode — the answer will appear painted on the wall.",
+        };
+      }
+      return {
+        ...l,
+        answerSource: l.answerSource ?? ("physical" as const),
+      };
+    });
+
     const minRequired = template.stops?.length ?? 8;
-    if (verifiedLocations.length < minRequired) {
+    if (normalizedLocations.length < minRequired) {
       throw new Error(
-        `Only ${verifiedLocations.length} verified locations (need ${minRequired}). Unverified: ${locations.filter((l) => l.answer === "UNVERIFIED").map((l) => l.name).join(", ")}`
+        `Only ${normalizedLocations.length} locations extracted (need ${minRequired}). Claude extraction dropped entries.`,
       );
     }
+    const verifiedLocations = normalizedLocations;
+    const physicalCount = normalizedLocations.filter(
+      (l) => l.answerSource === "physical",
+    ).length;
+    const virtualCount = normalizedLocations.length - physicalCount;
     console.log(
-      `[Pipeline] ${verifiedLocations.length} verified, ${locations.length - verifiedLocations.length} unverified`
+      `[Pipeline] ${normalizedLocations.length} locations: ${physicalCount} physical, ${virtualCount} virtual_ar`,
     );
 
     // ============================================
@@ -264,6 +286,7 @@ async function insertGameIntoDatabase(
     has_photo_challenge: false,
     ar_historical_photo_url: stepPhotos[index]?.url || null,
     ar_historical_photo_credit: stepPhotos[index]?.credit || null,
+    answer_source: step.answer_source ?? "physical",
   }));
 
   const { error: stepsError } = await supabase

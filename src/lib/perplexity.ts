@@ -29,6 +29,14 @@ export interface ResearchedLocation {
   answerType: "year" | "number" | "name";
   source: string;
   themeLink?: string;
+  /**
+   * Where the answer lives:
+   * - "physical": a real number/name/date carved or inscribed on the exterior
+   * - "virtual_ar": Claude generated an answer that will be revealed via AR
+   *   overlay when the player locks on the target (for places with no
+   *   convenient physical indice)
+   */
+  answerSource?: "physical" | "virtual_ar";
 }
 
 /** A stop predefined by the game designer on oddballtrip */
@@ -96,24 +104,53 @@ async function extractJsonWithClaude(
         role: "user",
         content: `I have a research report about ${locationCount} locations in a city for an outdoor escape game. Extract structured data from this report.
 
-For each location mentioned, provide a JSON object with:
+For each location mentioned, provide a JSON object with these fields:
 - "name": exact name of the monument (string)
 - "latitude": GPS latitude with 6 decimal places (number)
 - "longitude": GPS longitude with 6 decimal places (number)
-- "whatToObserve": what can be seen from outside without entering or paying (string)
-- "answer": the SHORT answer a player would give — a year, a number, or a name (string, max 3 words)
+- "whatToObserve": what the player should observe (string)
+- "answer": the SHORT answer a player would give (string, max 3 words)
 - "answerType": "year", "number", or "name" (string)
+- "answerSource": "physical" OR "virtual_ar" (string)
 - "source": any source URL mentioned in the research (string)
 - "themeLink": one sentence about historical significance (string)
 
-RULES FOR CHOOSING THE ANSWER:
-1. Prefer YEARS or DATES visible on the building (e.g., "999", "1085", "1557")
-2. Then PROPER NAMES permanently inscribed on plaques or signs
-3. Then NUMBERS of large, unambiguous architectural features (main doors, towers, arches)
-4. The answer must be visible from OUTSIDE without paying entrance
-5. The answer must be SHORT: a single year, number, or max 3 words
-6. If GPS coordinates are mentioned in the research, use those exactly
-7. If no coordinates are given, estimate based on the known location
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CRITICAL RULE — YOU MUST NEVER RETURN "UNVERIFIED" OR SKIP A LOCATION.
+EVERY location in the research report MUST get a concrete answer.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+STRATEGY TO CHOOSE THE ANSWER:
+
+STEP 1 — Try "physical" first. Look for something real, visible from outside:
+  a) A YEAR or DATE permanently carved in stone / inscribed on a plaque
+     (example: "999", "1085", "ANNO 1605")
+  b) A PROPER NAME permanently inscribed on the facade or heritage plaque
+     (example: "Alfonso VI", "Samuel ha-Levi")
+  c) A single unambiguous NUMBER of major architectural features
+     (number of main doors, main towers, arches on the main facade)
+  If you find one, set answerSource = "physical" and use the real value.
+  For these: "whatToObserve" describes where exactly to look (which wall, which plaque).
+
+STEP 2 — Fallback to "virtual_ar" when nothing physical fits.
+  When the location has no obvious permanent inscription, or the research is
+  unclear, INVENT a short, evocative answer consistent with the game theme:
+    - A plausible year linked to the place's history (from the research report)
+    - A short key word in the local language (max 1 word, 3-6 letters)
+    - A roman numeral evoking the era (III, VII, XIII, MCDXCII)
+    - A symbolic number linked to the theme (3 keys → "III", 7 seals → "VII")
+  Set answerSource = "virtual_ar".
+  For these: "whatToObserve" is always the same — the phrase:
+    "Point your camera at the facade in AR mode — the answer will appear painted on the wall."
+
+EVERY single location in the research gets its own entry in the output array.
+NO UNVERIFIED. NO SKIPS. If physical fails, use virtual_ar. Period.
+
+OTHER RULES:
+- The answer must be SHORT: a year, a number, or max 3 words
+- If GPS coordinates are in the research, use those exactly (6 decimals)
+- If coordinates missing, estimate from the known location name
+- answerType: "year" (1234, MCMLX), "number" (1, 3, 7, VII), or "name" (short word)
 
 Return ONLY a valid JSON array of ${locationCount} objects. No markdown, no commentary.
 

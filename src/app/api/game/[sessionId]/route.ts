@@ -106,6 +106,9 @@ export async function GET(
         const stepIsPlainEnglish = typeof step.title === "string" && !String(step.title).startsWith("{");
         const stepNeedsGemini = needsTranslation || (locale !== "en" && stepIsPlainEnglish);
 
+        const answerSource: "physical" | "virtual_ar" =
+          step.answer_source === "virtual_ar" ? "virtual_ar" : "physical";
+
         if (stepNeedsGemini) {
           // Translate step fields via Gemini + cache
           const enFields: Record<string, string> = {
@@ -118,6 +121,7 @@ export async function GET(
             text: translated.riddle_text || enFields.riddle_text,
             image: step.riddle_image,
             hasPhotoChallenge: step.has_photo_challenge,
+            answerSource,
           };
         } else {
           currentRiddle = {
@@ -125,6 +129,7 @@ export async function GET(
             text: t(step.riddle_text, locale),
             image: step.riddle_image,
             hasPhotoChallenge: step.has_photo_challenge,
+            answerSource,
           };
         }
 
@@ -141,10 +146,17 @@ export async function GET(
         const hints = (step.hints as unknown as Hint[]) || [];
         hintsAvailable = hints.length;
 
-        // AR facade text: use stored value, or fall back to hint #2 (the
-        // practical "where to look" hint) so the magical hint on the wall
-        // works out-of-the-box even for games generated before this feature.
-        arFacadeText = step.ar_facade_text || hints[1]?.text || null;
+        // AR facade text:
+        //  - virtual_ar steps: the facade text IS the answer, materialised
+        //    magically when the player locks on. This is the ONLY way to
+        //    discover the answer for these steps.
+        //  - physical steps: fall back to admin-set hint, or hint #2 (where
+        //    to look), so the magical overlay guides the player toward the
+        //    real inscription they need to read.
+        arFacadeText =
+          answerSource === "virtual_ar"
+            ? step.answer_text || step.ar_facade_text || null
+            : step.ar_facade_text || hints[1]?.text || null;
         arTreasureReward = step.ar_treasure_reward || null;
 
         // AR character: if any dialogue is set (or fallback to atmospheric

@@ -16,6 +16,9 @@ export interface GeneratedStep {
   hints: { order: number; text: string }[];
   anecdote: string;
   bonus_time_seconds: number;
+  /** How the player discovers the answer — "physical" (real inscription) or
+   * "virtual_ar" (AR overlay reveals it). Derived from the source location. */
+  answer_source: "physical" | "virtual_ar";
 }
 
 let anthropicClient: Anthropic | null = null;
@@ -43,7 +46,9 @@ export async function generateGameSteps(
 ): Promise<GeneratedStep[]> {
   const client = getAnthropicClient();
 
-  // Format locations for the prompt
+  // Format locations for the prompt — include answerSource so Claude can
+  // adapt the riddle tone (physical = "read the engraved year", virtual_ar
+  // = "the wall will whisper a sign when you point your camera").
   const locationsText = locations
     .map(
       (loc, i) => `Location ${i + 1}: ${loc.name}
@@ -51,6 +56,7 @@ export async function generateGameSteps(
 - What to observe: ${loc.whatToObserve}
 - ANSWER: ${loc.answer}
 - Answer type: ${loc.answerType}
+- Answer source: ${loc.answerSource ?? "physical"} ${loc.answerSource === "virtual_ar" ? "(AR-only: riddle must hint at activating AR camera)" : "(physical: riddle must say where to look on the real monument)"}
 - Source: ${loc.source}
 - Theme link: ${loc.themeLink || "N/A"}`
     )
@@ -80,8 +86,9 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
    - Does NOT name the location or the answer directly
    - Weaves into the ongoing narrative and references the previous step's discovery
    - Guides the player toward the location through atmospheric clues
-   - CRITICAL: Clearly tells the player WHAT TYPE of answer to look for: "Find the number engraved on...", "Read the word inscribed on the plaque...", "Count the arches...", "Look for the date carved in stone above the entrance..." etc.
-   - CRITICAL: Describes WHERE to look physically: on a wall, on a plaque, on a statue's pedestal, above a door, on a commemorative stone, on a sign, etc.
+   - CRITICAL — adapt the instructions to the "Answer source" of each location:
+     * If "physical": tell the player WHAT TYPE of answer to look for ("Find the number engraved on...", "Read the word on the plaque...", "Count the arches...") AND WHERE to look (on a wall, on a plaque, above a door, on a commemorative stone).
+     * If "virtual_ar": tell the player the spirits of the place speak only through their magic lens. Instruct them to lift their phone in AR mode — the answer will reveal itself, painted on the façade, visible only when they are aligned. Embrace the magical feel (glowing letters, whispered symbols, ethereal signs).
    - The riddle IS the puzzle — the clues to solve it must be embedded in the poetic text
 6. "answer_text": Copy ONLY the short answer from the data below. A number must stay a number. A year must stay a year. A word must stay a word. NEVER turn it into a sentence.
 7. "hints": Array of EXACTLY 3 hints:
@@ -90,6 +97,7 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
    - Hint 3 (order: 3): Almost the answer — describes the answer's format (e.g. "It's a 4-digit year", "It's a single word in Latin", "Count them carefully — there are fewer than 10") without stating it
 8. "anecdote": A fascinating, true historical anecdote (2-3 sentences). Make it captivating — this is the player's reward.
 9. "bonus_time_seconds": 0 for straightforward steps, 30-60 for harder ones
+10. "answer_source": Copy EXACTLY the "Answer source" field from the location above ("physical" or "virtual_ar"). This tells the app how to display the answer hint in AR mode.
 
 NARRATIVE REQUIREMENTS:
 - Step 1: Hook the player. The story begins with excitement and intrigue.

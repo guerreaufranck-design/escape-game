@@ -7,6 +7,12 @@ interface ARFacadeTextLayerProps {
   lockedOn: boolean;
   /** Horizontal angle in degrees (used to tilt the text in perspective) */
   horizontalAngle: number;
+  /**
+   * When true, the text IS the answer (virtual_ar stops). Rendered larger
+   * and with a stronger glow so the player can clearly read/capture it.
+   * When false, it's a hint guiding the player to look elsewhere.
+   */
+  isAnswer?: boolean;
 }
 
 /**
@@ -20,12 +26,25 @@ export function ARFacadeTextLayer({
   text,
   lockedOn,
   horizontalAngle,
+  isAnswer = false,
 }: ARFacadeTextLayerProps) {
   if (!text) return null;
 
   // Scale / tilt the text according to the horizontal angle so it feels
   // painted on the wall rather than floating on the screen.
   const tiltY = Math.max(-25, Math.min(25, horizontalAngle * 0.6));
+
+  // Answer mode: larger, stronger glow, no guillemets, uppercase, because
+  // this IS what the player has to read and memorise. Hint mode: smaller,
+  // italic, with guillemets, because it's just a whisper.
+  const fontSize = isAnswer
+    ? "clamp(2rem, 8vw, 4rem)"
+    : "clamp(1.2rem, 4.5vw, 2.2rem)";
+  const letterSpacing = isAnswer ? "0.18em" : "0.08em";
+  const textShadow = isAnswer
+    ? "0 0 28px rgba(251, 191, 36, 0.95), 0 0 12px rgba(251, 191, 36, 0.6), 0 0 4px rgba(120, 53, 15, 1), 2px 2px 4px rgba(0, 0, 0, 0.9)"
+    : "0 0 16px rgba(251, 191, 36, 0.6), 0 0 4px rgba(120, 53, 15, 0.9), 1px 1px 2px rgba(0, 0, 0, 0.8)";
+  const displayText = isAnswer ? text.toUpperCase() : `« ${text} »`;
 
   return (
     <div
@@ -35,20 +54,29 @@ export function ARFacadeTextLayer({
         transform: `translate(-50%, -50%) perspective(600px) rotateY(${tiltY}deg) scale(${lockedOn ? 1 : 0.9})`,
       }}
     >
+      {isAnswer && (
+        // A tiny label above the answer telling the player this is THE answer.
+        // Keeps the magical feel but removes any ambiguity about what to do.
+        <p
+          className="mb-2 text-center text-[10px] uppercase tracking-[0.3em] text-amber-300/70"
+          style={{ textShadow: "0 0 8px rgba(0,0,0,0.8)" }}
+        >
+          ✨ Réponse révélée
+        </p>
+      )}
       <p
-        className="max-w-[80vw] text-center font-serif italic"
+        className={`max-w-[90vw] text-center font-serif ${isAnswer ? "font-black" : "italic"}`}
         style={{
           fontFamily: '"Cinzel", "Trajan Pro", "Georgia", serif',
-          fontSize: "clamp(1.2rem, 4.5vw, 2.2rem)",
-          fontWeight: 700,
-          letterSpacing: "0.08em",
-          color: "#fde68a",
-          textShadow:
-            "0 0 16px rgba(251, 191, 36, 0.6), 0 0 4px rgba(120, 53, 15, 0.9), 1px 1px 2px rgba(0, 0, 0, 0.8)",
+          fontSize,
+          fontWeight: isAnswer ? 900 : 700,
+          letterSpacing,
+          color: isAnswer ? "#fef3c7" : "#fde68a",
+          textShadow,
           mixBlendMode: "screen",
         }}
       >
-        « {text} »
+        {displayText}
       </p>
     </div>
   );
