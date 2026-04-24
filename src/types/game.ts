@@ -89,4 +89,13 @@ export interface GameResults {
     answer: string | null;
     anecdote: string | null;
   }[];
+  /**
+   * Narrative epilogue shown before the score: reveals the "true story"
+   * behind the quest, weaving all step anecdotes into one cohesive arc.
+   * Null for older games generated before the epilogue feature.
+   */
+  epilogue: {
+    title: string;
+    text: string;
+  } | null;
 }

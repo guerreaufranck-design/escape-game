@@ -27,7 +27,7 @@ export async function POST(
 
     const { data: session, error: sessionError } = await supabase
       .from("game_sessions")
-      .select("*, games(title)")
+      .select("*, games(title, epilogue_title, epilogue_text)")
       .eq("id", sessionId)
       .single();
 
@@ -39,7 +39,11 @@ export async function POST(
       return NextResponse.json({ error: "Game not yet completed" }, { status: 400 });
     }
 
-    const game = session.games as unknown as { title: string };
+    const game = session.games as unknown as {
+      title: string;
+      epilogue_title?: unknown;
+      epilogue_text?: unknown;
+    };
     const now = new Date().toISOString();
 
     const { data: completions } = await supabase
@@ -142,6 +146,42 @@ export async function POST(
       }
     }
 
+    // Translate epilogue (if the game has one)
+    let epilogue: GameResults["epilogue"] = null;
+    if (game.epilogue_title && game.epilogue_text) {
+      let epilogueTitle = t(game.epilogue_title, locale) || getEnglishBase(game.epilogue_title);
+      let epilogueText = t(game.epilogue_text, locale) || getEnglishBase(game.epilogue_text);
+
+      if (needsTranslation) {
+        const enTitle = getEnglishBase(game.epilogue_title);
+        const enText = getEnglishBase(game.epilogue_text);
+        try {
+          if (enTitle) {
+            epilogueTitle = await translateGameField(
+              session.game_id,
+              "games",
+              "epilogue_title",
+              enTitle,
+              locale,
+            );
+          }
+          if (enText) {
+            epilogueText = await translateGameField(
+              session.game_id,
+              "games",
+              "epilogue_text",
+              enText,
+              locale,
+            );
+          }
+        } catch { /* keep English fallback */ }
+      }
+
+      if (epilogueTitle && epilogueText) {
+        epilogue = { title: epilogueTitle, text: epilogueText };
+      }
+    }
+
     const results: GameResults = {
       sessionId: session.id,
       gameTitle,
@@ -154,6 +194,7 @@ export async function POST(
       rank: leaderboardEntry?.rank ?? 0,
       totalPlayers: totalPlayers ?? 0,
       steps,
+      epilogue,
     };
 
     return NextResponse.json(results);

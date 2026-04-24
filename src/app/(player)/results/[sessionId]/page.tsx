@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,11 +22,14 @@ import { formatTime, formatScore } from "@/lib/scoring";
 import { useLocale } from "@/components/player/LocaleSelector";
 import { ReportError } from "@/components/player/ReportError";
 import { SelfieARScreen } from "@/components/player/SelfieARScreen";
+import { GameEpilogue } from "@/components/player/GameEpilogue";
+import { TruthReveal } from "@/components/player/TruthReveal";
 import type { GameResults } from "@/types/game";
 
 export default function ResultsPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const sessionId = params.sessionId as string;
 
   const [locale] = useLocale();
@@ -34,6 +37,11 @@ export default function ResultsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selfieOpen, setSelfieOpen] = useState(false);
+
+  // When the player gave up or got the final code wrong, the play page
+  // redirects here with ?revealed=1 so we show the TruthReveal panel before
+  // the epilogue. In all other cases, only the epilogue shows.
+  const revealed = searchParams.get("revealed") === "1";
 
   useEffect(() => {
     async function fetchResults() {
@@ -70,6 +78,7 @@ export default function ResultsPage() {
               rank: data.rank || 0,
               totalPlayers: data.totalPlayers || 0,
               steps: data.completedSteps || [],
+              epilogue: null,
             });
             return;
           }
@@ -162,6 +171,38 @@ export default function ResultsPage() {
       </div>
 
       <div className="max-w-lg mx-auto px-4 space-y-4 pb-8">
+        {/* Truth reveal — shown first when the player gave up or got it wrong */}
+        {revealed && results.steps && results.steps.length > 0 && (
+          <TruthReveal
+            steps={results.steps.map((s) => ({
+              title: s.title,
+              answer: s.answer,
+            }))}
+            locale={locale}
+          />
+        )}
+
+        {/* Epilogue — the narrative reward, shown before everything else */}
+        {results.epilogue && (
+          <GameEpilogue
+            title={results.epilogue.title}
+            text={results.epilogue.text}
+            overline={
+              revealed
+                ? undefined
+                : locale === "en"
+                  ? "✓ Final code unlocked"
+                  : locale === "es"
+                    ? "✓ Código final descifrado"
+                    : locale === "de"
+                      ? "✓ Code geknackt"
+                      : locale === "it"
+                        ? "✓ Codice finale svelato"
+                        : "✓ Code final trouvé"
+            }
+          />
+        )}
+
         {/* Score */}
         <Card className="bg-slate-900/80 border-emerald-500/30 overflow-hidden">
           <div className="bg-gradient-to-r from-emerald-500/10 to-transparent p-6 text-center">

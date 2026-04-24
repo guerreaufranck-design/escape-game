@@ -13,7 +13,7 @@ import {
   type PredefinedStop,
   type ResearchedLocation,
 } from "./perplexity";
-import { generateGameSteps } from "./anthropic";
+import { generateGameSteps, generateEpilogue, type GeneratedEpilogue } from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
 import { fetchHistoricalPhoto, type HistoricalPhotoResult } from "./wikipedia";
 import { v4 as uuidv4 } from "uuid";
@@ -163,10 +163,36 @@ export async function generateGameFromTemplate(
     );
 
     // ============================================
+    // STEP 2c: Generate narrative epilogue (Claude)
+    // ============================================
+    console.log("[Pipeline] Step 2c: Generating narrative epilogue...");
+    const epilogueStart = Date.now();
+    let epilogue: GeneratedEpilogue | null = null;
+    try {
+      epilogue = await generateEpilogue({
+        city: template.city,
+        country: template.country,
+        theme: template.theme,
+        narrative: template.narrative,
+        difficulty: template.difficulty,
+        steps,
+      });
+      console.log(
+        `[Pipeline] Epilogue generated ("${epilogue.title}", ${epilogue.text.length} chars) in ${Math.round((Date.now() - epilogueStart) / 1000)}s`,
+      );
+    } catch (err) {
+      // Non-blocking: if epilogue generation fails, the game still ships.
+      // The results page will just show a fallback message.
+      console.warn(
+        `[Pipeline] Epilogue generation failed, continuing without it: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
+    // ============================================
     // STEP 3: Insert into Supabase
     // ============================================
     console.log("[Pipeline] Step 3: Inserting into Supabase...");
-    const gameId = await insertGameIntoDatabase(template, steps, stepPhotos);
+    const gameId = await insertGameIntoDatabase(template, steps, stepPhotos, epilogue);
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
     const durationMs = Date.now() - startTime;
@@ -242,7 +268,8 @@ async function fetchPhotosForSteps(
 async function insertGameIntoDatabase(
   template: GameTemplate,
   steps: Awaited<ReturnType<typeof generateGameSteps>>,
-  stepPhotos: (HistoricalPhotoResult | null)[] = []
+  stepPhotos: (HistoricalPhotoResult | null)[] = [],
+  epilogue: GeneratedEpilogue | null = null
 ): Promise<string> {
   const supabase = createAdminClient();
   const gameId = uuidv4();
@@ -260,6 +287,9 @@ async function insertGameIntoDatabase(
     max_hints_per_step: 3,
     hint_penalty_seconds: 30,
     cover_image: template.coverImage || null,
+    // Narrative epilogue (English only here — translated on demand like other fields)
+    epilogue_title: epilogue?.title ?? null,
+    epilogue_text: epilogue?.text ?? null,
   });
 
   if (gameError) {

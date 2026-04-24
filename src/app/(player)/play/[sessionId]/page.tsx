@@ -1380,48 +1380,69 @@ export default function PlayPage() {
                 {tt('play.seeResults', locale)}
               </Button>
             ) : (
-              <div className="flex gap-3">
-                <Button
-                  variant="outline"
-                  size="lg"
-                  className="flex-1 border-slate-700"
-                  onClick={() => {
-                    setShowFinalCode(false);
-                    router.push(`/results/${sessionId}`);
-                  }}
-                >
-                  {tt('play.skip', locale)}
-                </Button>
-                <Button
-                  size="lg"
-                  className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                  disabled={!finalCodeInput.trim() || validatingCode}
-                  onClick={async () => {
-                    setValidatingCode(true);
-                    try {
-                      const res = await fetch(`/api/game/${sessionId}/validate-code?lang=${locale}`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ code: finalCodeInput.trim() }),
-                      });
-                      const data = await res.json();
-                      setCodeResult({ valid: data.valid, message: data.message });
-                      if (data.valid) setParticleBurst((n) => n + 1);
-                    } catch {
-                      setCodeResult({ valid: false, message: "Erreur de verification" });
-                    } finally {
-                      setValidatingCode(false);
-                    }
-                  }}
-                >
-                  {validatingCode ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Send className="h-4 w-4 mr-2" />
-                  )}
-                  Verifier
-                </Button>
-              </div>
+              <>
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="flex-1 border-slate-700"
+                    onClick={() => {
+                      // "I give up" / "skip" — player sees the truth + the narrative anyway
+                      setShowFinalCode(false);
+                      router.push(`/results/${sessionId}?revealed=1`);
+                    }}
+                  >
+                    {tt('play.skip', locale)}
+                  </Button>
+                  <Button
+                    size="lg"
+                    className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
+                    disabled={!finalCodeInput.trim() || validatingCode}
+                    onClick={async () => {
+                      setValidatingCode(true);
+                      try {
+                        const res = await fetch(`/api/game/${sessionId}/validate-code?lang=${locale}`, {
+                          method: "POST",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ code: finalCodeInput.trim() }),
+                        });
+                        const data = await res.json();
+                        setCodeResult({ valid: data.valid, message: data.message });
+                        if (data.valid) setParticleBurst((n) => n + 1);
+                      } catch {
+                        setCodeResult({ valid: false, message: "Erreur de verification" });
+                      } finally {
+                        setValidatingCode(false);
+                      }
+                    }}
+                  >
+                    {validatingCode ? (
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    ) : (
+                      <Send className="h-4 w-4 mr-2" />
+                    )}
+                    Verifier
+                  </Button>
+                </div>
+
+                {/* When a code has been tried and it's wrong, offer the reveal */}
+                {codeResult && !codeResult.valid && (
+                  <Button
+                    variant="ghost"
+                    className="w-full mt-2 text-amber-400 hover:text-amber-300 hover:bg-amber-500/10"
+                    onClick={() => {
+                      setShowFinalCode(false);
+                      router.push(`/results/${sessionId}?revealed=1`);
+                    }}
+                  >
+                    {locale === "en" ? "Reveal the story and the truth" :
+                     locale === "es" ? "Revelar la historia y la verdad" :
+                     locale === "de" ? "Die Geschichte und Wahrheit enthüllen" :
+                     locale === "it" ? "Rivelare la storia e la verità" :
+                     "Découvrir l'histoire et la vérité"}
+                  </Button>
+                )}
+              </>
             )}
           </div>
         </div>

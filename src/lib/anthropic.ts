@@ -149,3 +149,116 @@ Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional te
 
   return steps;
 }
+
+// ===========================================================================
+// EPILOGUE GENERATION
+// ===========================================================================
+
+export interface GeneratedEpilogue {
+  title: string;
+  text: string;
+}
+
+/**
+ * Generate a narrative epilogue that plays on the results page after the
+ * player enters the final code (or gives up). The goal is to give the player
+ * a real reward: a cohesive, memorable, true-story revelation that ties all
+ * the step anecdotes into one narrative.
+ *
+ * Style: storyteller, historically rich, emotional, ~300-500 words, 4-6
+ * paragraphs. Written in English here; the app translates to 32 languages
+ * via Gemini on demand.
+ */
+export async function generateEpilogue(params: {
+  city: string;
+  country: string;
+  theme: string;
+  narrative: string;
+  difficulty: number;
+  steps: GeneratedStep[];
+}): Promise<GeneratedEpilogue> {
+  const client = getAnthropicClient();
+
+  const stepsRecap = params.steps
+    .map(
+      (s, i) =>
+        `Step ${i + 1} — ${s.title}
+  Answer player discovered: ${s.answer_text}
+  Historical anecdote told to player: ${s.anecdote}`,
+    )
+    .join("\n\n");
+
+  const prompt = `You are a master storyteller writing the EPILOGUE of an outdoor escape game adventure that the player has just completed in ${params.city}, ${params.country}.
+
+GAME THEME: ${params.theme}
+GAME NARRATIVE: ${params.narrative}
+
+THE STEPS THE PLAYER JUST SOLVED (chronological):
+
+${stepsRecap}
+
+YOUR JOB:
+Write a magnificent epilogue that the player sees on their results screen. This is their REAL REWARD — not points, not a badge. It's a revelation of the TRUE STORY behind their quest, weaving together every anecdote they discovered.
+
+REQUIREMENTS:
+
+1. **Title** — a short, evocative French-style title (max 6 words), in English. Examples of the right vibe:
+   - "The Corsair's Living Legacy"
+   - "The Cathedral's Silent Witness"
+   - "What the Stones Never Told"
+
+2. **Text** — 4-6 paragraphs (300-500 words total), in the style of a historical storyteller revealing a long-kept secret. Structure:
+   - Paragraph 1: Congratulate the player warmly, acknowledge they now hold the "full truth"
+   - Paragraphs 2-4: Weave the anecdotes together. Reveal the deeper connection between the stops. Explain WHY each date/name/number was significant. Uncover what happened AFTER the events the player witnessed through the riddles — the legacy, the consequences, the aftermath that history books rarely tell.
+   - Final paragraph: A closing thought that elevates the experience. A fact about the place today that the player can verify themselves. A meaningful quote or philosophical reflection that ties the theme back to universal human experience.
+
+3. **Tone**:
+   - Warm, personal, "tu" when addressing the player (in French translation later)
+   - Historical precision — every fact must be TRUE (cross-reference the anecdotes given above)
+   - Evocative, poetic, not dry
+   - Emotional at times — this is the "dessert" of the meal, as the client said
+
+4. **RULES**:
+   - NEVER invent facts not implied by the anecdotes above
+   - NEVER use clichés ("congratulations on your journey", "you did it!", "well done, hero!")
+   - NEVER reference the game mechanics (score, timer, points, level)
+   - NEVER say "in this game" or "in this adventure" — speak as if telling a real story
+   - Reference the player naturally (no formal "dear adventurer", just "toi" in French feel)
+   - Do NOT use Markdown. Plain text only. Use line breaks between paragraphs.
+
+OUTPUT FORMAT — strict JSON:
+
+{
+  "title": "Your evocative English title here",
+  "text": "Paragraph 1.\\n\\nParagraph 2.\\n\\nParagraph 3.\\n\\nParagraph 4.\\n\\nFinal paragraph."
+}
+
+Return ONLY this JSON object. No commentary, no markdown wrapping.`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 2048,
+    temperature: 0.8,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const responseText =
+    message.content[0].type === "text" ? message.content[0].text : "";
+
+  // Extract the JSON object from the response (robust to any leading/trailing text)
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(
+      `generateEpilogue: no JSON found in Claude response: ${responseText.substring(0, 200)}`,
+    );
+  }
+
+  const parsed = JSON.parse(jsonMatch[0]) as GeneratedEpilogue;
+  if (!parsed.title || !parsed.text) {
+    throw new Error(
+      `generateEpilogue: parsed JSON missing title/text: ${JSON.stringify(parsed).substring(0, 200)}`,
+    );
+  }
+
+  return parsed;
+}
