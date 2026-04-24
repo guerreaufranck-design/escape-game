@@ -70,7 +70,7 @@ GAME PARAMETERS:
 - Steps: ${stepCount} (select the best ${stepCount} from the ${locations.length} locations below for narrative flow and walking route)
 - Language: English (will be auto-translated by the app)
 
-FOR EACH OF THE 8 STEPS, create a JSON object with:
+FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 
 1. "title": An evocative, mysterious title (max 8 words)
 2. "latitude": Use EXACTLY the coordinates provided below — do not modify them
@@ -93,8 +93,8 @@ FOR EACH OF THE 8 STEPS, create a JSON object with:
 
 NARRATIVE REQUIREMENTS:
 - Step 1: Hook the player. The story begins with excitement and intrigue.
-- Steps 2-5: Build tension progressively. Each step reveals a new fragment of the mystery.
-- Step 6: Provide a powerful, satisfying conclusion.
+- Middle steps: Build tension progressively. Each step reveals a new fragment of the mystery.
+- Step ${stepCount} (final): Provide a powerful, satisfying conclusion.
 - Each riddle MUST reference the previous discovery to create continuity.
 - Tone: mysterious, poetic, historically rich.
 
@@ -102,7 +102,7 @@ VERIFIED LOCATIONS WITH GAME-READY ANSWERS:
 
 ${locationsText}
 
-Return ONLY a valid JSON array of 6 objects, no additional text, no commentary, no markdown formatting.`;
+Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional text, no commentary, no markdown formatting.`;
 
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
@@ -123,8 +123,10 @@ Return ONLY a valid JSON array of 6 objects, no additional text, no commentary, 
 
   const steps = JSON.parse(jsonMatch[0]) as GeneratedStep[];
 
-  if (!Array.isArray(steps) || steps.length < 4) {
-    throw new Error(`Expected at least 4 steps, got ${steps?.length || 0}`);
+  if (!Array.isArray(steps) || steps.length < stepCount) {
+    throw new Error(
+      `Expected ${stepCount} steps (matching ${locations.length} input locations), got ${steps?.length || 0}`,
+    );
   }
 
   // Validate that answers match the original research

@@ -97,7 +97,10 @@ export async function generateGameFromTemplate(
     const verifiedLocations = locations.filter(
       (l) => l.answer !== "UNVERIFIED"
     );
-    const minRequired = Math.max(8, template.stops?.length || 8);
+    // Different games have different stop counts (3 to 8 typically). When
+    // OddballTrip provides predefined stops, honor that count. When we're in
+    // discovery mode (no stops), default to 8 as the target.
+    const minRequired = template.stops?.length ?? 8;
     if (verifiedLocations.length < minRequired) {
       throw new Error(
         `Only ${verifiedLocations.length} verified locations (need ${minRequired}). Unverified: ${locations.filter((l) => l.answer === "UNVERIFIED").map((l) => l.name).join(", ")}`
