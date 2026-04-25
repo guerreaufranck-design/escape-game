@@ -544,6 +544,7 @@ export function ARCameraOverlay({
           characterType={character.type}
           dialogue={character.dialogue}
           stepKey={stepKey}
+          locale={locale}
         />
       )}
     </div>

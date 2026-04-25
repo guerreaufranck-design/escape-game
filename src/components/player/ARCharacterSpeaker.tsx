@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { X, Volume2, VolumeX } from "lucide-react";
+import { useNarration } from "@/hooks/useNarration";
 
 interface ARCharacterSpeakerProps {
   /** True when the player is locked on target (close + aligned) */
@@ -12,6 +13,8 @@ interface ARCharacterSpeakerProps {
   dialogue: string;
   /** Step key — dismissal resets when step changes */
   stepKey: string | null;
+  /** Player's UI locale, used to pick the right TTS voice */
+  locale?: string;
 }
 
 // ▸ Character visual by type — emoji + accent colour gradient.
@@ -41,15 +44,18 @@ export function ARCharacterSpeaker({
   characterType,
   dialogue,
   stepKey,
+  locale = "fr",
 }: ARCharacterSpeakerProps) {
   const [dismissed, setDismissed] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const { speak, stop, speaking, supported } = useNarration(locale);
 
   // Reset the dismissed state when the player moves to a new step
   useEffect(() => {
     setDismissed(false);
     setMounted(false);
-  }, [stepKey]);
+    stop(); // stop any running narration when switching steps
+  }, [stepKey, stop]);
 
   // Show the character only once per step, after a small delay so the
   // player sees the chest first, then the character appears.
@@ -62,6 +68,11 @@ export function ARCharacterSpeaker({
       setMounted(false);
     }
   }, [lockedOn, mounted, dismissed]);
+
+  // Stop any narration when the bubble is dismissed
+  useEffect(() => {
+    if (dismissed) stop();
+  }, [dismissed, stop]);
 
   if (!dialogue || dismissed || !mounted) return null;
 
@@ -112,6 +123,28 @@ export function ARCharacterSpeaker({
           >
             <X className="h-3.5 w-3.5" />
           </button>
+
+          {/* Play/Stop narration — uses browser's native TTS (free, robotic
+              voice for now; ElevenLabs upgrade comes later). Only shown when
+              the platform supports speech synthesis. */}
+          {supported && (
+            <button
+              onClick={() => speak(dialogue)}
+              aria-label={speaking ? "Stop narration" : "Play narration"}
+              className={`absolute right-1 top-7 rounded-full p-1 transition-colors ${
+                speaking
+                  ? "bg-amber-500/30 text-amber-200 animate-pulse"
+                  : "text-amber-400/70 hover:bg-amber-500/20 hover:text-amber-200"
+              }`}
+            >
+              {speaking ? (
+                <VolumeX className="h-3.5 w-3.5" />
+              ) : (
+                <Volume2 className="h-3.5 w-3.5" />
+              )}
+            </button>
+          )}
+
           <p
             className="text-sm italic leading-snug text-amber-50"
             style={{ fontFamily: '"Crimson Text", "Georgia", serif' }}
