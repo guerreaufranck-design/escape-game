@@ -29,32 +29,61 @@ export const AR_POSES: ARPose[] = [
  * Catalogue of character types that have a complete 5-pose sprite set
  * uploaded. The pipeline must only pick from this list.
  *
- * Keep `description` short — it's injected verbatim into the Claude prompt.
+ * `bestFor` lists the SITE TYPES + KEYWORDS that strongly match this
+ * archetype. They're the primary signal Claude uses when picking. Always
+ * prefer SITE TYPE over secondary theme (e.g. a corsair buried in a
+ * monastery is still a "monk" location because the building is religious).
+ *
+ * `avoid` lists situations where this character is a wrong fit even
+ * though it might superficially sound right.
  */
 export const AR_CHARACTERS = [
   {
     type: "knight",
-    description: "armoured medieval knight, crusader era — fits castles, fortresses, military monuments",
+    description:
+      "armoured medieval knight or crusader, royal/military authority figure",
+    bestFor:
+      "CASTLES, FORTRESSES, ARMOURIES, BATTLEFIELDS, ROYAL PALACES, COLONIAL GOVERNORS' RESIDENCES, MILITARY ORDERS, COURTHOUSES OF MEDIEVAL/COLONIAL ERA, ramparts, watchtowers with military function",
+    avoid:
+      "religious sites (use monk), maritime sites (use sailor), modern buildings",
   },
   {
     type: "witch",
-    description: "mystic crone or sorceress — fits superstitions, plague legends, dark folklore",
+    description: "mystic crone, sorceress or alchemist",
+    bestFor:
+      "PLAGUE MEMORIALS, INQUISITION SITES, BURNING-PLACE PLAZAS, ALCHEMICAL/HERBALIST HERITAGE, FOLKLORE LANDMARKS, sites of persecutions, occult legends, sites tied to magic or curses, witch trials, apothecaries",
+    avoid:
+      "neutral churches (use monk), military sites (use knight), hauntings without magic theme (use ghost)",
   },
   {
     type: "monk",
-    description: "robed religious figure — fits churches, abbeys, monasteries, religious heritage",
+    description: "robed religious figure (Christian, Buddhist, etc.)",
+    bestFor:
+      "CHURCHES, CATHEDRALS, ABBEYS, MONASTERIES, CONVENTS, SANCTUARIES, CHAPELS, RELIQUARIES, SEMINARIES, scriptoriums, religious heritage of any era. CRITICAL: a religious building always wins this slot, even if a corsair is buried there or a treasure is hidden inside.",
+    avoid: "secular sites with only superficial religious symbolism",
   },
   {
     type: "sailor",
-    description: "naval officer or mariner — fits ports, lighthouses, harbours, maritime heritage",
+    description: "naval officer, mariner, harbourmaster, corsair captain",
+    bestFor:
+      "PORTS, HARBOURS, DOCKS, MARINAS, LIGHTHOUSES, FAROS, MUELLES, SHIPYARDS, NAVAL ARSENALS, CORSAIRS' HOUSES, CAPTAINS' RESIDENCES, FISH MARKETS, customs houses, maritime museums, naval heroes' monuments. Use this on any port-city step that's about sea trade or corsairs.",
+    avoid:
+      "religious tombs of corsairs (use monk for the building, NOT sailor), inland fortifications (use knight)",
   },
   {
     type: "detective",
-    description: "Victorian/early-20c sleuth — fits 1850-1940 mysteries, detective stories",
+    description: "Victorian / early-20c sleuth in trench coat or top hat",
+    bestFor:
+      "1850-1940 MYSTERIES, NOIR ATMOSPHERES, URBAN CRIME LEGENDS of that era, detective stories, true-crime monuments, espionage sites, art-nouveau/art-deco buildings tied to a mystery",
+    avoid: "anything pre-1850 or post-1950, religious sites, ports",
   },
   {
     type: "ghost",
-    description: "spectral apparition — fits haunted sites, cemeteries, tragic legends, corsairs",
+    description: "spectral apparition of a deceased figure",
+    bestFor:
+      "TOMBS, CEMETERIES, MAUSOLEUMS, CRYPTS, OSSUARIES, ABANDONED RUINS, BATTLEFIELD MEMORIALS, sites of tragic deaths, haunted hotels, ancestor cults. Use sparingly — only when the step's PRIMARY signal is death or haunting, not just because someone famous died nearby.",
+    avoid:
+      "religious buildings where a famous person is buried (use monk), corsair sites (use sailor unless the SITE itself is a tomb)",
   },
 ] as const;
 
@@ -99,12 +128,37 @@ export function pickFallbackGuide(seed: string): ARFallbackCharacter {
 }
 
 /**
- * Format the character catalogue for a Claude prompt, so the LLM can pick
- * the most thematic character type for each step.
+ * Format the character catalogue for a Claude prompt. Each entry includes
+ * the description, which sites/themes match it best, and pitfalls to avoid.
  */
 export function formatCharactersForPrompt(): string {
   const lines = AR_CHARACTERS.map(
-    (c) => `  - "${c.type}": ${c.description}`,
+    (c) =>
+      `  - "${c.type}" — ${c.description}\n      best for: ${c.bestFor}\n      avoid: ${c.avoid}`,
   ).join("\n");
-  return `Available character types (pick the most thematically fitting one for each step, or "default" if none fits):\n${lines}\n  - "default": neutral OddballTrip guide (use only when none of the themed characters fit the step)`;
+  return `AVAILABLE CHARACTER TYPES:\n${lines}\n  - "default" — neutral OddballTrip guide. Use ONLY when none of the themed characters fits the step's setting (e.g. modern museums, civic buildings of the late 20c, neutral squares).`;
+}
+
+/**
+ * Build the full character-selection block for a Claude prompt:
+ * a deterministic procedure, a strict diversity mandate, and the
+ * character catalogue. Keeps the diversity rule co-located with the
+ * catalogue so the LLM never sees one without the other.
+ */
+export function buildCharacterSelectionGuidance(stepCount: number): string {
+  const targetVariety = Math.min(stepCount, AR_CHARACTERS.length);
+  return `CHARACTER SELECTION PROCEDURE — apply for EACH step:
+  1. Identify the SITE TYPE: church / fortress / port / cemetery / palace / market / lighthouse / watchtower / convent / etc. The SITE TYPE is the primary signal — it almost always determines the character.
+  2. Identify the ERA: medieval / renaissance / 18th-c / 19th-c / 1920s / modern.
+  3. Identify the THEME: justice, faith, war, trade, magic, death, exploration, mystery.
+  4. Pick the character whose "best for" list most directly matches (1)+(2)+(3). The SITE TYPE wins ties.
+
+DIVERSITY MANDATE — STRICT:
+  - Across the ${stepCount} steps of this game, use AS MANY DIFFERENT character archetypes as the storyline plausibly allows.
+  - Target: at least ${targetVariety} DISTINCT character types across the ${stepCount} steps.
+  - NEVER repeat the same character on two consecutive steps unless they share an EXACT setting + era + theme triplet.
+  - If you find yourself reaching for the same character a 2nd time, STOP and reconsider — there is almost always a better thematic alternative in the catalogue.
+  - "default" is a last resort — only when NO themed character fits.
+
+${formatCharactersForPrompt()}`;
 }

@@ -6,7 +6,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ResearchedLocation } from "./perplexity";
 import { getRelevantNegativeFeedback, formatFeedbackForPrompt } from "./feedback-memory";
-import { formatCharactersForPrompt } from "./ar-sprites";
+import { buildCharacterSelectionGuidance } from "./ar-sprites";
 
 export interface GeneratedStep {
   title: string;
@@ -131,8 +131,8 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 8. "anecdote": A fascinating, true historical anecdote (2-3 sentences). Make it captivating — this is the player's reward.
 9. "bonus_time_seconds": 0 for straightforward steps, 30-60 for harder ones
 10. "answer_source": Copy EXACTLY the "Answer source" field from the location above ("physical" or "virtual_ar"). This tells the app how to display the answer hint in AR mode.
-11. "ar_character_type": Pick the best-fitting character archetype that will "appear" to the player when they lock on the target. Choose from the catalogue below — pick the one whose era/theme matches the step. This drives the AR sprite that's rendered.
-${formatCharactersForPrompt()}
+11. "ar_character_type": Pick the best-fitting character archetype that will "appear" to the player when they lock on the target. Follow the selection procedure below STRICTLY — do not default to one or two characters across the whole game.
+${buildCharacterSelectionGuidance(stepCount)}
 12. "ar_character_dialogue": A short atmospheric line (1-2 sentences MAX, under 180 chars) that the chosen character whispers to the player. It must SET THE MOOD and tease the riddle, but NEVER state the answer or what to look for explicitly. First-person, theatrical, in tune with the character archetype. Examples — monk: "I have guarded these stones since before your grandfather's grandfather drew breath..."; corsair ghost: "The sea took my body, but the harbour holds my secret still..."
 13. "ar_facade_text": 1 to 3 evocative WORDS (uppercase) that magically materialise on the building's façade when the player aligns their AR camera. This is a MOOD piece, not a hint. Pick words that EVOKE the riddle's theme without spoiling the answer (e.g. "VERITAS", "DECRETO MMXXII", "1532 — REQUIESCAT", "AUDE SAPERE"). For virtual_ar steps, use the answer_text itself in caps (since the answer reveals magically). Keep it under 30 characters.
 14. "ar_treasure_reward": A short single-sentence description of the magical treasure that materialises in front of the player AFTER they solve the step (e.g. "A silver key engraved with a galleon and a crescent moon", "An ancient parchment sealed with red wax and a phoenix sigil"). This is purely flavour — themed to the step's narrative beat. Under 130 chars.
