@@ -13,7 +13,14 @@ import {
   type PredefinedStop,
   type ResearchedLocation,
 } from "./perplexity";
-import { generateGameSteps, generateEpilogue, type GeneratedEpilogue } from "./anthropic";
+import {
+  generateGameSteps,
+  generateEpilogue,
+  validateGeneratedSteps,
+  regenerateStep,
+  type GeneratedEpilogue,
+  type GeneratedStep,
+} from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
 import { fetchHistoricalPhoto, type HistoricalPhotoResult } from "./wikipedia";
 import { v4 as uuidv4 } from "uuid";
@@ -138,7 +145,7 @@ export async function generateGameFromTemplate(
     console.log("[Pipeline] Step 2: Creating riddles with Claude...");
     const creationStart = Date.now();
 
-    const steps = await generateGameSteps(
+    let steps: GeneratedStep[] = await generateGameSteps(
       template.city,
       template.country,
       template.theme,
@@ -150,6 +157,93 @@ export async function generateGameFromTemplate(
     const creationDurationMs = Date.now() - creationStart;
     console.log(
       `[Pipeline] Generated ${steps.length} game steps in ${Math.round(creationDurationMs / 1000)}s`
+    );
+
+    // ============================================
+    // STEP 2bis: Validation + auto-correction (Claude #2)
+    // ============================================
+    // A second Claude call critiques the generated steps. If it flags real
+    // problems (too-easy answers, broken riddles, factual errors), we
+    // regenerate the offending step(s). Max 2 retries to bound the cost.
+    console.log("[Pipeline] Step 2bis: Validating with Claude reviewer...");
+    const validationStart = Date.now();
+
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      const validation = await validateGeneratedSteps({
+        steps,
+        city: template.city,
+        theme: template.theme,
+        narrative: template.narrative,
+      });
+
+      if (validation.ok || validation.issues.length === 0) {
+        console.log(`[Pipeline] Validation OK on attempt ${attempt}`);
+        break;
+      }
+
+      // Only regenerate steps with major or blocking issues — minor are accepted
+      const blockingIssues = validation.issues.filter(
+        (i) => i.severity === "major" || i.severity === "blocking",
+      );
+
+      if (blockingIssues.length === 0) {
+        console.log(
+          `[Pipeline] Validation found ${validation.issues.length} minor issue(s), accepting as-is`,
+        );
+        break;
+      }
+
+      console.log(
+        `[Pipeline] Validation flagged ${blockingIssues.length} step(s) on attempt ${attempt}: ${blockingIssues
+          .map((i) => `step ${i.step_index + 1} (${i.severity})`)
+          .join(", ")}`,
+      );
+
+      if (attempt === 2) {
+        // After 2 attempts, ship as-is rather than block delivery
+        console.warn(
+          `[Pipeline] Validation still failing after 2 attempts — shipping as-is. Admin should review.`,
+        );
+        break;
+      }
+
+      // Regenerate each flagged step
+      for (const issue of blockingIssues) {
+        const idx = issue.step_index;
+        if (idx < 0 || idx >= steps.length) continue;
+        // Find the matching source location (same coordinates)
+        const stepLat = steps[idx].latitude;
+        const stepLon = steps[idx].longitude;
+        const sourceLoc =
+          verifiedLocations.find(
+            (l) =>
+              Math.abs(l.latitude - stepLat) < 0.0001 &&
+              Math.abs(l.longitude - stepLon) < 0.0001,
+          ) || verifiedLocations[idx];
+        if (!sourceLoc) continue;
+
+        try {
+          steps[idx] = await regenerateStep({
+            brokenStep: steps[idx],
+            issue,
+            location: sourceLoc,
+            city: template.city,
+            theme: template.theme,
+            narrative: template.narrative,
+            stepNumber: idx + 1,
+            totalSteps: steps.length,
+          });
+          console.log(`[Pipeline]   ↳ regenerated step ${idx + 1}`);
+        } catch (err) {
+          console.warn(
+            `[Pipeline]   ↳ regeneration failed for step ${idx + 1}: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+    }
+
+    console.log(
+      `[Pipeline] Validation completed in ${Math.round((Date.now() - validationStart) / 1000)}s`,
     );
 
     // ============================================

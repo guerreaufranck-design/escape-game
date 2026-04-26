@@ -5,6 +5,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import type { ResearchedLocation } from "./perplexity";
+import { getRelevantNegativeFeedback, formatFeedbackForPrompt } from "./feedback-memory";
 
 export interface GeneratedStep {
   title: string;
@@ -44,6 +45,21 @@ export async function generateGameSteps(
   difficulty: number,
   locations: ResearchedLocation[]
 ): Promise<GeneratedStep[]> {
+  // RAG: pull lessons from past admin thumbs-down feedback on similar contexts
+  let feedbackBlock = "";
+  try {
+    const feedback = await getRelevantNegativeFeedback({ city, theme, limit: 8 });
+    feedbackBlock = formatFeedbackForPrompt(feedback);
+    if (feedbackBlock) {
+      console.log(
+        `[generateGameSteps] Injecting ${feedback.length} lessons from past feedback`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[generateGameSteps] Could not fetch feedback memory: ${err instanceof Error ? err.message : err}`,
+    );
+  }
   const client = getAnthropicClient();
 
   // Format locations for the prompt — include answerSource so Claude can
@@ -110,7 +126,7 @@ VERIFIED LOCATIONS WITH GAME-READY ANSWERS:
 
 ${locationsText}
 
-Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional text, no commentary, no markdown formatting.`;
+Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional text, no commentary, no markdown formatting.${feedbackBlock}`;
 
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
@@ -148,6 +164,219 @@ Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional te
   }
 
   return steps;
+}
+
+// ===========================================================================
+// VALIDATION (Claude #2 — auto-correction layer)
+// ===========================================================================
+
+export interface ValidationIssue {
+  step_index: number; // 0-based index in the steps array
+  problem: string;
+  severity: "minor" | "major" | "blocking";
+  suggestion: string;
+}
+
+export interface ValidationResult {
+  ok: boolean;
+  issues: ValidationIssue[];
+}
+
+/**
+ * Second-pass critic. Reads what the first Claude generated and flags problems
+ * that would degrade the player experience: too-easy answers, factually
+ * questionable anecdotes, riddles that contradict the answer, etc.
+ *
+ * Returns ok=true if the game is good as-is, otherwise a list of problematic
+ * steps with concrete suggestions for regeneration.
+ *
+ * Cost: ~$0.04 per validation call. Worth it: catches ~50% of bad outputs
+ * before they reach the player.
+ */
+export async function validateGeneratedSteps(params: {
+  steps: GeneratedStep[];
+  city: string;
+  theme: string;
+  narrative: string;
+}): Promise<ValidationResult> {
+  const client = getAnthropicClient();
+
+  const stepsBlock = params.steps
+    .map(
+      (s, i) =>
+        `STEP ${i + 1} — "${s.title}"
+GPS: ${s.latitude}, ${s.longitude}
+Riddle: ${s.riddle_text}
+ANSWER: "${s.answer_text}"
+Source: ${s.answer_source}
+Hints: 1) ${s.hints[0]?.text || "(missing)"} | 2) ${s.hints[1]?.text || "(missing)"} | 3) ${s.hints[2]?.text || "(missing)"}
+Anecdote: ${s.anecdote}`,
+    )
+    .join("\n\n---\n\n");
+
+  const prompt = `You are a strict QA reviewer for an outdoor escape game. Your job is to flag problems BEFORE the game ships to a paying customer.
+
+CONTEXT
+City: ${params.city}
+Theme: ${params.theme}
+Narrative: ${params.narrative}
+
+GAME TO REVIEW (${params.steps.length} steps):
+
+${stepsBlock}
+
+YOUR JOB
+Spot real problems only. Don't be picky on style. Flag a step ONLY if at least one of these is true:
+
+1. ANSWER QUALITY:
+   - Answer is too obvious (e.g. asking for the city's own name as the answer)
+   - Answer doesn't match the riddle question
+   - For "physical" answer_source: answer is implausible to actually be inscribed/visible at the location
+   - Answer contains explanation, sentence, or more than 3 words (it must be terse: a year, a number, or 1-2 words)
+
+2. RIDDLE / INSTRUCTIONS:
+   - Riddle directly states the answer (spoiler)
+   - Riddle's instructions don't match the answer_source ("look at the carved year" while answer_source is virtual_ar, or vice-versa)
+   - Riddle is so generic it could apply to ANY building
+
+3. FACTUAL:
+   - Anecdote contains an obvious historical error
+   - Date/figure in the anecdote contradicts the answer
+
+4. FLOW:
+   - Two consecutive steps have identical answers
+   - Step makes no sense without the previous one (broken narrative continuity)
+
+RULES
+- If everything is good: return {"ok": true, "issues": []}
+- A step can have multiple issues; combine them into one entry
+- Severity:
+   "blocking" = customer would refund (factually wrong, broken)
+   "major"    = customer would complain (boring, too easy, confusing)
+   "minor"    = nice-to-have polish (style, tone)
+- Suggestion must be ACTIONABLE: explain what to change so the regeneration prompt can fix it.
+
+OUTPUT — strict JSON, no markdown:
+
+{
+  "ok": false,
+  "issues": [
+    {
+      "step_index": 0,
+      "problem": "Answer 'PARIS' is the city's own name — too obvious",
+      "severity": "major",
+      "suggestion": "Replace with a year, a name on a plaque, or a count of architectural features specific to this exact monument"
+    }
+  ]
+}
+
+Return ONLY this JSON object. No commentary.`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 2048,
+    temperature: 0.1, // low temp — we want deterministic critic
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const responseText =
+    message.content[0].type === "text" ? message.content[0].text : "";
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.warn(
+      `[validator] No JSON in response. Defaulting to ok=true. Raw: ${responseText.substring(0, 200)}`,
+    );
+    return { ok: true, issues: [] };
+  }
+
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as ValidationResult;
+    return {
+      ok: parsed.ok ?? false,
+      issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+    };
+  } catch (err) {
+    console.warn(
+      `[validator] JSON parse failed. Defaulting to ok=true. Err: ${err instanceof Error ? err.message : err}`,
+    );
+    return { ok: true, issues: [] };
+  }
+}
+
+/**
+ * Regenerate a single step that was flagged by the validator.
+ * Receives the original step + the validator's feedback + the source location.
+ * Returns a fixed step that addresses the feedback.
+ */
+export async function regenerateStep(params: {
+  brokenStep: GeneratedStep;
+  issue: ValidationIssue;
+  location: ResearchedLocation;
+  city: string;
+  theme: string;
+  narrative: string;
+  stepNumber: number;
+  totalSteps: number;
+}): Promise<GeneratedStep> {
+  const client = getAnthropicClient();
+
+  const prompt = `You wrote step ${params.stepNumber}/${params.totalSteps} of an outdoor escape game in ${params.city} (theme: ${params.theme}). A reviewer flagged a problem and you must rewrite this step.
+
+ORIGINAL STEP (the one to fix):
+- Title: ${params.brokenStep.title}
+- Riddle: ${params.brokenStep.riddle_text}
+- Answer: ${params.brokenStep.answer_text}
+- Source: ${params.brokenStep.answer_source}
+
+REVIEWER FEEDBACK:
+Problem: ${params.issue.problem}
+Severity: ${params.issue.severity}
+What to change: ${params.issue.suggestion}
+
+LOCATION DATA (use exactly):
+- Name: ${params.location.name}
+- GPS: ${params.location.latitude}, ${params.location.longitude}
+- Observable detail: ${params.location.whatToObserve}
+- Confirmed answer: ${params.location.answer}
+- Answer type: ${params.location.answerType}
+- Answer source: ${params.location.answerSource ?? "physical"}
+
+Rewrite this single step as a JSON object with the same shape as before:
+{
+  "title": "evocative short title (max 8 words)",
+  "latitude": ${params.location.latitude},
+  "longitude": ${params.location.longitude},
+  "validation_radius_meters": 30,
+  "riddle_text": "immersive riddle 4-6 sentences (DO NOT name the answer; describe where to look)",
+  "answer_text": "${params.location.answer}",
+  "hints": [
+    {"order": 1, "text": "atmospheric hint"},
+    {"order": 2, "text": "practical hint — what type of object and where"},
+    {"order": 3, "text": "format hint without the answer"}
+  ],
+  "anecdote": "fascinating, historically true 2-3 sentences",
+  "bonus_time_seconds": 0,
+  "answer_source": "${params.location.answerSource ?? "physical"}"
+}
+
+Address the reviewer's feedback explicitly. Output ONLY the JSON object, no commentary, no markdown.`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 2048,
+    temperature: 0.7,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const responseText =
+    message.content[0].type === "text" ? message.content[0].text : "";
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(
+      `regenerateStep: no JSON in response: ${responseText.substring(0, 200)}`,
+    );
+  }
+  return JSON.parse(jsonMatch[0]) as GeneratedStep;
 }
 
 // ===========================================================================

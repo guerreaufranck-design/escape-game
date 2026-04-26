@@ -163,6 +163,13 @@ export default function AdminGameEditPage() {
         <div className="flex items-center gap-2">
           <Button
             variant="outline"
+            onClick={() => router.push(`/admin/games/${gameId}/review`)}
+            className="border-amber-600/40 text-amber-400 hover:bg-amber-500/10 hover:text-amber-300"
+          >
+            ⚡ Review qualité
+          </Button>
+          <Button
+            variant="outline"
             onClick={handleTogglePublish}
             disabled={publishing}
           >
