@@ -149,24 +149,58 @@ export async function GET(
         // AR facade text:
         //  - virtual_ar steps: the facade text IS the answer, materialised
         //    magically when the player locks on. This is the ONLY way to
-        //    discover the answer for these steps.
-        //  - physical steps: fall back to admin-set hint, or hint #2 (where
-        //    to look), so the magical overlay guides the player toward the
-        //    real inscription they need to read.
+        //    discover the answer for these steps. Never translated — it's
+        //    the literal answer the player must type.
+        //  - physical steps: short evocative word(s), often Latin/Spanish
+        //    by design — also kept untranslated for atmosphere.
         arFacadeText =
           answerSource === "virtual_ar"
             ? step.answer_text || step.ar_facade_text || null
             : step.ar_facade_text || hints[1]?.text || null;
-        arTreasureReward = step.ar_treasure_reward || null;
+
+        // AR treasure reward — full English sentence; needs translation
+        // when the player picked a non-English locale.
+        const rawTreasure = step.ar_treasure_reward || null;
+        if (rawTreasure) {
+          if (locale !== "en") {
+            try {
+              arTreasureReward = await translateGameField(
+                step.id,
+                "game_steps",
+                "ar_treasure_reward",
+                rawTreasure,
+                locale,
+              );
+            } catch {
+              arTreasureReward = rawTreasure;
+            }
+          } else {
+            arTreasureReward = rawTreasure;
+          }
+        }
 
         // AR character: if any dialogue is set (or fallback to atmospheric
         // hint #1 so it works out-of-the-box), pick a character type based
-        // on what the admin set, defaulting to a generic "guardian".
-        const charDialogue = step.ar_character_dialogue || hints[0]?.text || null;
-        if (charDialogue) {
+        // on what Claude set, defaulting to a generic "default" guide.
+        const rawDialogue = step.ar_character_dialogue || hints[0]?.text || null;
+        if (rawDialogue) {
+          let dialogue = rawDialogue;
+          if (locale !== "en") {
+            try {
+              dialogue = await translateGameField(
+                step.id,
+                "game_steps",
+                "ar_character_dialogue",
+                rawDialogue,
+                locale,
+              );
+            } catch {
+              dialogue = rawDialogue;
+            }
+          }
           arCharacter = {
             type: step.ar_character_type || "default",
-            dialogue: charDialogue,
+            dialogue,
           };
         }
       }
