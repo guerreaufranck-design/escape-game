@@ -411,6 +411,11 @@ async function insertGameIntoDatabase(
     ar_historical_photo_url: stepPhotos[index]?.url || null,
     ar_historical_photo_credit: stepPhotos[index]?.credit || null,
     answer_source: step.answer_source ?? "physical",
+    // AR runtime layer — populated by Claude during generation
+    ar_character_type: step.ar_character_type || "default",
+    ar_character_dialogue: step.ar_character_dialogue || null,
+    ar_facade_text: step.ar_facade_text || null,
+    ar_treasure_reward: step.ar_treasure_reward || null,
   }));
 
   const { error: stepsError } = await supabase

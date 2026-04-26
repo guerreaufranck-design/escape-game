@@ -6,6 +6,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { ResearchedLocation } from "./perplexity";
 import { getRelevantNegativeFeedback, formatFeedbackForPrompt } from "./feedback-memory";
+import { formatCharactersForPrompt } from "./ar-sprites";
 
 export interface GeneratedStep {
   title: string;
@@ -20,6 +21,22 @@ export interface GeneratedStep {
   /** How the player discovers the answer — "physical" (real inscription) or
    * "virtual_ar" (AR overlay reveals it). Derived from the source location. */
   answer_source: "physical" | "virtual_ar";
+  // ---- AR layer (rendered at runtime by the player UI) -------------------
+  /** Character archetype that "speaks" when player locks on target. Must
+   * match a key in AR_CHARACTERS or be "default". */
+  ar_character_type: string;
+  /** Short atmospheric line the character whispers to the player (1-2
+   * sentences). Sets the mood, doesn't spoil the answer. */
+  ar_character_dialogue: string;
+  /** 1-3 evocative words that "appear" magically on the building's façade
+   * when the player locks on target. For virtual_ar steps, this IS the
+   * answer reveal. For physical steps, it's a thematic word (e.g. "VERITAS",
+   * "DECRETO", "1532") that primes the right inscription on the real wall. */
+  ar_facade_text: string;
+  /** Description of the treasure object revealed by the AR camera once the
+   * step is solved (e.g. "a silver key engraved with a galleon"). 1
+   * sentence — themed to the step's narrative. */
+  ar_treasure_reward: string;
 }
 
 let anthropicClient: Anthropic | null = null;
@@ -114,6 +131,11 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 8. "anecdote": A fascinating, true historical anecdote (2-3 sentences). Make it captivating — this is the player's reward.
 9. "bonus_time_seconds": 0 for straightforward steps, 30-60 for harder ones
 10. "answer_source": Copy EXACTLY the "Answer source" field from the location above ("physical" or "virtual_ar"). This tells the app how to display the answer hint in AR mode.
+11. "ar_character_type": Pick the best-fitting character archetype that will "appear" to the player when they lock on the target. Choose from the catalogue below — pick the one whose era/theme matches the step. This drives the AR sprite that's rendered.
+${formatCharactersForPrompt()}
+12. "ar_character_dialogue": A short atmospheric line (1-2 sentences MAX, under 180 chars) that the chosen character whispers to the player. It must SET THE MOOD and tease the riddle, but NEVER state the answer or what to look for explicitly. First-person, theatrical, in tune with the character archetype. Examples — monk: "I have guarded these stones since before your grandfather's grandfather drew breath..."; corsair ghost: "The sea took my body, but the harbour holds my secret still..."
+13. "ar_facade_text": 1 to 3 evocative WORDS (uppercase) that magically materialise on the building's façade when the player aligns their AR camera. This is a MOOD piece, not a hint. Pick words that EVOKE the riddle's theme without spoiling the answer (e.g. "VERITAS", "DECRETO MMXXII", "1532 — REQUIESCAT", "AUDE SAPERE"). For virtual_ar steps, use the answer_text itself in caps (since the answer reveals magically). Keep it under 30 characters.
+14. "ar_treasure_reward": A short single-sentence description of the magical treasure that materialises in front of the player AFTER they solve the step (e.g. "A silver key engraved with a galleon and a crescent moon", "An ancient parchment sealed with red wax and a phoenix sigil"). This is purely flavour — themed to the step's narrative beat. Under 130 chars.
 
 NARRATIVE REQUIREMENTS:
 - Step 1: Hook the player. The story begins with excitement and intrigue.
@@ -356,7 +378,11 @@ Rewrite this single step as a JSON object with the same shape as before:
   ],
   "anecdote": "fascinating, historically true 2-3 sentences",
   "bonus_time_seconds": 0,
-  "answer_source": "${params.location.answerSource ?? "physical"}"
+  "answer_source": "${params.location.answerSource ?? "physical"}",
+  "ar_character_type": "one of: knight, witch, monk, sailor, detective, ghost, default — pick the most thematic",
+  "ar_character_dialogue": "1-2 sentence atmospheric line whispered to the player, in character, no spoilers (under 180 chars)",
+  "ar_facade_text": "1-3 evocative UPPERCASE words that materialise on the façade (under 30 chars)",
+  "ar_treasure_reward": "1-sentence description of the magical treasure revealed once solved (under 130 chars)"
 }
 
 Address the reviewer's feedback explicitly. Output ONLY the JSON object, no commentary, no markdown.`;
