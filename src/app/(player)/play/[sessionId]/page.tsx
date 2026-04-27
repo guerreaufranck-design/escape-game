@@ -224,6 +224,77 @@ export default function PlayPage() {
     fetchGameState();
   }, [fetchGameState]);
 
+  // -------------------------------------------------------------------
+  // Persist hints + notebook across reloads / accidental nav.
+  // The session API only knows the COUNT of hints used (for scoring); the
+  // hint TEXT lives client-side. Without this, a swipe-back wiped the
+  // player's notebook clean even though they had paid the time penalty.
+  // -------------------------------------------------------------------
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem(`game:${sessionId}:hints`);
+      if (raw) setHints(JSON.parse(raw));
+      const nb = sessionStorage.getItem(`game:${sessionId}:notebook`);
+      if (nb) setNotebook(JSON.parse(nb));
+    } catch {
+      /* ignore corrupt storage */
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`game:${sessionId}:hints`, JSON.stringify(hints));
+    } catch { /* quota or private mode — ignore */ }
+  }, [hints, sessionId]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(`game:${sessionId}:notebook`, JSON.stringify(notebook));
+    } catch { /* ignore */ }
+  }, [notebook, sessionId]);
+
+  // -------------------------------------------------------------------
+  // Block accidental exits (swipe-back gesture, browser back button,
+  // tab close). Mobile Safari and Chrome both fire popstate when the
+  // user swipes from the screen edge — we counter-push the same state
+  // so the player stays in the game unless they explicitly confirm.
+  // -------------------------------------------------------------------
+  useEffect(() => {
+    if (!gameState || gameState.status !== "active") return;
+
+    // Push a sentinel state so the FIRST popstate doesn't take us off the page.
+    try {
+      window.history.pushState({ inGame: true }, "");
+    } catch { /* ignore */ }
+
+    const onPopState = () => {
+      const ok = window.confirm(
+        "Quitter la partie ? Tes indices et ta progression sont sauvegardes, mais le chrono continue.",
+      );
+      if (!ok) {
+        // Re-push to keep the player on the page.
+        try {
+          window.history.pushState({ inGame: true }, "");
+        } catch { /* ignore */ }
+      } else {
+        // Allow native back to take effect.
+        window.history.back();
+      }
+    };
+
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+
+    window.addEventListener("popstate", onPopState);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("beforeunload", onBeforeUnload);
+    };
+  }, [gameState?.status]);
+
   useEffect(() => {
     if (gameState?.startedAt) {
       timer.start();
@@ -320,81 +391,10 @@ export default function PlayPage() {
     }
   };
 
-  // Validate by photo (AI) - supports both photo challenge and GPS fallback
-  const validateByPhoto = async (mode: "photo" | "location" = "photo") => {
-    if (!gameState) return;
-
-    // Create a file input and trigger it
-    const input = document.createElement("input");
-    input.type = "file";
-    input.accept = "image/*";
-    input.capture = "environment"; // Use rear camera on mobile
-
-    input.onchange = async (e) => {
-      const file = (e.target as HTMLInputElement).files?.[0];
-      if (!file) return;
-
-      setPhotoValidating(true);
-      setPhotoFeedback(null);
-
-      try {
-        // Convert to base64
-        const reader = new FileReader();
-        const base64 = await new Promise<string>((resolve) => {
-          reader.onload = () => resolve(reader.result as string);
-          reader.readAsDataURL(file);
-        });
-
-        const res = await fetch(`/api/ai/validate-photo?lang=${locale}`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            photoBase64: base64,
-            sessionId,
-            stepOrder: gameState.currentStep,
-            mode: mode === "location" ? "location" : undefined,
-          }),
-        });
-
-        const data = await res.json();
-
-        if (data.stepValidated || data.isValid) {
-          setStepSuccess(true);
-          setHints([]);
-          setGpsTooFar(false);
-          if (data.answerText) setCorrectAnswer(data.answerText);
-          if (data.anecdote) {
-            setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
-          }
-          setPhotoFeedback(null);
-        } else {
-          const hasRichData = !!(data.recognizedObject || data.anecdote);
-          const canShowRich = photoRecognitionCount < MAX_PHOTO_RECOGNITIONS;
-
-          if (hasRichData && canShowRich) {
-            setPhotoRecognitionCount((c) => c + 1);
-            setPhotoFeedback({
-              message: data.feedback || "Ce n'est pas le bon lieu. Reessayez !",
-              recognizedObject: data.recognizedObject || undefined,
-              anecdote: data.anecdote || undefined,
-              proximityHint: data.proximityHint || undefined,
-            });
-          } else {
-            // Over limit or no rich identification — show plain feedback only
-            setPhotoFeedback({
-              message: data.feedback || "Ce n'est pas le bon lieu. Reessayez !",
-              proximityHint: data.proximityHint || undefined,
-            });
-          }
-        }
-      } catch {
-        setPhotoFeedback({ message: "Erreur lors de la validation photo" });
-      } finally {
-        setPhotoValidating(false);
-      }
-    };
-
-    input.click();
+  // Photo challenge has been retired in the AR-first flow. The function is
+  // gone; calls from older UI branches no-op via the wrapper below.
+  const validateByPhoto = async (_mode: "photo" | "location" = "photo") => {
+    void _mode;
   };
 
   // Skip step
@@ -1042,74 +1042,8 @@ export default function PlayPage() {
             </div>
           )}
 
-          {/* GPS too far — photo fallback */}
-          {gpsTooFar && (
-            <div className="px-4 py-3 bg-orange-500/10 border-t border-orange-500/40">
-              <p className="text-sm font-medium text-orange-300 mb-2">
-                {tt('play.tooFar', locale).replace('{distance}', formatDistance(gpsTooFarDistance))}
-              </p>
-              <Button
-                size="sm"
-                className="w-full bg-blue-600 hover:bg-blue-700 text-white"
-                disabled={photoValidating}
-                onClick={() => validateByPhoto("location")}
-              >
-                {photoValidating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Camera className="h-4 w-4 mr-2" />}
-                {tt('play.validatePhoto', locale)}
-              </Button>
-            </div>
-          )}
-
-          {/* Photo feedback */}
-          {photoFeedback && (
-            <div className="px-4 py-3 bg-gradient-to-b from-blue-500/10 to-purple-500/10 border-t border-blue-500/30">
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div className="flex-1">
-                  {photoFeedback.recognizedObject ? (
-                    <>
-                      <p className="text-xs uppercase tracking-wider text-blue-400 font-semibold mb-1">
-                        {tt('play.notTheTarget', locale)}
-                      </p>
-                      <p className="text-sm text-white font-medium">
-                        {tt('play.youPhotographed', locale)}{" "}
-                        <span className="text-blue-300 font-bold">{photoFeedback.recognizedObject}</span>
-                      </p>
-                    </>
-                  ) : (
-                    <p className="text-sm text-blue-300">{photoFeedback.message}</p>
-                  )}
-                </div>
-                <button
-                  onClick={() => setPhotoFeedback(null)}
-                  className="text-xs text-blue-400 hover:text-blue-300 shrink-0"
-                  aria-label="Fermer"
-                >
-                  ✕
-                </button>
-              </div>
-              {photoFeedback.anecdote && (
-                <div className="mt-2 p-3 bg-slate-900/60 border border-blue-500/20 rounded-lg">
-                  <p className="text-xs uppercase tracking-wider text-amber-400 font-semibold mb-1">
-                    {tt('play.didYouKnow', locale)}
-                  </p>
-                  <p className="text-xs text-slate-300 leading-relaxed italic">
-                    {photoFeedback.anecdote}
-                  </p>
-                </div>
-              )}
-              {(photoFeedback.recognizedObject || photoFeedback.anecdote) && (
-                <p className="mt-2 text-[10px] text-slate-500 italic text-right">
-                  {tt('play.aiDisclaimer', locale)}
-                </p>
-              )}
-              {photoFeedback.proximityHint && (
-                <p className="mt-2 text-xs text-emerald-400 flex items-center gap-1.5">
-                  <Navigation className="h-3 w-3 shrink-0" />
-                  {photoFeedback.proximityHint}
-                </p>
-              )}
-            </div>
-          )}
+          {/* Photo challenge + GPS-too-far photo fallback removed — the
+              AR-first flow validates by typed answer, no photo needed. */}
 
           {/* Error message */}
           {error && (
@@ -1124,11 +1058,11 @@ export default function PlayPage() {
               <Button
                 size="lg"
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-14 rounded-xl text-base shadow-lg shadow-emerald-900/30"
-                disabled={!geo.latitude || !geo.longitude || validating}
+                disabled={validating || !(notebookInput || notebook[gameState.currentStep] || "").trim()}
                 onClick={validateStep}
               >
-                {validating ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <MapPin className="h-5 w-5 mr-2" />}
-                {tt('play.validateGps', locale)}
+                {validating ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <CheckCircle2 className="h-5 w-5 mr-2" />}
+                Valider la reponse
               </Button>
             </div>
           </div>
@@ -1230,24 +1164,7 @@ export default function PlayPage() {
                 <ChevronRight className="h-5 w-5 text-slate-500 flex-shrink-0" />
               </button>
 
-              {/* Photo validate */}
-              <button
-                disabled={photoValidating}
-                onClick={() => {
-                  setShowActionMenu(false);
-                  validateByPhoto("location");
-                }}
-                className="w-full flex items-center gap-4 p-4 rounded-2xl bg-blue-500/10 border border-blue-500/30 hover:bg-blue-500/20 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                <div className="flex-shrink-0 w-12 h-12 rounded-xl bg-blue-500/20 border border-blue-500/40 flex items-center justify-center">
-                  {photoValidating ? <Loader2 className="h-6 w-6 text-blue-300 animate-spin" /> : <Camera className="h-6 w-6 text-blue-300" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-bold text-white">{tt('play.validateByPhoto', locale)}</p>
-                  <p className="text-xs text-slate-400 mt-0.5">{tt('play.validateByPhotoDesc', locale)}</p>
-                </div>
-                <ChevronRight className="h-5 w-5 text-slate-500 flex-shrink-0" />
-              </button>
+              {/* Photo validate removed — AR-first flow uses typed answer */}
 
               {/* Skip step */}
               <button
