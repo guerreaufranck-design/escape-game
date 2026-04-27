@@ -73,11 +73,27 @@ export async function GET(
     const needsGemini = needsTranslation || (locale !== "en" && isPlainEnglish);
 
     if (needsGemini) {
+      // If Gemini is down, fall back to English so the API never 500s on
+      // the player. Cached translations are unaffected.
       const enTitle = getEnglishBase(game.title);
       const enDesc = getEnglishBase(game.description);
+      const safeTranslate = (
+        field: string,
+        en: string,
+      ): Promise<string> =>
+        en
+          ? translateGameField(game.id, "games", field, en, locale).catch(
+              (err) => {
+                console.warn(
+                  `[game] ${field} translation failed, serving English. err=${err instanceof Error ? err.message : err}`,
+                );
+                return en;
+              },
+            )
+          : Promise.resolve("");
       [gameTitle, gameDescription] = await Promise.all([
-        enTitle ? translateGameField(game.id, "games", "title", enTitle, locale) : Promise.resolve(""),
-        enDesc ? translateGameField(game.id, "games", "description", enDesc, locale) : Promise.resolve(""),
+        safeTranslate("title", enTitle),
+        safeTranslate("description", enDesc),
       ]);
     }
 
@@ -110,12 +126,22 @@ export async function GET(
           step.answer_source === "virtual_ar" ? "virtual_ar" : "physical";
 
         if (stepNeedsGemini) {
-          // Translate step fields via Gemini + cache
+          // Translate step fields via Gemini + cache. If Gemini is down or
+          // throws, never let the player see a 500 — fall back to the raw
+          // English content so the game stays playable. Cached translations
+          // (when available) come straight from Supabase and are unaffected.
           const enFields: Record<string, string> = {
             title: getEnglishBase(step.title),
             riddle_text: getEnglishBase(step.riddle_text),
           };
-          const translated = await translateStepFields(step.id, enFields, locale);
+          let translated: Record<string, string> = {};
+          try {
+            translated = await translateStepFields(step.id, enFields, locale);
+          } catch (err) {
+            console.warn(
+              `[game/${sessionId}] step translation failed, serving English. Locale=${locale}, step=${step.id}, err=${err instanceof Error ? err.message : err}`,
+            );
+          }
           currentRiddle = {
             title: translated.title || enFields.title,
             text: translated.riddle_text || enFields.riddle_text,
