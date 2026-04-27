@@ -143,31 +143,43 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 3. "validation_radius_meters": 25-50. Smaller for tight squares, larger for
    open plazas.
 
-4. "riddle_text": 5-8 sentences in 3 EXPLICIT movements (the player MUST
-   know exactly what to do — no poetic ambiguity at the end):
+4. "riddle_text": 6-9 sentences. STRUCTURE in 3 movements — POETIC up
+   front, EXPLICIT at the end. The player must walk away knowing
+   EXACTLY (a) where to stand, (b) where to point the phone, (c) how
+   to open AR, (d) what to do with what they see.
 
-   (a) NARRATIVE LINK (1-2 sentences) — picks up where the previous step
-       left off, in-character. Reference the previous discovery.
+   (a) NARRATIVE STORY (2-3 sentences) — Tell a vivid micro-story tied
+       to the place and the game theme. Past tense, in-character. Use
+       sensory detail.
+       Example tone: "Le corsaire passait par cette rue chaque soir,
+       il s'arrêtait à la taverne du Lion Rouge pour y boire une chope
+       de bière brune avant de retourner à son navire."
 
-   (b) WALKING TOUR (2-3 sentences) — describe what the player will see
-       on the way and at the stop. REAL heritage details, REAL building
-       styles, REAL epoch markers. This is THE TOURIST VALUE. Drop in
-       1-2 observable street-level details ("the carved lions above the
-       doorway", "the wrought-iron balconies overlooking the plaza")
-       — the player will physically see them.
+   (b) THEN vs NOW BRIDGE (1-2 sentences) — Anchor the past to what
+       the player sees TODAY. Mention how the place evolved. This is
+       the "tour guide" beat that turns the riddle into a heritage
+       walk.
+       Example tone: "Aujourd'hui cette taverne est devenue une
+       petite boutique d'épices, mais sa façade en pierre n'a pas
+       changé d'un cheveu depuis 1684."
 
-   (c) AR INVITATION (2-3 sentences) — END WITH A PRECISE INSTRUCTION.
-       The player must understand:
-         - WHERE: which side / which facade to face (north facade, the
-           main entrance, the wall facing the plaza, etc.)
-         - WHAT: lift the phone, tap "Realite Augmentee" / "AR camera"
-         - HOW: slowly scan the wall — golden letters will appear
-         - THEN: type those letters into the notebook to advance.
-       Use poetic framing for atmosphere ("the spirits whisper", "the
-       stones remember") but ALWAYS finish with a concrete instruction
-       like: "Lift your phone in AR mode toward the north facade — the
-       letters will appear in gold. Type them in your notebook to
-       continue." NO ambiguity.
+   (c) AR INSTRUCTION (2-3 sentences) — TELL THE PLAYER WHAT TO DO,
+       WORD-FOR-WORD STYLE. Be precise about WHERE the AR clue will
+       appear (on the ground, on the door, on the north facade, above
+       the carved lion, etc.) and HOW to activate AR.
+
+       MANDATORY CLOSING TEMPLATE — adapt the wording but include
+       EVERY element:
+         "Une fois sur place, devant [WHERE EXACTLY: "la porte en
+         bois cloutée" / "le sol pavé devant la maison verte" /
+         "la façade nord du bâtiment ocre"], appuie sur le grand
+         bouton violet 'Ouvrir la Réalité Augmentée' en bas de ton
+         écran, puis balaie lentement [WHERE TO SCAN] avec ta
+         caméra. Des lettres dorées vont apparaître — c'est ta
+         réponse. Note-la dans ton carnet."
+
+       NEVER end with vague poetic ambiguity. The instruction MUST
+       be a concrete how-to.
 
 5. "answer_text": ONLY the short evocative answer. A year, a roman
    numeral, ONE word. NEVER a sentence. Copy from the location data.

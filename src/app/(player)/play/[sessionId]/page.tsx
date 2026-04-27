@@ -1052,16 +1052,30 @@ export default function PlayPage() {
             </div>
           )}
 
-          {/* Bottom action bar — sticky so the primary action stays visible even when content scrolls */}
-          <div className="sticky bottom-0 z-20 mt-auto bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
-            <div className="max-w-lg mx-auto">
+          {/* Bottom action bar — AR is the PRIMARY action (the new mechanic),
+              answer-validation is secondary and only lights up once the
+              player has typed something they discovered in AR. */}
+          <div className="sticky bottom-0 z-20 mt-auto bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4 space-y-2.5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
+            <div className="max-w-lg mx-auto space-y-2.5">
+              {/* PRIMARY: open AR — purple/fuchsia, the wow button */}
               <Button
                 size="lg"
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-14 rounded-xl text-base shadow-lg shadow-emerald-900/30"
+                className="w-full bg-gradient-to-br from-fuchsia-600 to-violet-700 hover:from-fuchsia-500 hover:to-violet-600 text-white font-bold h-14 rounded-xl text-base shadow-lg shadow-fuchsia-900/40 animate-pulse-slow"
+                onClick={() => setArOpen(true)}
+              >
+                <Sparkles className="h-5 w-5 mr-2" />
+                Ouvrir la Realite Augmentee
+              </Button>
+              {/* SECONDARY: validate the typed answer — emerald, only
+                  active once the player has typed what AR revealed. */}
+              <Button
+                size="lg"
+                variant="outline"
+                className="w-full border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 font-bold h-12 rounded-xl text-sm"
                 disabled={validating || !(notebookInput || notebook[gameState.currentStep] || "").trim()}
                 onClick={validateStep}
               >
-                {validating ? <Loader2 className="h-5 w-5 animate-spin mr-2" /> : <CheckCircle2 className="h-5 w-5 mr-2" />}
+                {validating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
                 Valider la reponse
               </Button>
             </div>
