@@ -13,6 +13,7 @@ import {
   type PredefinedStop,
   type ResearchedLocation,
 } from "./perplexity";
+import { researchPredefinedStopsWithGemini } from "./research-gemini";
 import {
   generateGameSteps,
   generateEpilogue,
@@ -71,27 +72,59 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
-    // STEP 1: Research with Perplexity Deep Research
+    // STEP 1: Research locations
+    //   Primary  : Gemini 2.5 Flash (no grounding) — ~$0.02/game
+    //   Fallback : Perplexity sonar-deep-research  — ~$1.00/game
+    //
+    // Toggled by USE_GEMINI_RESEARCH env var (default off until manually
+    // flipped on Vercel). When the flag is on, we try Gemini first; on
+    // any throw / empty result we fall back to Perplexity transparently.
     // ============================================
-    console.log("[Pipeline] Step 1: Researching locations with Perplexity...");
+    const useGemini = process.env.USE_GEMINI_RESEARCH === "true";
+    console.log(
+      `[Pipeline] Step 1: Researching locations (primary=${useGemini ? "Gemini" : "Perplexity"})...`,
+    );
     const researchStart = Date.now();
 
-    let locations;
+    let locations: ResearchedLocation[] = [];
+
     if (template.stops && template.stops.length > 0) {
       // Mode 1: Research predefined stops from oddballtrip
-      locations = await researchPredefinedStops(
-        template.city,
-        template.country,
-        template.theme,
-        template.stops
-      );
+      if (useGemini) {
+        try {
+          locations = await researchPredefinedStopsWithGemini(
+            template.city,
+            template.country,
+            template.theme,
+            template.stops,
+          );
+        } catch (err) {
+          console.warn(
+            `[Pipeline] Gemini research failed, falling back to Perplexity: ${err instanceof Error ? err.message : err}`,
+          );
+          locations = await researchPredefinedStops(
+            template.city,
+            template.country,
+            template.theme,
+            template.stops,
+          );
+        }
+      } else {
+        locations = await researchPredefinedStops(
+          template.city,
+          template.country,
+          template.theme,
+          template.stops,
+        );
+      }
     } else {
-      // Mode 2: Discover locations from scratch
+      // Mode 2: Discover locations from scratch — only Perplexity supports
+      // this for now (Gemini path requires predefined stop names).
       locations = await researchGameLocations(
         template.city,
         template.country,
         template.theme,
-        template.themeDescription
+        template.themeDescription,
       );
     }
 
