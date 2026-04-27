@@ -76,11 +76,12 @@ export async function generateGameFromTemplate(
     //   Primary  : Gemini 2.5 Flash (no grounding) — ~$0.02/game
     //   Fallback : Perplexity sonar-deep-research  — ~$1.00/game
     //
-    // Toggled by USE_GEMINI_RESEARCH env var (default off until manually
-    // flipped on Vercel). When the flag is on, we try Gemini first; on
-    // any throw / empty result we fall back to Perplexity transparently.
+    // Gemini is now the default after Perplexity returned an unstructured
+    // analytical essay on a King's Cross prompt and broke the extraction
+    // step. Set USE_GEMINI_RESEARCH=false on Vercel to revert to the
+    // Perplexity-first behaviour.
     // ============================================
-    const useGemini = process.env.USE_GEMINI_RESEARCH === "true";
+    const useGemini = process.env.USE_GEMINI_RESEARCH !== "false";
     console.log(
       `[Pipeline] Step 1: Researching locations (primary=${useGemini ? "Gemini" : "Perplexity"})...`,
     );
