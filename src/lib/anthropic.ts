@@ -241,12 +241,27 @@ ${locationsText}
 
 Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional text, no commentary, no markdown formatting.${feedbackBlock}`;
 
+  // 8192 tokens is more than enough for 8 steps × ~700 tokens each (riddle
+  // 6-9 sentences + 4 AR fields + 3 hints + anecdote). The previous 4096
+  // ceiling was getting truncated mid-JSON on 8-stop games with the new
+  // longer prompt — Claude returned malformed JSON because its budget ran
+  // out before closing the array. claude-sonnet-4 supports up to 64k
+  // output, so 8192 is comfortable + cheap.
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 4096,
+    max_tokens: 8192,
     temperature: 0.7,
     messages: [{ role: "user", content: prompt }],
   });
+
+  // Defensive: log when we're close to / at the cap so future spikes are
+  // visible without staring at JSON parse errors.
+  const stopReason = message.stop_reason;
+  if (stopReason === "max_tokens") {
+    console.warn(
+      `[generateGameSteps] Claude hit max_tokens=8192. Output likely truncated; JSON parse may fail. Consider raising the cap or shortening the prompt.`,
+    );
+  }
 
   // Extract text from response
   const responseText =
