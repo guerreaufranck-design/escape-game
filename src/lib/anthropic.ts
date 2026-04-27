@@ -215,15 +215,36 @@ ${buildCharacterSelectionGuidance(stepCount)}
     your grandfather's grandfather drew breath..."; corsair ghost: "The
     sea took my body, but the harbour holds my secret still..."
 
-12. "ar_facade_text": Since this step is virtual_ar, this MUST be the
-    answer_text in UPPERCASE letters (the AR overlay literally paints
-    these letters on the facade — it IS the answer-reveal). Keep under
-    30 characters.
+12. "ar_facade_text": MUST equal answer_text converted to UPPERCASE,
+    EXACTLY. No extra words, no decoration, no "PLATFORM IX" when the
+    answer is "IX". The string the player sees on the facade in AR is
+    the literal letters they will type into the notebook — they MUST
+    match after a case-insensitive + whitespace comparison. Under 30
+    characters.
 
 13. "ar_treasure_reward": One sentence describing the magical object that
     appears when the step is solved (e.g. "A silver key engraved with a
     galleon and a crescent moon"). Pure flavour, themed to the narrative
     beat. Under 130 chars.
+
+═══════════════════════════════════════════════════════════════════════
+GAME-WIDE INVARIANTS (apply across the whole array of ${stepCount} steps)
+═══════════════════════════════════════════════════════════════════════
+
+INV-1 UNIQUE ANSWERS — every answer_text in the array MUST be unique. No
+two steps share the same answer. If you find yourself producing a
+duplicate, change one of them — pick a different year, a different word,
+a different roman numeral.
+
+INV-2 CHARACTER DIVERSITY — across the ${stepCount} steps you MUST use at
+least ${Math.min(5, stepCount)} DISTINCT ar_character_type values from the
+catalogue. Repeating the same character on consecutive steps is
+forbidden. If your first draft has the same character ≥3 times, rewrite
+the offenders with a different archetype that still fits the site type.
+
+INV-3 NO TIGHT THEME LOOP — across the ${stepCount} answers, vary the
+TYPE: some years, some Latin / local-language single words, some roman
+numerals. Aim for ~50% mix at minimum.
 
 NARRATIVE REQUIREMENTS:
 - Step 1: Hook the player. Begin with excitement and intrigue. Set the
