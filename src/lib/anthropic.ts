@@ -97,52 +97,121 @@ export async function generateGameSteps(
 
   const stepCount = Math.min(locations.length, 8);
 
-  const prompt = `You are an expert escape game designer with a talent for immersive storytelling. I am giving you ${locations.length} verified locations in ${city}, ${country}, with confirmed answers. Your job is to select the best ${stepCount} and create an unforgettable escape game around them.
+  const prompt = `You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
 
-ABSOLUTE RULE: The answer_text field must contain ONLY the short answer provided below. It will be a number, a year, a single word/name, or a short phrase. Do NOT expand it into a sentence. Do NOT add any description. Copy it EXACTLY as shown. Example: if the answer is 5, write "5" not "five stone arches".
+I am giving you ${locations.length} researched locations. Your job is to select the best ${stepCount} that form a SAFE WALKING ROUTE (no major roads to cross, all stops within ~10 minutes' walk of each other, ideally a coherent neighbourhood) and craft a single coherent narrative around them.
+
+═══════════════════════════════════════════════════════════════════════
+ABSOLUTE RULES (read twice)
+═══════════════════════════════════════════════════════════════════════
+A. EVERY step is "virtual_ar". The answer is NEVER a real inscription on
+   the building. The answer is what the AR overlay magically reveals to
+   the player when they point their phone at the facade. You have full
+   creative liberty: a year, a Latin/Spanish/local-language word, a
+   number, a roman numeral — pick the most dramatic + thematic option.
+
+B. The riddle does NOT ask the player to read something off the wall.
+   It tells them to GO to the place, OBSERVE the surroundings, and
+   INVITES them to use their AR camera to make the secret appear.
+
+C. The riddle IS the tour. Weave in REAL touristic / cultural / historical
+   pointers about what the player is walking past on the way to the next
+   stop. ("As you turn down Calle X, you'll pass the 16th-century
+   wrought-iron balconies of the Borghi house — pause and notice the
+   crest above the door...")
+
+D. The answer_text field must contain ONLY the short answer. NEVER a
+   sentence. Copy it EXACTLY as provided.
 
 GAME PARAMETERS:
 - City: ${city}, ${country}
 - Theme: ${theme}
 - Narrative: ${narrative}
 - Difficulty: ${difficulty}/5
-- Steps: ${stepCount} (select the best ${stepCount} from the ${locations.length} locations below for narrative flow and walking route)
-- Language: English (will be auto-translated by the app)
+- Steps: ${stepCount}
+- Language: English (auto-translated at runtime by the app)
 
+═══════════════════════════════════════════════════════════════════════
 FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
+═══════════════════════════════════════════════════════════════════════
 
-1. "title": An evocative, mysterious title (max 8 words)
-2. "latitude": Use EXACTLY the coordinates provided below — do not modify them
-3. "longitude": Use EXACTLY the coordinates provided below — do not modify them
-4. "validation_radius_meters": Between 15 and 50 meters (adjust based on location size)
-5. "riddle_text": An immersive riddle (4-6 sentences) that:
-   - Does NOT name the location or the answer directly
-   - Weaves into the ongoing narrative and references the previous step's discovery
-   - Guides the player toward the location through atmospheric clues
-   - CRITICAL — adapt the instructions to the "Answer source" of each location:
-     * If "physical": tell the player WHAT TYPE of answer to look for ("Find the number engraved on...", "Read the word on the plaque...", "Count the arches...") AND WHERE to look (on a wall, on a plaque, above a door, on a commemorative stone).
-     * If "virtual_ar": tell the player the spirits of the place speak only through their magic lens. Instruct them to lift their phone in AR mode — the answer will reveal itself, painted on the façade, visible only when they are aligned. Embrace the magical feel (glowing letters, whispered symbols, ethereal signs).
-   - The riddle IS the puzzle — the clues to solve it must be embedded in the poetic text
-6. "answer_text": Copy ONLY the short answer from the data below. A number must stay a number. A year must stay a year. A word must stay a word. NEVER turn it into a sentence.
-7. "hints": Array of EXACTLY 3 hints:
-   - Hint 1 (order: 1): Atmospheric hint — sets the mood and gives a general direction toward the right area of the location
-   - Hint 2 (order: 2): Practical hint — tells the player exactly what type of object to examine (a plaque, an inscription, a carving, a sign...) and where to look (facade, entrance, pedestal, floor...)
-   - Hint 3 (order: 3): Almost the answer — describes the answer's format (e.g. "It's a 4-digit year", "It's a single word in Latin", "Count them carefully — there are fewer than 10") without stating it
-8. "anecdote": A fascinating, true historical anecdote (2-3 sentences). Make it captivating — this is the player's reward.
-9. "bonus_time_seconds": 0 for straightforward steps, 30-60 for harder ones
-10. "answer_source": Copy EXACTLY the "Answer source" field from the location above ("physical" or "virtual_ar"). This tells the app how to display the answer hint in AR mode.
-11. "ar_character_type": Pick the best-fitting character archetype that will "appear" to the player when they lock on the target. Follow the selection procedure below STRICTLY — do not default to one or two characters across the whole game.
+1. "title": Evocative, mysterious — max 8 words.
+
+2. "latitude" + "longitude": EXACTLY the coordinates from the location data
+   below. Do not round, do not nudge.
+
+3. "validation_radius_meters": 25-50. Smaller for tight squares, larger for
+   open plazas.
+
+4. "riddle_text": 5-8 sentences in 3 movements:
+   (a) NARRATIVE LINK — picks up where the previous step left off, in-
+       character with the game theme. Reference the previous discovery.
+   (b) WALKING TOUR — describe what the player will see on the way and
+       at the stop itself. Real heritage details, real building styles,
+       real epoch markers. This is THE TOURIST VALUE. Drop in 1-2
+       observable street-level details ("the carved lions above the
+       doorway", "the wrought-iron balconies overlooking the plaza")
+       — the player will physically see them.
+   (c) AR INVITATION — tell the player the place's secret can only be
+       read through their magic lens. Ask them to lift their phone in
+       AR mode and slowly scan the facade — the answer will materialise
+       in glowing letters, painted by spirits / ghosts / the long-dead
+       who walked here. Match the atmospheric tone to the character
+       archetype that will appear (corsair ghost, monk, knight, etc.).
+
+5. "answer_text": ONLY the short evocative answer. A year, a roman
+   numeral, ONE word. NEVER a sentence. Copy from the location data.
+
+6. "hints": Array of EXACTLY 3 hints, escalating in helpfulness:
+   - 1: Atmospheric — vibe + direction without naming anything.
+   - 2: Practical — orientation cue ("once you arrive, face the south
+     side of the plaza, the AR works best when you're standing about
+     10 paces back from the main facade").
+   - 3: Format — describe the answer's shape ("a 4-digit year", "a
+     single Latin word ending in -US", "a small roman numeral less
+     than X") without giving it away.
+
+7. "anecdote": 2-3 fascinating, factually-true sentences about the
+   place's history. The player's reward after solving. This is where
+   you can include a real verifiable historical fact from the research
+   — not the answer, but the lore.
+
+8. "bonus_time_seconds": 0 for easy stops, 30-60 for harder ones.
+
+9. "answer_source": ALWAYS the literal string "virtual_ar". Every step.
+
+10. "ar_character_type": The character archetype that materialises in AR
+    when the player arrives. Drives the sprite that's rendered. Follow
+    the selection procedure STRICTLY — DO NOT default to one or two
+    characters across the whole game.
 ${buildCharacterSelectionGuidance(stepCount)}
-12. "ar_character_dialogue": A short atmospheric line (1-2 sentences MAX, under 180 chars) that the chosen character whispers to the player. It must SET THE MOOD and tease the riddle, but NEVER state the answer or what to look for explicitly. First-person, theatrical, in tune with the character archetype. Examples — monk: "I have guarded these stones since before your grandfather's grandfather drew breath..."; corsair ghost: "The sea took my body, but the harbour holds my secret still..."
-13. "ar_facade_text": 1 to 3 evocative WORDS (uppercase) that magically materialise on the building's façade when the player aligns their AR camera. This is a MOOD piece, not a hint. Pick words that EVOKE the riddle's theme without spoiling the answer (e.g. "VERITAS", "DECRETO MMXXII", "1532 — REQUIESCAT", "AUDE SAPERE"). For virtual_ar steps, use the answer_text itself in caps (since the answer reveals magically). Keep it under 30 characters.
-14. "ar_treasure_reward": A short single-sentence description of the magical treasure that materialises in front of the player AFTER they solve the step (e.g. "A silver key engraved with a galleon and a crescent moon", "An ancient parchment sealed with red wax and a phoenix sigil"). This is purely flavour — themed to the step's narrative beat. Under 130 chars.
+
+11. "ar_character_dialogue": A short atmospheric line (1-2 sentences MAX,
+    under 180 chars) the character whispers to the player. SET THE MOOD,
+    tease the riddle, but NEVER state the answer. First-person, in
+    character. Examples — monk: "I have guarded these stones since before
+    your grandfather's grandfather drew breath..."; corsair ghost: "The
+    sea took my body, but the harbour holds my secret still..."
+
+12. "ar_facade_text": Since this step is virtual_ar, this MUST be the
+    answer_text in UPPERCASE letters (the AR overlay literally paints
+    these letters on the facade — it IS the answer-reveal). Keep under
+    30 characters.
+
+13. "ar_treasure_reward": One sentence describing the magical object that
+    appears when the step is solved (e.g. "A silver key engraved with a
+    galleon and a crescent moon"). Pure flavour, themed to the narrative
+    beat. Under 130 chars.
 
 NARRATIVE REQUIREMENTS:
-- Step 1: Hook the player. The story begins with excitement and intrigue.
-- Middle steps: Build tension progressively. Each step reveals a new fragment of the mystery.
-- Step ${stepCount} (final): Provide a powerful, satisfying conclusion.
-- Each riddle MUST reference the previous discovery to create continuity.
-- Tone: mysterious, poetic, historically rich.
+- Step 1: Hook the player. Begin with excitement and intrigue. Set the
+  tone of the walk: "you're about to discover X corner of this city".
+- Middle steps: Build tension. Each step references the previous
+  discovery AND introduces what the player will physically see on the
+  way to the next one.
+- Step ${stepCount} (final): Land the story. Convergence + reveal.
+- Tone: mysterious + poetic + historically grounded.
+- THE PLAYER IS WALKING. Riddles must feel like a tour, not a quiz.
 
 VERIFIED LOCATIONS WITH GAME-READY ANSWERS:
 
@@ -378,7 +447,7 @@ Rewrite this single step as a JSON object with the same shape as before:
   ],
   "anecdote": "fascinating, historically true 2-3 sentences",
   "bonus_time_seconds": 0,
-  "answer_source": "${params.location.answerSource ?? "physical"}",
+  "answer_source": "virtual_ar",
   "ar_character_type": "one of: knight, witch, monk, sailor, detective, ghost, default — pick the most thematic",
   "ar_character_dialogue": "1-2 sentence atmospheric line whispered to the player, in character, no spoilers (under 180 chars)",
   "ar_facade_text": "1-3 evocative UPPERCASE words that materialise on the façade (under 30 chars)",

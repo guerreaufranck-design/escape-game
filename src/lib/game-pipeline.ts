@@ -160,6 +160,34 @@ export async function generateGameFromTemplate(
     );
 
     // ============================================
+    // STEP 2.5: Walking-route safety check (warn-only)
+    // ============================================
+    // Verify the player won't have to cross a multi-lane road or take a
+    // long detour between consecutive stops. We don't block generation
+    // on this — surfacing it in logs is enough to flag manually until we
+    // wire automated reordering. Field-test feedback prompted this.
+    try {
+      const { checkWalkingRoute } = await import("./route-safety");
+      const route = await checkWalkingRoute(
+        steps.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
+      );
+      console.log(
+        `[Pipeline] Route safety: total straight ${route.totalStraightM}m, walking ${route.totalWalkingM ?? "n/a"}m, allOk=${route.allOk}`,
+      );
+      route.legs.forEach((leg, i) => {
+        if (!leg.ok) {
+          console.warn(
+            `[Pipeline] ⚠ Leg ${i + 1}→${i + 2}: straight=${leg.straightDistanceM}m walking=${leg.walkingDistanceM ?? "?"}m ratio=${leg.detourRatio ?? "?"} — ${leg.reasons.join("; ")}`,
+          );
+        }
+      });
+    } catch (err) {
+      console.warn(
+        `[Pipeline] Route safety check failed (non-blocking): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
+    // ============================================
     // STEP 2bis: Validation + auto-correction (Claude #2)
     // ============================================
     // A second Claude call critiques the generated steps. If it flags real
@@ -410,7 +438,9 @@ async function insertGameIntoDatabase(
     has_photo_challenge: false,
     ar_historical_photo_url: stepPhotos[index]?.url || null,
     ar_historical_photo_credit: stepPhotos[index]?.credit || null,
-    answer_source: step.answer_source ?? "physical",
+    // AR-first flow: every step is virtual_ar regardless of what the
+    // model returned. The "physical" mode is fully retired.
+    answer_source: "virtual_ar" as const,
     // AR runtime layer — populated by Claude during generation
     ar_character_type: step.ar_character_type || "default",
     ar_character_dialogue: step.ar_character_dialogue || null,

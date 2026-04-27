@@ -102,55 +102,41 @@ async function extractJsonWithClaude(
     messages: [
       {
         role: "user",
-        content: `I have a research report about ${locationCount} locations in a city for an outdoor escape game. Extract structured data from this report.
+        content: `I have a research report about ${locationCount} locations in a city for an outdoor AR escape game. Extract structured data.
 
-For each location mentioned, provide a JSON object with these fields:
+For each location, provide a JSON object with:
 - "name": exact name of the monument (string)
-- "latitude": GPS latitude with 6 decimal places (number)
-- "longitude": GPS longitude with 6 decimal places (number)
-- "whatToObserve": what the player should observe (string)
-- "answer": the SHORT answer a player would give (string, max 3 words)
-- "answerType": "year", "number", or "name" (string)
-- "answerSource": "physical" OR "virtual_ar" (string)
-- "source": any source URL mentioned in the research (string)
-- "themeLink": one sentence about historical significance (string)
+- "latitude": GPS latitude (6 decimal places, MANDATORY)
+- "longitude": GPS longitude (6 decimal places, MANDATORY)
+- "whatToObserve": player-facing instruction (string — see template below)
+- "answer": a short evocative answer that will be revealed magically in AR (string)
+- "answerType": "year" | "number" | "name"
+- "answerSource": ALWAYS "virtual_ar" (the game runs entirely on AR-revealed answers)
+- "source": source URL from the research (string, optional)
+- "themeLink": one sentence on the place's historical / narrative significance
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-CRITICAL RULE — YOU MUST NEVER RETURN "UNVERIFIED" OR SKIP A LOCATION.
-EVERY location in the research report MUST get a concrete answer.
+THE GAME IS AR-FIRST. EVERY answer is rendered ON THE FACADE in AR.
+There is NO requirement for the answer to be physically inscribed
+on the building. INVENT a memorable, thematic answer.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-STRATEGY TO CHOOSE THE ANSWER:
+ANSWER GUIDELINES:
+- Type "year": a plausible year tied to the location's history (e.g. 1085, 1492, MCDXCII)
+- Type "number": a small roman/arabic number with thematic resonance (III, VII, 3, 7, XIII)
+- Type "name": ONE evocative word in any language — Latin, local language, theme-vocabulary
+  (e.g. VERITAS, SANGRE, AMARO, REQUIESCAT, FIDES, REGINA, CORSARIO)
+- Keep it SHORT: maximum 3 words, ideally 1.
+- Make it memorable, dramatic, tied to the riddle's narrative beat.
+- Same answer can appear twice across locations only if it's a recurring narrative motif.
 
-STEP 1 — Try "physical" first. Look for something real, visible from outside:
-  a) A YEAR or DATE permanently carved in stone / inscribed on a plaque
-     (example: "999", "1085", "ANNO 1605")
-  b) A PROPER NAME permanently inscribed on the facade or heritage plaque
-     (example: "Alfonso VI", "Samuel ha-Levi")
-  c) A single unambiguous NUMBER of major architectural features
-     (number of main doors, main towers, arches on the main facade)
-  If you find one, set answerSource = "physical" and use the real value.
-  For these: "whatToObserve" describes where exactly to look (which wall, which plaque).
-
-STEP 2 — Fallback to "virtual_ar" when nothing physical fits.
-  When the location has no obvious permanent inscription, or the research is
-  unclear, INVENT a short, evocative answer consistent with the game theme:
-    - A plausible year linked to the place's history (from the research report)
-    - A short key word in the local language (max 1 word, 3-6 letters)
-    - A roman numeral evoking the era (III, VII, XIII, MCDXCII)
-    - A symbolic number linked to the theme (3 keys → "III", 7 seals → "VII")
-  Set answerSource = "virtual_ar".
-  For these: "whatToObserve" is always the same — the phrase:
-    "Point your camera at the facade in AR mode — the answer will appear painted on the wall."
-
-EVERY single location in the research gets its own entry in the output array.
-NO UNVERIFIED. NO SKIPS. If physical fails, use virtual_ar. Period.
+WHAT TO OBSERVE — every entry uses this template (translated by the runtime):
+  "Reach the location and point your camera at the facade — the AR will reveal the secret."
 
 OTHER RULES:
-- The answer must be SHORT: a year, a number, or max 3 words
-- If GPS coordinates are in the research, use those exactly (6 decimals)
-- If coordinates missing, estimate from the known location name
-- answerType: "year" (1234, MCMLX), "number" (1, 3, 7, VII), or "name" (short word)
+- GPS coordinates from the research are AUTHORITATIVE. Use them exactly (6 decimals).
+- If coordinates are missing, refuse to invent — set them to 0 and let the pipeline catch it.
+- EVERY location in the research gets exactly ONE entry. No skips. No "UNVERIFIED".
 
 Return ONLY a valid JSON array of ${locationCount} objects. No markdown, no commentary.
 
@@ -207,6 +193,13 @@ function parseLocationsFromResponse(rawResponse: string): ResearchedLocation[] {
       throw new Error(
         `Expected at least 1 location, got ${locations?.length || 0}`
       );
+    }
+    // Force every entry to virtual_ar — the AR-first flow doesn't keep
+    // physical-answer steps any more. Even if the LLM tries to mark
+    // something as "physical", we override here so downstream code can
+    // assume answerSource = "virtual_ar" for every step.
+    for (const loc of locations) {
+      loc.answerSource = "virtual_ar";
     }
     return locations;
   } catch (parseError) {
