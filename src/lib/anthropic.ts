@@ -143,21 +143,31 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 3. "validation_radius_meters": 25-50. Smaller for tight squares, larger for
    open plazas.
 
-4. "riddle_text": 5-8 sentences in 3 movements:
-   (a) NARRATIVE LINK — picks up where the previous step left off, in-
-       character with the game theme. Reference the previous discovery.
-   (b) WALKING TOUR — describe what the player will see on the way and
-       at the stop itself. Real heritage details, real building styles,
-       real epoch markers. This is THE TOURIST VALUE. Drop in 1-2
-       observable street-level details ("the carved lions above the
+4. "riddle_text": 5-8 sentences in 3 EXPLICIT movements (the player MUST
+   know exactly what to do — no poetic ambiguity at the end):
+
+   (a) NARRATIVE LINK (1-2 sentences) — picks up where the previous step
+       left off, in-character. Reference the previous discovery.
+
+   (b) WALKING TOUR (2-3 sentences) — describe what the player will see
+       on the way and at the stop. REAL heritage details, REAL building
+       styles, REAL epoch markers. This is THE TOURIST VALUE. Drop in
+       1-2 observable street-level details ("the carved lions above the
        doorway", "the wrought-iron balconies overlooking the plaza")
        — the player will physically see them.
-   (c) AR INVITATION — tell the player the place's secret can only be
-       read through their magic lens. Ask them to lift their phone in
-       AR mode and slowly scan the facade — the answer will materialise
-       in glowing letters, painted by spirits / ghosts / the long-dead
-       who walked here. Match the atmospheric tone to the character
-       archetype that will appear (corsair ghost, monk, knight, etc.).
+
+   (c) AR INVITATION (2-3 sentences) — END WITH A PRECISE INSTRUCTION.
+       The player must understand:
+         - WHERE: which side / which facade to face (north facade, the
+           main entrance, the wall facing the plaza, etc.)
+         - WHAT: lift the phone, tap "Realite Augmentee" / "AR camera"
+         - HOW: slowly scan the wall — golden letters will appear
+         - THEN: type those letters into the notebook to advance.
+       Use poetic framing for atmosphere ("the spirits whisper", "the
+       stones remember") but ALWAYS finish with a concrete instruction
+       like: "Lift your phone in AR mode toward the north facade — the
+       letters will appear in gold. Type them in your notebook to
+       continue." NO ambiguity.
 
 5. "answer_text": ONLY the short evocative answer. A year, a roman
    numeral, ONE word. NEVER a sentence. Copy from the location data.

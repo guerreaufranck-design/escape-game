@@ -2,6 +2,56 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { translateText, getGeminiModel } from "@/lib/gemini";
 import { getLanguageName } from "@/lib/i18n";
 
+// Hard upper bound per single Gemini call. Fast networks finish in < 2s,
+// but a P99 spike can hang for 30s+ otherwise — we'd rather serve EN.
+const TRANSLATION_TIMEOUT_MS = 6000;
+// Number of retry attempts before giving up. The first attempt + 1 retry
+// catches most transient blips without paying double cost on every call.
+const TRANSLATION_RETRY_ATTEMPTS = 2;
+
+/**
+ * Wrap a promise with a timeout. Throws "translation timeout" on expiry.
+ */
+function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timeout after ${ms}ms`)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (err) => {
+        clearTimeout(t);
+        reject(err);
+      },
+    );
+  });
+}
+
+/**
+ * Run a translation operation with bounded retries + timeout. Each attempt
+ * is independently bounded; total worst case is attempts × timeout.
+ */
+async function translateWithRetry<T>(
+  fn: () => Promise<T>,
+  label: string,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= TRANSLATION_RETRY_ATTEMPTS; attempt++) {
+    try {
+      return await withTimeout(fn(), TRANSLATION_TIMEOUT_MS, label);
+    } catch (err) {
+      lastErr = err;
+      // Tiny backoff on retry — 200ms is enough to dodge transient
+      // 429/5xx Gemini blips without slowing things down meaningfully.
+      if (attempt < TRANSLATION_RETRY_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 /**
  * Translate game content (riddle, hint, anecdote, etc.) with Supabase cache.
  * If content is already in the target language (English base), returns as-is.
@@ -20,7 +70,7 @@ export async function translateGameField(
 
   const supabase = createAdminClient();
 
-  // Check cache first
+  // Check cache first — this is the fast path, no Gemini call.
   const { data: cached } = await supabase
     .from("translations_cache")
     .select("translated_text")
@@ -33,11 +83,14 @@ export async function translateGameField(
     return cached.translated_text;
   }
 
-  // Translate with Gemini
-  const translated = await translateText(englishText, targetLang);
+  // Cache miss — call Gemini with bounded timeout + 1 retry, then cache.
+  const translated = await translateWithRetry(
+    () => translateText(englishText, targetLang),
+    `translateGameField:${sourceField}`,
+  );
 
-  // Store in cache (upsert to handle race conditions)
-  await supabase
+  // Cache write is fire-and-forget (next reader will hit the cache).
+  void supabase
     .from("translations_cache")
     .upsert(
       {
@@ -47,8 +100,9 @@ export async function translateGameField(
         language: targetLang,
         translated_text: translated,
       },
-      { onConflict: "source_id,source_field,language" }
-    );
+      { onConflict: "source_id,source_field,language" },
+    )
+    .then(() => {});
 
   return translated;
 }
@@ -94,36 +148,38 @@ export async function translateStepFields(
   // If nothing to translate, return cached results
   if (Object.keys(toTranslate).length === 0) return result;
 
-  // Batch translate via JSON approach
+  // Batch translate via JSON approach. ONE Gemini call covers every
+  // un-cached field of the step in a single round-trip.
   const langName = getLanguageName(targetLang);
 
   try {
-    const model = getGeminiModel();
-    const geminiResult = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `You are a professional translator. Translate ALL values in the following JSON object from English to ${langName}. Keep the keys exactly as they are. Return ONLY a valid JSON object, nothing else.\n\n${JSON.stringify(toTranslate, null, 2)}`,
-            },
-          ],
+    const parsed = await translateWithRetry(async () => {
+      const model = getGeminiModel();
+      const geminiResult = await model.generateContent({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: `You are a professional translator. Translate ALL values in the following JSON object from English to ${langName}. Keep the keys exactly as they are. Return ONLY a valid JSON object, nothing else.\n\n${JSON.stringify(toTranslate, null, 2)}`,
+              },
+            ],
+          },
+        ],
+        generationConfig: {
+          responseMimeType: "application/json",
+          temperature: 0.2,
         },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.2,
-      },
-    });
-
-    const translatedText = geminiResult.response.text().trim();
-    const parsed = JSON.parse(translatedText) as Record<string, string>;
+      });
+      const translatedText = geminiResult.response.text().trim();
+      return JSON.parse(translatedText) as Record<string, string>;
+    }, `translateStepFields:${stepId}`);
 
     for (const [field, text] of Object.entries(parsed)) {
       if (text && toTranslate[field]) {
         result[field] = text;
 
-        supabase
+        void supabase
           .from("translations_cache")
           .upsert(
             {
@@ -133,13 +189,15 @@ export async function translateStepFields(
               language: targetLang,
               translated_text: text,
             },
-            { onConflict: "source_id,source_field,language" }
+            { onConflict: "source_id,source_field,language" },
           )
           .then(() => {});
       }
     }
   } catch (err) {
-    console.error("Step translation error:", err);
+    console.warn(
+      `[translate-service] step ${stepId} batch translate failed after retries, serving EN. err=${err instanceof Error ? err.message : err}`,
+    );
   }
 
   // Fallback for any missing fields
