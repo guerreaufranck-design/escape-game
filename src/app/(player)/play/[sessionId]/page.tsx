@@ -235,9 +235,19 @@ export default function PlayPage() {
     setView("riddle");
   }, [gameState?.currentStep]);
 
-  // Validate step
+  // Validate step. AR-first model: the gate is the player's typed answer
+  // (matched server-side against the stored expected answer), not the GPS
+  // distance. The AR overlay already enforces "you must be on site to see
+  // the clue", so a second GPS check on submit was redundant + caused
+  // false negatives in dense urban areas with GPS drift.
   const validateStep = async () => {
-    if (!geo.latitude || !geo.longitude || !gameState) return;
+    if (!gameState) return;
+    const submittedAnswer = (notebookInput || notebook[gameState.currentStep] || "").trim();
+    if (!submittedAnswer) {
+      setError("Tape la reponse decouverte en RA avant de valider");
+      setTimeout(() => setError(null), 3000);
+      return;
+    }
 
     setValidating(true);
     try {
@@ -245,9 +255,11 @@ export default function PlayPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          latitude: geo.latitude,
-          longitude: geo.longitude,
+          // Coords stay optional for analytics — never used as a gate.
+          latitude: geo.latitude ?? undefined,
+          longitude: geo.longitude ?? undefined,
           stepOrder: gameState.currentStep,
+          answer: submittedAnswer,
         }),
       });
 
@@ -255,6 +267,8 @@ export default function PlayPage() {
 
       if (data.success) {
         setStepSuccess(true);
+        // Persist the typed answer in the notebook for the final code recap.
+        setNotebook((prev) => ({ ...prev, [gameState.currentStep]: submittedAnswer }));
         setHints([]);
         setGpsTooFar(false);
         setParticleBurst((n) => n + 1);
@@ -262,14 +276,15 @@ export default function PlayPage() {
         if (data.anecdote) {
           setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
         }
+      } else if (data.reason === "wrong_answer") {
+        setError("Reponse incorrecte. Verifie ce que tu as decouvert en RA.");
+        setTimeout(() => setError(null), 3500);
       } else if (data.error) {
         setError(data.error);
         setTimeout(() => setError(null), 3000);
-      } else if (data.success === false) {
-        // GPS too far — show distance and offer photo validation
-        setGpsTooFar(true);
-        setGpsTooFarDistance(data.distance || 0);
-        setTimeout(() => setGpsTooFar(false), 10000);
+      } else {
+        setError("Validation echouee. Reessaie.");
+        setTimeout(() => setError(null), 3000);
       }
     } catch {
       setError("Erreur de validation");

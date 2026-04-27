@@ -10,9 +10,7 @@ import {
 import { calculateBearing, formatDistance } from "@/lib/geo";
 import { useDeviceOrientation } from "@/hooks/useDeviceOrientation";
 import { tt } from "@/lib/translations";
-import { ARHistoricalPhotoLayer } from "./ARHistoricalPhotoLayer";
 import { ARFacadeTextLayer } from "./ARFacadeTextLayer";
-import { ARTreasureChest } from "./ARTreasureChest";
 import { ARCharacterSpeaker } from "./ARCharacterSpeaker";
 
 interface ARCameraOverlayProps {
@@ -23,9 +21,6 @@ interface ARCameraOverlayProps {
   distance: number | null;
   locale?: string;
   onClose: () => void;
-  /** Optional historical photo overlaid on the live camera feed */
-  historicalPhotoUrl?: string | null;
-  historicalPhotoCredit?: string | null;
   /** Optional short "painted" text that appears on the facade when locked on */
   facadeText?: string | null;
   /**
@@ -33,14 +28,23 @@ interface ARCameraOverlayProps {
    * bigger and with a "Réponse révélée" label. When false, it's a hint.
    */
   facadeTextIsAnswer?: boolean;
-  /** Optional reward text revealed when tapping the AR treasure chest */
-  treasureReward?: string | null;
-  /** Current step key — used to reset the treasure chest between steps */
+  /** Current step key — used by the character speaker to reset between steps */
   stepKey?: string | null;
-  /** Fired when the player opens a treasure chest (used to launch particles) */
-  onChestOpen?: () => void;
   /** Optional animated character that talks to the player when locked on */
   character?: { type: string; dialogue: string } | null;
+  // Legacy props — kept for backwards compatibility with the play page,
+  // but these layers were removed from the AR scene to reduce clutter.
+  // The treasure reward is now shown in the post-validation success modal,
+  // and historical Wikipedia photos were dropped because they overlapped
+  // and competed visually with the character sprite.
+  /** @deprecated no longer rendered — kept for prop-shape backwards compat */
+  historicalPhotoUrl?: string | null;
+  /** @deprecated no longer rendered — kept for prop-shape backwards compat */
+  historicalPhotoCredit?: string | null;
+  /** @deprecated no longer rendered in AR; shown in success modal instead */
+  treasureReward?: string | null;
+  /** @deprecated no longer rendered in AR; chest is gone */
+  onChestOpen?: () => void;
 }
 
 // --- Tuning constants ----------------------------------------------------
@@ -64,13 +68,9 @@ export function ARCameraOverlay({
   distance,
   locale = "fr",
   onClose,
-  historicalPhotoUrl = null,
-  historicalPhotoCredit = null,
   facadeText = null,
   facadeTextIsAnswer = false,
-  treasureReward = null,
   stepKey = null,
-  onChestOpen,
   character = null,
 }: ARCameraOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -239,16 +239,6 @@ export function ARCameraOverlay({
         muted
         className="absolute inset-0 h-full w-full object-cover"
       />
-
-      {/* Historical photo overlay — "time travel" layer above the camera feed */}
-      {historicalPhotoUrl && cameraReady && (
-        <ARHistoricalPhotoLayer
-          photoUrl={historicalPhotoUrl}
-          credit={historicalPhotoCredit}
-          distance={distance}
-          insideFov={insideFov}
-        />
-      )}
 
       {/* Facade-painted text — appears when locked on. Either a hint
           (physical stops) or the actual answer (virtual_ar stops). */}
@@ -526,18 +516,7 @@ export function ARCameraOverlay({
         </div>
       </div>
 
-      {/* Treasure chest — tappable, hovers near the target when locked on */}
-      {cameraReady && orientation.hasCompass && (
-        <ARTreasureChest
-          lockedOn={lockedOn}
-          rewardText={treasureReward}
-          stepKey={stepKey}
-          onOpen={onChestOpen}
-          locale={locale}
-        />
-      )}
-
-      {/* Animated character — appears after the chest to keep the flow */}
+      {/* Animated character — the cinematic AR moment when player locks on */}
       {character && cameraReady && orientation.hasCompass && (
         <ARCharacterSpeaker
           lockedOn={lockedOn}

@@ -24,7 +24,7 @@ export async function POST(
       );
     }
 
-    const { latitude, longitude, stepOrder } = parsed.data;
+    const { latitude, longitude, stepOrder, answer } = parsed.data;
     const supabase = createAdminClient();
 
     // Fetch session
@@ -90,21 +90,59 @@ export async function POST(
       );
     }
 
-    // Calculate distance
-    const distance = haversineDistance(
-      latitude,
-      longitude,
-      step.latitude,
-      step.longitude
-    );
+    // Distance — kept for analytics / scoring only. We DO NOT use it as a
+    // validation gate any more: the AR overlay already requires the player
+    // to be at the location for the riddle/clue to render at all. Forcing
+    // a second GPS check on submit was creating false-negatives in dense
+    // urban areas where GPS drifts 8-15m even when the player is right on
+    // top of the marker.
+    const distance =
+      latitude !== undefined && longitude !== undefined
+        ? haversineDistance(latitude, longitude, step.latitude, step.longitude)
+        : null;
 
-    const isValid = distance <= step.validation_radius_meters;
+    // -------------------------------------------------------------------
+    // Validation by ANSWER TEXT
+    // -------------------------------------------------------------------
+    // The player's typed answer is the gate. Compare it (case-insensitive,
+    // whitespace-trimmed, accent-folded) against the stored answer.
+    const expectedRaw = step.answer_text;
+    let expectedAnswer: string | null = null;
+    if (expectedRaw) {
+      if (typeof expectedRaw === "object") {
+        const o = expectedRaw as Record<string, string>;
+        expectedAnswer = o.en || o.fr || Object.values(o)[0] || null;
+      } else {
+        expectedAnswer = String(expectedRaw);
+      }
+    }
 
-    if (!isValid) {
-      return NextResponse.json({
-        success: false,
-        distance: Math.round(distance),
-      });
+    if (!expectedAnswer) {
+      // The step has no stored answer — treat as legacy / GPS-only step
+      // and accept anything reasonable as long as the player is in the
+      // ballpark. Avoids breaking older games that pre-date this refactor.
+      console.warn(
+        `[validate-step/${sessionId}] step ${stepOrder} has no answer_text — accepting submission without text check`,
+      );
+    } else {
+      const normalize = (s: string) =>
+        s
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .trim()
+          .replace(/\s+/g, "");
+      const submitted = normalize(answer);
+      const target = normalize(expectedAnswer);
+      if (!submitted || submitted !== target) {
+        return NextResponse.json({
+          success: false,
+          reason: "wrong_answer",
+          // tiny hint to the front-end: tell it the answer wasn't right.
+          // We intentionally do NOT leak the expected answer.
+          distance: distance !== null ? Math.round(distance) : null,
+        });
+      }
     }
 
     // Step is valid - calculate time for this step
@@ -128,7 +166,8 @@ export async function POST(
 
     const stepHintsUsed = 0; // Hints are tracked via session total, individual step hints via hint endpoint
 
-    // Create step completion
+    // Create step completion. Lat/lon/distance are nullable now since the
+    // AR-first flow doesn't require GPS on submit.
     const { error: completionError } = await supabase
       .from("step_completions")
       .insert({
@@ -140,9 +179,9 @@ export async function POST(
         time_seconds: timeSeconds,
         hints_used: stepHintsUsed,
         penalty_seconds: 0,
-        latitude,
-        longitude,
-        distance_meters: Math.round(distance),
+        latitude: latitude ?? null,
+        longitude: longitude ?? null,
+        distance_meters: distance !== null ? Math.round(distance) : null,
       });
 
     if (completionError) {
@@ -222,7 +261,7 @@ export async function POST(
 
       return NextResponse.json({
         success: true,
-        distance: Math.round(distance),
+        distance: distance !== null ? Math.round(distance) : null,
         completed: true,
         anecdote: anecdoteText,
         stepTitle: stepTitleText,
@@ -264,7 +303,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      distance: Math.round(distance),
+      distance: distance !== null ? Math.round(distance) : null,
       nextStep: stepOrder + 1,
       completed: false,
       anecdote: anecdoteText,

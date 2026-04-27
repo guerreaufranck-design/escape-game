@@ -10,10 +10,14 @@ export const activateSchema = z.object({
 });
 
 export const validateStepSchema = z.object({
-  latitude: z.number().min(-90).max(90),
-  longitude: z.number().min(-180).max(180),
+  // Coordinates are optional now — the AR overlay already gates the
+  // experience spatially (the riddle only renders when the player is at
+  // the location). They're still accepted for analytics / sanity logs.
+  latitude: z.number().min(-90).max(90).optional(),
+  longitude: z.number().min(-180).max(180).optional(),
   stepOrder: z.number().int().positive(),
-  answer: z.string().optional(),
+  // The player's typed answer is now the validation key. Required.
+  answer: z.string().min(1, "Reponse requise").max(200),
 });
 
 export const hintSchema = z.object({
