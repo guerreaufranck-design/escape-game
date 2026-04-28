@@ -310,6 +310,23 @@ export default function PlayPage() {
     setView("riddle");
   }, [gameState?.currentStep]);
 
+  // Auto-fill the FINAL CODE input from the notebook the moment the
+  // final-code screen opens. The player has been collecting answers
+  // step by step; making them retype the concatenation is busywork
+  // and a source of typos. We pre-fill with `notebook[1]-notebook[2]-…`
+  // so the player just has to confirm. They can still edit it if they
+  // want to challenge the order or the format.
+  useEffect(() => {
+    if (showFinalCode && gameState && !finalCodeInput.trim()) {
+      const parts: string[] = [];
+      for (let i = 1; i <= gameState.totalSteps; i++) {
+        const v = (notebook[i] || "").trim();
+        if (v) parts.push(v);
+      }
+      if (parts.length > 0) setFinalCodeInput(parts.join("-"));
+    }
+  }, [showFinalCode, gameState, notebook, finalCodeInput]);
+
   // Validate step. AR-first model: the gate is the player's typed answer
   // (matched server-side against the stored expected answer), not the GPS
   // distance. The AR overlay already enforces "you must be on site to see
