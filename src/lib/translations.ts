@@ -337,6 +337,9 @@ export const ui: Translations = {
   'play.didYouKnow': {
     fr: 'Le saviez-vous ?', en: 'Did you know?', de: 'Wussten Sie?', es: 'Sabias que?', it: 'Lo sapevate?',
   },
+  'play.treasureRevealed': {
+    fr: 'Tresor revele', en: 'Treasure revealed', de: 'Schatz enthullt', es: 'Tesoro revelado', it: 'Tesoro rivelato',
+  },
   'play.notTheTarget': {
     fr: 'Ce n\'est pas le bon endroit', en: 'Not the right place', de: 'Nicht der richtige Ort', es: 'No es el lugar correcto', it: 'Non e il posto giusto',
   },

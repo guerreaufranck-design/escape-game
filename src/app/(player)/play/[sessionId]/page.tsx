@@ -96,6 +96,10 @@ export default function PlayPage() {
   const [tutorialDone, setTutorialDone] = useState(false);
   const [anecdote, setAnecdote] = useState<{ title: string; text: string } | null>(null);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
+  const [treasure, setTreasure] = useState<{
+    text: string;
+    object: "key" | "parchment" | "potion" | "sword" | "treasure_chest";
+  } | null>(null);
   const [notebook, setNotebook] = useState<Record<number, string>>({});
   const [notebookInput, setNotebookInput] = useState("");
   const [showNotebook, setShowNotebook] = useState(false);
@@ -346,6 +350,11 @@ export default function PlayPage() {
         if (data.answerText) setCorrectAnswer(data.answerText);
         if (data.anecdote) {
           setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
+        }
+        if (data.treasureReward && data.treasureObject) {
+          setTreasure({ text: data.treasureReward, object: data.treasureObject });
+        } else {
+          setTreasure(null);
         }
       } else if (data.reason === "wrong_answer") {
         setError("Reponse incorrecte. Verifie ce que tu as decouvert en RA.");
@@ -718,6 +727,61 @@ export default function PlayPage() {
               </div>
             )}
 
+            {/* Treasure reveal — decorative AR object that "drops" for the
+                player when they solve the step. The sprite is picked
+                server-side from the EN treasure description (key, sword,
+                potion, parchment, treasure_chest). Pure flavour, no
+                gameplay impact. */}
+            {treasure && (
+              <Card className="bg-gradient-to-br from-amber-950/80 to-slate-900/95 border-amber-500/40 overflow-hidden">
+                <CardContent className="pt-4 pb-3">
+                  <div className="flex flex-col items-center gap-2">
+                    <p className="text-[11px] font-bold uppercase tracking-widest text-amber-400/90">
+                      {tt('play.treasureRevealed', locale)}
+                    </p>
+                    <div
+                      className="relative h-32 w-32"
+                      style={{ animation: "treasure-pop 700ms cubic-bezier(0.34, 1.56, 0.64, 1)" }}
+                    >
+                      {/* Soft golden aura behind the sprite */}
+                      <div
+                        className="absolute inset-0 rounded-full blur-2xl"
+                        style={{
+                          background:
+                            "radial-gradient(circle, rgba(251,191,36,0.45) 0%, transparent 70%)",
+                          animation: "treasure-pulse 2.4s ease-in-out infinite",
+                        }}
+                      />
+                      <img
+                        src={`https://sijpbarxxcdkodhfrdyx.supabase.co/storage/v1/object/public/ar-sprites/${treasure.object}.png`}
+                        alt={treasure.text}
+                        className="relative h-full w-full object-contain select-none"
+                        style={{
+                          filter:
+                            "drop-shadow(0 4px 14px rgba(0,0,0,0.6)) drop-shadow(0 0 20px rgba(251,191,36,0.35))",
+                        }}
+                        draggable={false}
+                      />
+                    </div>
+                    <p className="text-center text-sm text-amber-100/95 leading-snug italic px-2">
+                      {treasure.text}
+                    </p>
+                  </div>
+                </CardContent>
+                <style jsx>{`
+                  @keyframes treasure-pop {
+                    0% { opacity: 0; transform: translateY(40px) scale(0.5) rotate(-10deg); }
+                    60% { opacity: 1; transform: translateY(-6px) scale(1.05) rotate(2deg); }
+                    100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
+                  }
+                  @keyframes treasure-pulse {
+                    0%, 100% { opacity: 0.6; transform: scale(1); }
+                    50% { opacity: 1; transform: scale(1.12); }
+                  }
+                `}</style>
+              </Card>
+            )}
+
             {/* Anecdote card */}
             {anecdote && (
               <Card className="bg-slate-900/95 border-emerald-800/50">
@@ -782,6 +846,7 @@ export default function PlayPage() {
                 setStepSuccess(false);
                 setAnecdote(null);
                 setCorrectAnswer(null);
+                setTreasure(null);
                 narration.stop();
                 setNarrationText("");
 

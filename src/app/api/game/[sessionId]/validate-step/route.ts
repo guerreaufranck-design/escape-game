@@ -4,8 +4,40 @@ import { validateStepSchema } from "@/lib/validators";
 import { haversineDistance } from "@/lib/geo";
 import { calculateScore } from "@/lib/scoring";
 import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
-import { translateStepFields } from "@/lib/translate-service";
+import { translateStepFields, translateGameField } from "@/lib/translate-service";
 import { MAX_VALIDATION_RATE_MS } from "@/lib/constants";
+import type { ARObjectType } from "@/lib/ar-sprites";
+
+/**
+ * Pick the decorative object sprite that best matches a treasure-reward
+ * description. Always works on the ENGLISH source (always available
+ * regardless of player locale) so the heuristic stays stable. Falls
+ * back to "treasure_chest" when no keyword matches — a safe generic.
+ */
+function pickTreasureObject(rewardEn: string | null | undefined): ARObjectType {
+  if (!rewardEn) return "treasure_chest";
+  const t = rewardEn.toLowerCase();
+  if (/\bkey\b|\bkeys\b|\bclef\b/.test(t)) return "key";
+  if (/\bparchment\b|\bscroll\b|\bletter\b|\bmanuscript\b|\bsealed\b|\bpapyrus\b/.test(t))
+    return "parchment";
+  if (/\bpotion\b|\belixir\b|\bvial\b|\bphial\b|\bflask\b|\bbottle\b/.test(t))
+    return "potion";
+  if (/\bsword\b|\bblade\b|\bsaber\b|\bsabre\b|\brapier\b|\bcutlass\b/.test(t))
+    return "sword";
+  // explicit chest mention or fallback
+  return "treasure_chest";
+}
+
+/** Get the EN-base of a JSONB i18n field or a plain string. */
+function getEnglishBase(value: unknown): string {
+  if (!value) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "object") {
+    const o = value as Record<string, string>;
+    return o.en || o.fr || Object.values(o).find(Boolean) || "";
+  }
+  return String(value);
+}
 
 export async function POST(
   request: NextRequest,
@@ -259,6 +291,25 @@ export async function POST(
             : String(step.answer_text))
         : null;
 
+      // Treasure reveal — translate the description if needed, pick the
+      // matching decorative object sprite from the EN source.
+      const treasureEn = getEnglishBase(step.ar_treasure_reward);
+      let treasureReward: string | null = treasureEn || null;
+      if (treasureEn && locale !== "en") {
+        try {
+          treasureReward = await translateGameField(
+            step.id,
+            "game_steps",
+            "ar_treasure_reward",
+            treasureEn,
+            locale,
+          );
+        } catch {
+          treasureReward = treasureEn;
+        }
+      }
+      const treasureObject = pickTreasureObject(treasureEn);
+
       return NextResponse.json({
         success: true,
         distance: distance !== null ? Math.round(distance) : null,
@@ -266,6 +317,8 @@ export async function POST(
         anecdote: anecdoteText,
         stepTitle: stepTitleText,
         answerText,
+        treasureReward,
+        treasureObject,
       });
     }
 
@@ -301,6 +354,24 @@ export async function POST(
           : String(step.answer_text))
       : null;
 
+    // Treasure reveal — same logic as the last-step branch above.
+    const treasureEn = getEnglishBase(step.ar_treasure_reward);
+    let treasureReward: string | null = treasureEn || null;
+    if (treasureEn && locale !== "en") {
+      try {
+        treasureReward = await translateGameField(
+          step.id,
+          "game_steps",
+          "ar_treasure_reward",
+          treasureEn,
+          locale,
+        );
+      } catch {
+        treasureReward = treasureEn;
+      }
+    }
+    const treasureObject = pickTreasureObject(treasureEn);
+
     return NextResponse.json({
       success: true,
       distance: distance !== null ? Math.round(distance) : null,
@@ -309,6 +380,8 @@ export async function POST(
       anecdote: anecdoteText,
       stepTitle: stepTitleText,
       answerText,
+      treasureReward,
+      treasureObject,
     });
   } catch {
     return NextResponse.json(
