@@ -52,6 +52,10 @@ export interface GameState {
     type: string;
     dialogue: string;
   } | null;
+  /** Touristic POIs the player walks past on the way to this step.
+   *  Surfaced as an expandable card "Sur le chemin, ne manque pas..."
+   *  on the riddle screen. Empty array if none. */
+  routeAttractions: Array<{ name: string; fact: string }>;
   approximateTarget: {
     latitude: number;
     longitude: number;

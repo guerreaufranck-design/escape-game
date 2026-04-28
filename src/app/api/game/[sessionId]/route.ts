@@ -107,6 +107,7 @@ export async function GET(
     let validationRadius = 30;
     let hintsAvailable = 0;
     let currentStepId: string | null = null;
+    let routeAttractions: GameState["routeAttractions"] = [];
 
     if ((session.status === "active" || session.status === "pending") && session.current_step <= session.total_steps) {
       const { data: step } = await supabase
@@ -253,6 +254,46 @@ export async function GET(
             dialogue,
           };
         }
+
+        // Route attractions — translate name + fact for each entry.
+        // Each POI gets its own batch translation so a slow Gemini on
+        // one entry doesn't penalise the others. Cached per-POI so
+        // subsequent visits are instant.
+        const rawAttractions = Array.isArray(step.route_attractions)
+          ? (step.route_attractions as Array<{ name?: string; fact?: string }>)
+          : [];
+        if (rawAttractions.length > 0) {
+          if (locale === "en") {
+            routeAttractions = rawAttractions
+              .filter((a) => a.name && a.fact)
+              .map((a) => ({ name: String(a.name), fact: String(a.fact) }));
+          } else {
+            const translated = await Promise.all(
+              rawAttractions
+                .filter((a) => a.name && a.fact)
+                .map(async (a, idx) => {
+                  const enFields = {
+                    name: String(a.name),
+                    fact: String(a.fact),
+                  };
+                  try {
+                    const t = await translateStepFields(
+                      `${step.id}-attraction-${idx}`,
+                      enFields,
+                      locale,
+                    );
+                    return {
+                      name: t.name || enFields.name,
+                      fact: t.fact || enFields.fact,
+                    };
+                  } catch {
+                    return enFields;
+                  }
+                }),
+            );
+            routeAttractions = translated;
+          }
+        }
       }
     }
 
@@ -327,6 +368,7 @@ export async function GET(
       arFacadeText,
       arTreasureReward,
       arCharacter,
+      routeAttractions,
       approximateTarget,
       validationRadius,
       navigationHint: null,

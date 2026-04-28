@@ -519,6 +519,22 @@ async function insertGameIntoDatabase(
       ar_character_dialogue: step.ar_character_dialogue || null,
       ar_facade_text: step.ar_facade_text || null,
       ar_treasure_reward: step.ar_treasure_reward || null,
+      // Route POIs — defensive normalization (drop entries missing
+      // name or fact, cap at 3, no empty array required so legacy
+      // games stay valid).
+      route_attractions: Array.isArray(step.route_attractions)
+        ? step.route_attractions
+            .filter(
+              (a): a is { name: string; fact: string } =>
+                !!a &&
+                typeof a === "object" &&
+                typeof (a as { name?: unknown }).name === "string" &&
+                typeof (a as { fact?: unknown }).fact === "string" &&
+                (a as { name: string }).name.trim().length > 0 &&
+                (a as { fact: string }).fact.trim().length > 0,
+            )
+            .slice(0, 3)
+        : [],
     };
   });
 

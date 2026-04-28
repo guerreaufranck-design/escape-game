@@ -355,6 +355,9 @@ export const ui: Translations = {
   'ar.skipButton': {
     fr: 'Passer', en: 'Skip', de: 'Uberspringen', es: 'Saltar', it: 'Salta',
   },
+  'play.routeAttractions': {
+    fr: 'Sur le chemin, ne manque pas', en: "Don't miss along the way", de: 'Unterwegs nicht verpassen', es: 'No te pierdas en el camino', it: 'Da non perdere lungo il cammino',
+  },
   'play.notTheTarget': {
     fr: 'Ce n\'est pas le bon endroit', en: 'Not the right place', de: 'Nicht der richtige Ort', es: 'No es el lugar correcto', it: 'Non e il posto giusto',
   },

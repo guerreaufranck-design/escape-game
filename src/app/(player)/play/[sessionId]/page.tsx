@@ -967,6 +967,29 @@ export default function PlayPage() {
                     className="rounded-xl w-full max-h-48 object-cover mb-6"
                   />
                 )}
+
+                {/* Route POIs — expandable card the player can open
+                    to see real heritage points to spot ON THE WAY.
+                    Pure tour-guide flavour, doesn't impact gameplay. */}
+                {gameState.routeAttractions && gameState.routeAttractions.length > 0 && (
+                  <details className="mb-6 group rounded-xl border border-amber-700/40 bg-gradient-to-br from-amber-950/40 to-slate-900/60 overflow-hidden">
+                    <summary className="flex items-center gap-3 px-4 py-3 cursor-pointer select-none list-none [&::-webkit-details-marker]:hidden hover:bg-amber-900/20 transition-colors">
+                      <span className="text-xl">📍</span>
+                      <span className="flex-1 text-sm font-bold text-amber-200 uppercase tracking-wider">
+                        {tt('play.routeAttractions', locale) || "Sur le chemin, ne manque pas"}
+                      </span>
+                      <ChevronRight className="h-4 w-4 text-amber-300/70 transition-transform group-open:rotate-90" />
+                    </summary>
+                    <ul className="divide-y divide-amber-800/30">
+                      {gameState.routeAttractions.map((a, i) => (
+                        <li key={i} className="px-4 py-3">
+                          <p className="text-sm font-bold text-amber-100">{a.name}</p>
+                          <p className="text-xs text-amber-100/75 leading-relaxed mt-1 italic">{a.fact}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                )}
               </>
             )}
 
