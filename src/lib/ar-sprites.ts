@@ -85,7 +85,52 @@ export const AR_CHARACTERS = [
     avoid:
       "religious buildings where a famous person is buried (use monk), corsair sites (use sailor unless the SITE itself is a tomb)",
   },
+  {
+    type: "princess",
+    description: "noble lady in court dress, regal but approachable",
+    bestFor:
+      "ROYAL PALACES, COURT YARDS, DUCAL RESIDENCES, NOBLE HÔTEL PARTICULIERS, BALL ROOMS, ROSE GARDENS, ROMANTIC LEGENDS, sites tied to courtly love, dynasty stories, queens / duchesses / dauphines. Also great for fairy-tale UNESCO old-towns.",
+    avoid:
+      "military / war sites (use knight or soldier), religious sites (use monk), anything modern",
+  },
+  {
+    type: "peasant",
+    description: "common villager / artisan in working clothes",
+    bestFor:
+      "MARKET SQUARES, TRADITIONAL BAKERIES, MILLS, FORGES, TANNERIES, PEASANT FARMHOUSES, OLD VILLAGE WELLS, FOLKLORE SITES, places about everyday medieval/early-modern life. Strong choice when the riddle's tone is grounded, rural, communal.",
+    avoid:
+      "royal / noble settings (use princess or knight), religious sites (use monk)",
+  },
+  {
+    type: "soldier",
+    description: "modern-era soldier in 19c-WW2 uniform",
+    bestFor:
+      "WAR MEMORIALS, MILITARY MUSEUMS, BARRACKS, HISTORIC TRENCHES, RESISTANCE SITES, COMMAND POSTS, BATTLE-OF-THE-BULGE LOCATIONS, COLD-WAR BUNKERS, post-1750 to mid-20c military heritage. Best fit for WW1 / WW2 / Resistance themes.",
+    avoid:
+      "medieval combat (use knight), maritime sites (use sailor), religious / royal sites",
+  },
 ] as const;
+
+/**
+ * Decorative AR objects (single-image sprites, no pose set).
+ * These can be composited into the AR scene as treasure reveals,
+ * inventory items, or success-modal flair. They are NOT placed into
+ * the character speaker — that's character-only.
+ */
+export const AR_OBJECTS = [
+  { type: "key", description: "ornate key" },
+  { type: "parchment", description: "rolled / sealed manuscript" },
+  { type: "potion", description: "glowing alchemical bottle" },
+  { type: "sword", description: "ceremonial sword" },
+  { type: "treasure_chest", description: "wooden bound-iron chest" },
+] as const;
+
+export type ARObjectType = (typeof AR_OBJECTS)[number]["type"];
+
+/** URL builder for decorative AR objects (single-image sprites). */
+export function getObjectUrl(type: ARObjectType): string {
+  return `${BUCKET_BASE}/${type}.png`;
+}
 
 export type ARCharacterType = (typeof AR_CHARACTERS)[number]["type"];
 

@@ -57,6 +57,21 @@ const CHARACTER_META: Record<
     accent: "border-slate-200",
     aura: "from-cyan-300/45 via-blue-400/15 to-transparent",
   },
+  princess: {
+    name: "La Princesse",
+    accent: "border-pink-300",
+    aura: "from-pink-400/40 via-fuchsia-400/15 to-transparent",
+  },
+  peasant: {
+    name: "Le Villageois",
+    accent: "border-amber-200",
+    aura: "from-amber-600/35 via-yellow-700/15 to-transparent",
+  },
+  soldier: {
+    name: "Le Soldat",
+    accent: "border-emerald-300",
+    aura: "from-green-700/40 via-olive-700/15 to-transparent",
+  },
   guide_male: {
     name: "Le Guide",
     accent: "border-indigo-300",
