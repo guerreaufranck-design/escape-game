@@ -194,22 +194,28 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 5. "answer_text": ONLY the short evocative answer. A year, a roman
    numeral, ONE word. NEVER a sentence. Copy from the location data.
 
-6. "hints": Array of EXACTLY 3 hints, escalating in helpfulness. The
-   first two MUST help with FINDING the AR clue (the player got lost
-   while scanning), NOT with guessing the answer. Only hint 3 hints
-   at the answer's shape.
+6. "hints": Array of EXACTLY 3 hints, escalating in PRECISION about
+   WHERE the AR clue lives. Players who can't find the clue while
+   scanning will unlock these progressively. Each hint gives more
+   geographic precision than the last, then the final one nudges
+   the answer's shape.
 
-   - 1: Atmospheric — gentle nudge ("the spirits prefer cooler shade
-     than direct sun", "look where shadows gather at this hour"). No
-     concrete location.
-   - 2: Camera-scan tip — directional hint about WHERE to point the
-     phone, but staying broad ("try the eastern half of the plaza",
-     "the writing tends to appear lower than eye level", "try
-     standing further back so the camera sees more wall at once").
-     Still NEVER pinpoints — just helps the player narrow the hunt.
-   - 3: Format — describe the answer's shape ("a 4-digit year", "a
-     single Latin word ending in -US", "a small roman numeral less
-     than X") without giving it away.
+   - 1: General zone — point at a broad area without naming the
+     exact surface. Examples: "près de l'entrée principale", "vers
+     le mur côté plaza", "regarde du côté du clocher", "autour de
+     la porte cochère". The player still has to scan a wide zone.
+   - 2: Specific surface / object — narrow it to one wall, one
+     door, one pediment. Examples: "concentre-toi sur la porte en
+     bois", "balaie la pierre au-dessus du linteau", "scanne le
+     fronton sculpté", "regarde la plaque en métal à hauteur des
+     yeux". This should make finding the clue easy.
+   - 3: Format of the answer — describe its shape WITHOUT giving
+     it. Examples: "c'est une date à 4 chiffres", "un mot latin
+     de 6 lettres se terminant par -US", "un chiffre romain plus
+     petit que X".
+
+   Each hint costs the player time on the leaderboard, so escalating
+   precision is the right tradeoff. Never name the literal answer.
 
 7. "anecdote": 2-3 fascinating, factually-true sentences about the
    place's history. The player's reward after solving. This is where
