@@ -48,6 +48,9 @@ interface ARCameraOverlayProps {
   onSkipStep?: () => void;
   /** True while skip-step network call is in flight */
   skipLoading?: boolean;
+  /** Latest unlocked hint text — shown as a yellow toast inside the AR
+   *  view so the player can read it without leaving the camera. */
+  latestHint?: string | null;
   // Legacy props — kept for backwards compatibility with the play page,
   // but these layers were removed from the AR scene to reduce clutter.
   // The treasure reward is now shown in the post-validation success modal,
@@ -94,6 +97,7 @@ export function ARCameraOverlay({
   hintLoading = false,
   onSkipStep,
   skipLoading = false,
+  latestHint = null,
 }: ARCameraOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -537,6 +541,30 @@ export function ARCameraOverlay({
           )}
         </div>
       </div>
+
+      {/* In-AR hint toast — shows the unlocked hint text on top of the
+          camera view (yellow card just above the distance HUD). Pure
+          display: the host already added the hint to its state when
+          requestHint resolved. */}
+      {latestHint && cameraReady && (
+        <div
+          className="pointer-events-auto absolute left-4 right-4 bottom-32 z-[16] mx-auto max-w-md rounded-2xl border-2 border-yellow-500/60 bg-gradient-to-br from-yellow-950/95 to-slate-900/95 p-3 shadow-2xl backdrop-blur-md"
+          style={{ animation: "ar-hint-in 500ms ease-out" }}
+        >
+          <div className="flex items-start gap-2">
+            <Lightbulb className="h-4 w-4 shrink-0 text-yellow-400 mt-0.5" />
+            <p className="text-sm leading-snug text-yellow-100">
+              {latestHint}
+            </p>
+          </div>
+          <style jsx>{`
+            @keyframes ar-hint-in {
+              0% { opacity: 0; transform: translateY(20px) scale(0.95); }
+              100% { opacity: 1; transform: translateY(0) scale(1); }
+            }
+          `}</style>
+        </div>
+      )}
 
       {/* Animated character — the cinematic AR moment when player locks on */}
       {character && cameraReady && orientation.hasCompass && (

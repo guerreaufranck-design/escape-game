@@ -89,6 +89,15 @@ export async function translateGameField(
     `translateGameField:${sourceField}`,
   );
 
+  // Don't cache EN-as-translation — see translateStepFields for the
+  // same protection. Caching identical text would lock the player into
+  // English on every subsequent visit.
+  const isUnchanged =
+    translated.trim().toLowerCase() === englishText.trim().toLowerCase();
+  if (isUnchanged) {
+    return translated; // serve once, never cache
+  }
+
   // Cache write is fire-and-forget (next reader will hit the cache).
   void supabase
     .from("translations_cache")
@@ -184,6 +193,17 @@ export async function translateStepFields(
     let cachedCount = 0;
     for (const [field, text] of Object.entries(parsed)) {
       if (text && toTranslate[field]) {
+        // Detect "Gemini didn't translate" — output equals input verbatim.
+        // Happens when the source contains a lot of foreign words (Latin
+        // riddles, place names) and Gemini gives up and echoes back. We
+        // do NOT cache that as a translation — caching the EN as the
+        // FR cache hit would lock the player into EN forever. Better to
+        // fall through to per-field with a fresh attempt.
+        const isUnchanged =
+          text.trim().toLowerCase() === toTranslate[field].trim().toLowerCase();
+        if (isUnchanged) {
+          continue; // leave field absent → batchSucceeded stays false → per-field fallback runs
+        }
         result[field] = text;
         cachedCount++;
 
@@ -231,6 +251,13 @@ export async function translateStepFields(
       );
       for (const r of perFieldResults) {
         if (r.status === "fulfilled" && r.value.text) {
+          // Same "didn't translate" detection as in the batch path.
+          const sourceEn = toTranslate[r.value.field];
+          const isUnchanged =
+            r.value.text.trim().toLowerCase() ===
+            (sourceEn || "").trim().toLowerCase();
+          if (isUnchanged) continue;
+
           result[r.value.field] = r.value.text;
           void supabase
             .from("translations_cache")

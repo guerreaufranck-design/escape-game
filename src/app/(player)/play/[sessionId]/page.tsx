@@ -356,6 +356,14 @@ export default function PlayPage() {
         } else {
           setTreasure(null);
         }
+
+        // PRE-FETCH next step's translated content in the background.
+        // The server-side advances current_step on validate-step, so the
+        // upcoming /api/game call returns step N+1. Player is reading the
+        // success modal anyway → use those seconds to translate. By the
+        // time they tap "Continue", gameState is hot and the transition
+        // feels instant instead of a 30-40s blocking wait.
+        void fetchGameState();
       } else if (data.reason === "wrong_answer") {
         setError("Reponse incorrecte. Verifie ce que tu as decouvert en RA.");
         setTimeout(() => setError(null), 3500);
@@ -422,6 +430,11 @@ export default function PlayPage() {
         setSkipAnswer(data.answer || "Reponse non disponible");
         setSkipCompleted(!!data.completed);
         setHints([]);
+
+        // Pre-fetch next step (background) — same trick as validateStep
+        // so the player isn't blocked on a 30-40s translation when they
+        // tap "Continue" after the skip-reveal screen.
+        void fetchGameState();
       }
     } catch {
       setError("Erreur lors du passage de l'etape");
@@ -1508,6 +1521,7 @@ export default function PlayPage() {
               ? () => requestHint(hints.length)
               : undefined
           }
+          latestHint={hints[hints.length - 1]?.text || null}
           skipLoading={skipping}
           onSkipStep={() => {
             if (confirm(tt('play.skipConfirm', locale))) {
@@ -1549,24 +1563,24 @@ export default function PlayPage() {
       )}
 
       {/* Step-transition progress bar — slides across when the player
-          taps "Continue" after solving a step. Gives a clear visual
-          cue that the next chapter is loading instead of a dead screen
-          while gameState refetches. */}
-      {validating && (
+          validates, asks for a hint, or skips. Gives a visible cue
+          during the 5-30s wait while the next step's content is
+          translated server-side. */}
+      {(validating || skipping || hintLoading || isLoading) && (
         <div
-          className="fixed top-0 left-0 right-0 z-[1300] h-1 bg-emerald-400/40 pointer-events-none"
-          style={{ animation: "step-progress 1.5s ease-in-out" }}
+          className="fixed top-0 left-0 right-0 z-[1300] h-1.5 bg-slate-900/40 pointer-events-none overflow-hidden"
         >
           <div
-            className="h-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]"
-            style={{ animation: "step-progress-fill 1.5s ease-in-out" }}
+            className="h-full bg-gradient-to-r from-emerald-400 via-emerald-300 to-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.9)]"
+            style={{
+              animation: "step-progress-slide 2s linear infinite",
+              backgroundSize: "200% 100%",
+            }}
           />
           <style jsx>{`
-            @keyframes step-progress { 0% { opacity: 0; } 10% { opacity: 1; } 100% { opacity: 1; } }
-            @keyframes step-progress-fill {
-              0% { width: 0%; }
-              50% { width: 70%; }
-              100% { width: 100%; }
+            @keyframes step-progress-slide {
+              0% { background-position: 200% 0; }
+              100% { background-position: -200% 0; }
             }
           `}</style>
         </div>
