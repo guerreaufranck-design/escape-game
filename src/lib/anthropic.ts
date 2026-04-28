@@ -194,11 +194,18 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 5. "answer_text": ONLY the short evocative answer. A year, a roman
    numeral, ONE word. NEVER a sentence. Copy from the location data.
 
-6. "hints": Array of EXACTLY 3 hints, escalating in PRECISION about
-   WHERE the AR clue lives. Players who can't find the clue while
-   scanning will unlock these progressively. Each hint gives more
-   geographic precision than the last, then the final one nudges
-   the answer's shape.
+6. "hints": Array of EXACTLY 3 hints, in this STRICT JSON shape:
+     [
+       { "order": 1, "text": "first hint string here" },
+       { "order": 2, "text": "second hint string here" },
+       { "order": 3, "text": "third hint string here" }
+     ]
+   The "order" and "text" keys are MANDATORY. Do NOT return a string
+   array like ["hint 1", "hint 2", "hint 3"] — that breaks the
+   pipeline. Each hint escalates in PRECISION about WHERE the AR
+   clue lives. Players who can't find the clue while scanning unlock
+   these progressively. Each hint gives more geographic precision
+   than the last, then the final one nudges the answer's shape.
 
    - 1: General zone — point at a broad area without naming the
      exact surface. Examples: "près de l'entrée principale", "vers

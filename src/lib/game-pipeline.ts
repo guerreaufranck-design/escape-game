@@ -452,35 +452,75 @@ async function insertGameIntoDatabase(
     throw new Error(`Failed to insert game: ${gameError.message}`);
   }
 
+  /**
+   * Normalize hints into the canonical [{order, text}] shape.
+   *
+   * Magali's first-customer purchase tonight surfaced a silent failure
+   * mode: Claude sometimes returned hints as plain strings ("hint
+   * text 1", "hint text 2") instead of {order, text} objects. The
+   * previous .map(h => ({order: h.order, text: h.text})) produced
+   * [{}, {}, {}] in that case — DB stored empty objects, the player
+   * unlocked hints and saw nothing, then skipped the step. So we
+   * accept BOTH shapes here and re-derive the order from the array
+   * index when the model omitted it.
+   */
+  function normalizeHints(
+    raw: unknown,
+  ): Array<{ order: number; text: string }> {
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((h, i) => {
+        if (typeof h === "string") return { order: i + 1, text: h };
+        if (h && typeof h === "object") {
+          const obj = h as { order?: number; text?: string };
+          const text = String(obj.text ?? "").trim();
+          if (!text) return null;
+          return { order: obj.order ?? i + 1, text };
+        }
+        return null;
+      })
+      .filter((h): h is { order: number; text: string } => h !== null);
+  }
+
   // Insert steps
-  const stepsToInsert = steps.map((step, index) => ({
-    id: uuidv4(),
-    game_id: gameId,
-    step_order: index + 1,
-    title: step.title,
-    riddle_text: step.riddle_text,
-    answer_text: step.answer_text,
-    latitude: step.latitude,
-    longitude: step.longitude,
-    validation_radius_meters: step.validation_radius_meters,
-    hints: step.hints.map((h) => ({
-      order: h.order,
-      text: h.text,
-    })),
-    anecdote: step.anecdote,
-    bonus_time_seconds: step.bonus_time_seconds,
-    has_photo_challenge: false,
-    ar_historical_photo_url: stepPhotos[index]?.url || null,
-    ar_historical_photo_credit: stepPhotos[index]?.credit || null,
-    // AR-first flow: every step is virtual_ar regardless of what the
-    // model returned. The "physical" mode is fully retired.
-    answer_source: "virtual_ar" as const,
-    // AR runtime layer — populated by Claude during generation
-    ar_character_type: step.ar_character_type || "default",
-    ar_character_dialogue: step.ar_character_dialogue || null,
-    ar_facade_text: step.ar_facade_text || null,
-    ar_treasure_reward: step.ar_treasure_reward || null,
-  }));
+  const stepsToInsert = steps.map((step, index) => {
+    const hints = normalizeHints(step.hints as unknown);
+    if (hints.length < 3) {
+      // Hard fail rather than silently shipping a step the player can't
+      // get help on. The retry loop above should have already kicked
+      // bad outputs back to Claude — if we're here with < 3 valid
+      // hints, something deeper is wrong and a thrown error surfaces
+      // it loudly in the alert email instead of breaking on the field.
+      throw new Error(
+        `Step ${index + 1} has only ${hints.length}/3 valid hint(s) — refusing to insert. Raw: ${JSON.stringify(step.hints).slice(0, 200)}`,
+      );
+    }
+    return {
+      id: uuidv4(),
+      game_id: gameId,
+      step_order: index + 1,
+      title: step.title,
+      riddle_text: step.riddle_text,
+      answer_text: step.answer_text,
+      latitude: step.latitude,
+      longitude: step.longitude,
+      validation_radius_meters: step.validation_radius_meters,
+      hints,
+      anecdote: step.anecdote,
+      bonus_time_seconds: step.bonus_time_seconds,
+      has_photo_challenge: false,
+      ar_historical_photo_url: stepPhotos[index]?.url || null,
+      ar_historical_photo_credit: stepPhotos[index]?.credit || null,
+      // AR-first flow: every step is virtual_ar regardless of what the
+      // model returned. The "physical" mode is fully retired.
+      answer_source: "virtual_ar" as const,
+      // AR runtime layer — populated by Claude during generation
+      ar_character_type: step.ar_character_type || "default",
+      ar_character_dialogue: step.ar_character_dialogue || null,
+      ar_facade_text: step.ar_facade_text || null,
+      ar_treasure_reward: step.ar_treasure_reward || null,
+    };
+  });
 
   const { error: stepsError } = await supabase
     .from("game_steps")
