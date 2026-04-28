@@ -163,32 +163,50 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
        petite boutique d'épices, mais sa façade en pierre n'a pas
        changé d'un cheveu depuis 1684."
 
-   (c) AR INSTRUCTION (2-3 sentences) — TELL THE PLAYER WHAT TO DO,
-       WORD-FOR-WORD STYLE. Be precise about WHERE the AR clue will
-       appear (on the ground, on the door, on the north facade, above
-       the carved lion, etc.) and HOW to activate AR.
+   (c) AR INSTRUCTION (2-3 sentences) — TELL THE PLAYER TO GO TO THE
+       LOCATION, then HUNT for the clue with their AR camera by
+       scanning EVERYTHING around them.
+
+       CRITICAL — DO NOT REVEAL where exactly the clue is hidden.
+       That's the active-discovery part of the gameplay. The player
+       must scan walls, ground, doorways, windows, balconies, signs,
+       the sky, the corners — until the magical letters appear
+       somewhere on a surface around them. Discovery > spoon-feeding.
 
        MANDATORY CLOSING TEMPLATE — adapt the wording but include
-       EVERY element:
-         "Une fois sur place, devant [WHERE EXACTLY: "la porte en
-         bois cloutée" / "le sol pavé devant la maison verte" /
-         "la façade nord du bâtiment ocre"], appuie sur le grand
-         bouton violet 'Ouvrir la Réalité Augmentée' en bas de ton
-         écran, puis balaie lentement [WHERE TO SCAN] avec ta
-         caméra. Des lettres dorées vont apparaître — c'est ta
-         réponse. Note-la dans ton carnet."
+       EVERY element. Reference the BUTTON literally so the UI
+       matches the riddle:
 
-       NEVER end with vague poetic ambiguity. The instruction MUST
-       be a concrete how-to.
+         "Rends-toi à [LIEU GÉNÉRAL: "la place du marché", "devant
+         le monument", "au pied de la cathédrale"], puis appuie sur
+         le grand bouton violet 'Ouvrir la Réalité Augmentée' en
+         bas de ton écran. Une fois la caméra ouverte, balaie
+         LENTEMENT tout ce qui t'entoure — les murs, le sol, les
+         portes, les fenêtres, les recoins. Quelque part, des
+         lettres dorées vont se matérialiser : c'est ta réponse.
+         Note-la dans ton carnet pour passer à la suite."
+
+       NEVER name "the north facade" / "the carved lion" / "the
+       wooden studded door". Keep the destination generic ("at the
+       church", "in front of the tower", "in the market square") so
+       the discovery moment is the player's reward, not a checkbox.
 
 5. "answer_text": ONLY the short evocative answer. A year, a roman
    numeral, ONE word. NEVER a sentence. Copy from the location data.
 
-6. "hints": Array of EXACTLY 3 hints, escalating in helpfulness:
-   - 1: Atmospheric — vibe + direction without naming anything.
-   - 2: Practical — orientation cue ("once you arrive, face the south
-     side of the plaza, the AR works best when you're standing about
-     10 paces back from the main facade").
+6. "hints": Array of EXACTLY 3 hints, escalating in helpfulness. The
+   first two MUST help with FINDING the AR clue (the player got lost
+   while scanning), NOT with guessing the answer. Only hint 3 hints
+   at the answer's shape.
+
+   - 1: Atmospheric — gentle nudge ("the spirits prefer cooler shade
+     than direct sun", "look where shadows gather at this hour"). No
+     concrete location.
+   - 2: Camera-scan tip — directional hint about WHERE to point the
+     phone, but staying broad ("try the eastern half of the plaza",
+     "the writing tends to appear lower than eye level", "try
+     standing further back so the camera sees more wall at once").
+     Still NEVER pinpoints — just helps the player narrow the hunt.
    - 3: Format — describe the answer's shape ("a 4-digit year", "a
      single Latin word ending in -US", "a small roman numeral less
      than X") without giving it away.
