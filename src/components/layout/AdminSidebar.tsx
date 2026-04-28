@@ -24,7 +24,7 @@ const navItems = [
   { href: "/admin/generate", label: "Generator", icon: Sparkles },
   { href: "/admin/codes", label: "Codes", icon: KeyRound },
   { href: "/admin/sessions", label: "Sessions", icon: Users },
-  { href: "/admin/leaderboard", label: "Classement", icon: Trophy },
+  { href: "/leaderboard", label: "Classement", icon: Trophy },
   { href: "/admin/reports", label: "Signalements", icon: AlertTriangle },
 ];
 

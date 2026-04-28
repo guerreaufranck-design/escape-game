@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 /**
  * GET /api/admin/reports/list
  * Fetch all error reports with related game/step data for the admin dashboard.
+ *
+ * Uses the service-role admin client to bypass RLS — the player-facing
+ * report-error endpoint writes to error_reports via service-role too,
+ * but the cookie-context server client doesn't have a SELECT RLS policy
+ * for that table, so reports were silently invisible in the admin page.
+ * Service-role read is safe here: this route lives behind the /admin
+ * layout which is itself gated.
  */
 export async function GET() {
   try {
-    const supabase = await createClient();
+    const supabase = createAdminClient();
 
     const { data: reports, error } = await supabase
       .from("error_reports")
