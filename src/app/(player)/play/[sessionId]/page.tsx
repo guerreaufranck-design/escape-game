@@ -1477,11 +1477,77 @@ export default function PlayPage() {
           stepKey={gameState.currentStepId}
           onChestOpen={() => setParticleBurst((n) => n + 1)}
           character={gameState.arCharacter ?? null}
+          hintsUsed={hints.length}
+          hintsAvailable={gameState.hintsAvailable}
+          hintLoading={hintLoading}
+          onRequestHint={
+            hints.length < gameState.hintsAvailable
+              ? () => requestHint(hints.length)
+              : undefined
+          }
+          skipLoading={skipping}
+          onSkipStep={() => {
+            if (confirm(tt('play.skipConfirm', locale))) {
+              setArOpen(false);
+              skipStep();
+            }
+          }}
         />
       )}
 
       {/* Celebratory particles on validation success */}
       <ValidationParticles trigger={particleBurst} theme="gold" />
+
+      {/* ─────────────────────────────────────────────────────────────
+          Long-action loading overlay
+          Field-test feedback: when the player taps "Hint" or "Skip",
+          there's a 2-6s wait while Gemini translates. The button-level
+          spinner was too subtle — players thought nothing happened
+          and tapped again. This centred overlay makes the wait
+          visible and intentional.
+          ───────────────────────────────────────────────────────────── */}
+      {(hintLoading || skipping) && (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-slate-950/80 backdrop-blur-sm pointer-events-auto">
+          <div className="rounded-2xl border-2 border-emerald-500/40 bg-slate-900/95 px-6 py-5 shadow-2xl flex flex-col items-center gap-3">
+            <div className="relative">
+              <Loader2 className="h-10 w-10 animate-spin text-emerald-400" />
+              <div className="absolute inset-0 rounded-full bg-emerald-400/20 blur-xl animate-pulse" />
+            </div>
+            <p className="text-sm font-semibold text-emerald-200">
+              {hintLoading
+                ? tt('play.preparingHint', locale) || "Preparation de l'indice..."
+                : tt('play.preparingSkip', locale) || "Revelation de la reponse..."}
+            </p>
+            <p className="text-[11px] text-slate-400 italic">
+              {tt('play.translationNote', locale) || "Traduction en cours, quelques secondes..."}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Step-transition progress bar — slides across when the player
+          taps "Continue" after solving a step. Gives a clear visual
+          cue that the next chapter is loading instead of a dead screen
+          while gameState refetches. */}
+      {validating && (
+        <div
+          className="fixed top-0 left-0 right-0 z-[1300] h-1 bg-emerald-400/40 pointer-events-none"
+          style={{ animation: "step-progress 1.5s ease-in-out" }}
+        >
+          <div
+            className="h-full bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.7)]"
+            style={{ animation: "step-progress-fill 1.5s ease-in-out" }}
+          />
+          <style jsx>{`
+            @keyframes step-progress { 0% { opacity: 0; } 10% { opacity: 1; } 100% { opacity: 1; } }
+            @keyframes step-progress-fill {
+              0% { width: 0%; }
+              50% { width: 70%; }
+              100% { width: 100%; }
+            }
+          `}</style>
+        </div>
+      )}
     </div>
   );
 }

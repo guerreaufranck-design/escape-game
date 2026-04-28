@@ -6,6 +6,9 @@ import {
   Compass as CompassIcon,
   Navigation2,
   AlertTriangle,
+  Lightbulb,
+  SkipForward,
+  Loader2,
 } from "lucide-react";
 import { calculateBearing, formatDistance } from "@/lib/geo";
 import { useDeviceOrientation } from "@/hooks/useDeviceOrientation";
@@ -32,6 +35,19 @@ interface ARCameraOverlayProps {
   stepKey?: string | null;
   /** Optional animated character that talks to the player when locked on */
   character?: { type: string; dialogue: string } | null;
+  /** Number of hints already unlocked on this step (0 = none yet) */
+  hintsUsed?: number;
+  /** Total hints available on this step (typically 1 in the new flow) */
+  hintsAvailable?: number;
+  /** Triggered when the player taps "Indice" inside AR — host should
+   *  call requestHint() and surface a loading state to the user. */
+  onRequestHint?: () => void;
+  /** True while the hint network call is in flight (disables button + shows spinner) */
+  hintLoading?: boolean;
+  /** Triggered when the player taps "Passer" — host should call skipStep() */
+  onSkipStep?: () => void;
+  /** True while skip-step network call is in flight */
+  skipLoading?: boolean;
   // Legacy props — kept for backwards compatibility with the play page,
   // but these layers were removed from the AR scene to reduce clutter.
   // The treasure reward is now shown in the post-validation success modal,
@@ -72,6 +88,12 @@ export function ARCameraOverlay({
   facadeTextIsAnswer = false,
   stepKey = null,
   character = null,
+  hintsUsed = 0,
+  hintsAvailable = 0,
+  onRequestHint,
+  hintLoading = false,
+  onSkipStep,
+  skipLoading = false,
 }: ARCameraOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -525,6 +547,48 @@ export function ARCameraOverlay({
           stepKey={stepKey}
           locale={locale}
         />
+      )}
+
+      {/* In-AR action buttons — floating side panel, right edge.
+          Player can request a hint or skip the step without leaving
+          the AR scene. Stacks vertically below the close button to
+          stay reachable with the right thumb. */}
+      {cameraReady && (onRequestHint || onSkipStep) && (
+        <div className="absolute right-4 top-20 z-20 flex flex-col gap-2 pointer-events-auto">
+          {onRequestHint && hintsAvailable > 0 && (
+            <button
+              onClick={onRequestHint}
+              disabled={hintLoading || hintsUsed >= hintsAvailable}
+              className="flex items-center gap-2 rounded-full border-2 border-yellow-500/60 bg-slate-950/80 px-3 py-2 text-xs font-bold uppercase tracking-wider text-yellow-200 shadow-lg backdrop-blur-md hover:bg-yellow-500/15 disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label={tt("ar.hintButton", locale)}
+            >
+              {hintLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Lightbulb className="h-4 w-4" />
+              )}
+              <span>{tt("ar.hintButton", locale)}</span>
+              <span className="text-[10px] opacity-70">
+                {hintsUsed}/{hintsAvailable}
+              </span>
+            </button>
+          )}
+          {onSkipStep && (
+            <button
+              onClick={onSkipStep}
+              disabled={skipLoading}
+              className="flex items-center gap-2 rounded-full border-2 border-orange-500/60 bg-slate-950/80 px-3 py-2 text-xs font-bold uppercase tracking-wider text-orange-200 shadow-lg backdrop-blur-md hover:bg-orange-500/15 disabled:opacity-40"
+              aria-label={tt("ar.skipButton", locale)}
+            >
+              {skipLoading ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <SkipForward className="h-4 w-4" />
+              )}
+              <span>{tt("ar.skipButton", locale)}</span>
+            </button>
+          )}
+        </div>
       )}
     </div>
   );

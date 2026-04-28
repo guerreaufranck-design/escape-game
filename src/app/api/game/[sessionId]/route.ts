@@ -172,6 +172,30 @@ export async function GET(
         const hints = (step.hints as unknown as Hint[]) || [];
         hintsAvailable = hints.length;
 
+        // Pre-warm hint translation in the background. The player will tap
+        // the hint button at most once per step, but their wait then is
+        // a Gemini round-trip (2-6s of perceived latency). By kicking the
+        // translation off here while they're walking, the cache is hot
+        // by the time they unlock the hint — instant reveal. Fire-and-
+        // forget; errors are swallowed (the hint endpoint will retry).
+        if (locale !== "en" && hints[0]?.text) {
+          const hintEn = typeof hints[0].text === "object"
+            ? (hints[0].text as Record<string, string>).en ||
+              (hints[0].text as Record<string, string>).fr ||
+              Object.values(hints[0].text as Record<string, string>)[0] ||
+              ""
+            : String(hints[0].text);
+          if (hintEn) {
+            void translateGameField(
+              `hint-${session.game_id}-${session.current_step}-0`,
+              "game_steps",
+              "hint_text",
+              hintEn,
+              locale,
+            ).catch(() => {});
+          }
+        }
+
         // AR facade text:
         //  - virtual_ar steps: the facade text IS the answer, materialised
         //    magically when the player locks on. This is the ONLY way to

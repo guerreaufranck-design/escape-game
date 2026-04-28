@@ -340,6 +340,21 @@ export const ui: Translations = {
   'play.treasureRevealed': {
     fr: 'Tresor revele', en: 'Treasure revealed', de: 'Schatz enthullt', es: 'Tesoro revelado', it: 'Tesoro rivelato',
   },
+  'play.preparingHint': {
+    fr: "Preparation de l'indice...", en: "Preparing the hint...", de: "Hinweis wird vorbereitet...", es: "Preparando la pista...", it: "Preparazione dell'indizio...",
+  },
+  'play.preparingSkip': {
+    fr: "Revelation de la reponse...", en: "Revealing the answer...", de: "Antwort wird enthullt...", es: "Revelando la respuesta...", it: "Rivelazione della risposta...",
+  },
+  'play.translationNote': {
+    fr: 'Traduction en cours, quelques secondes...', en: 'Translating, just a few seconds...', de: 'Ubersetzen, einen Moment...', es: 'Traduciendo, unos segundos...', it: 'Traduzione in corso, qualche secondo...',
+  },
+  'ar.hintButton': {
+    fr: 'Indice', en: 'Hint', de: 'Hinweis', es: 'Pista', it: 'Indizio',
+  },
+  'ar.skipButton': {
+    fr: 'Passer', en: 'Skip', de: 'Uberspringen', es: 'Saltar', it: 'Salta',
+  },
   'play.notTheTarget': {
     fr: 'Ce n\'est pas le bon endroit', en: 'Not the right place', de: 'Nicht der richtige Ort', es: 'No es el lugar correcto', it: 'Non e il posto giusto',
   },

@@ -149,9 +149,15 @@ export async function translateStepFields(
   if (Object.keys(toTranslate).length === 0) return result;
 
   // Batch translate via JSON approach. ONE Gemini call covers every
-  // un-cached field of the step in a single round-trip.
+  // un-cached field of the step in a single round-trip. If the batch
+  // call fails (rate limit, JSON parse, timeout, safety filter), we
+  // fall back to individual per-field translations — slower but
+  // dramatically more reliable. The previous "all-or-nothing" caused
+  // entire steps to be served in EN when one tricky field broke the
+  // batch parse, which is exactly the bug the user just reported.
   const langName = getLanguageName(targetLang);
 
+  let batchSucceeded = false;
   try {
     const parsed = await translateWithRetry(async () => {
       const model = getGeminiModel();
@@ -175,9 +181,11 @@ export async function translateStepFields(
       return JSON.parse(translatedText) as Record<string, string>;
     }, `translateStepFields:${stepId}`);
 
+    let cachedCount = 0;
     for (const [field, text] of Object.entries(parsed)) {
       if (text && toTranslate[field]) {
         result[field] = text;
+        cachedCount++;
 
         void supabase
           .from("translations_cache")
@@ -194,10 +202,52 @@ export async function translateStepFields(
           .then(() => {});
       }
     }
+    if (cachedCount === Object.keys(toTranslate).length) {
+      batchSucceeded = true;
+    }
   } catch (err) {
     console.warn(
-      `[translate-service] step ${stepId} batch translate failed after retries, serving EN. err=${err instanceof Error ? err.message : err}`,
+      `[translate-service] step ${stepId} batch translate failed after retries, falling back to per-field. err=${err instanceof Error ? err.message : err}`,
     );
+  }
+
+  // Per-field fallback for any field the batch call missed.
+  if (!batchSucceeded) {
+    const missingFields = Object.entries(toTranslate).filter(
+      ([f]) => !result[f],
+    );
+    if (missingFields.length > 0) {
+      console.log(
+        `[translate-service] step ${stepId} per-field fallback on ${missingFields.length} field(s)`,
+      );
+      const perFieldResults = await Promise.allSettled(
+        missingFields.map(async ([field, en]) => {
+          const t = await translateWithRetry(
+            () => translateText(en, targetLang),
+            `translateStepFields:fallback:${stepId}:${field}`,
+          );
+          return { field, text: t };
+        }),
+      );
+      for (const r of perFieldResults) {
+        if (r.status === "fulfilled" && r.value.text) {
+          result[r.value.field] = r.value.text;
+          void supabase
+            .from("translations_cache")
+            .upsert(
+              {
+                source_id: stepId,
+                source_table: "game_steps",
+                source_field: r.value.field,
+                language: targetLang,
+                translated_text: r.value.text,
+              },
+              { onConflict: "source_id,source_field,language" },
+            )
+            .then(() => {});
+        }
+      }
+    }
   }
 
   // Fallback for any missing fields
