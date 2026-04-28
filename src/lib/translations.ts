@@ -358,6 +358,13 @@ export const ui: Translations = {
   'play.routeAttractions': {
     fr: 'Sur le chemin, ne manque pas', en: "Don't miss along the way", de: 'Unterwegs nicht verpassen', es: 'No te pierdas en el camino', it: 'Da non perdere lungo il cammino',
   },
+  'play.arAutoValidate': {
+    fr: "Une fois en RA, l'etape se valide quand l'indice s'affiche.",
+    en: "Once in AR, the step validates when the clue appears.",
+    de: "In AR validiert sich die Etappe, sobald der Hinweis erscheint.",
+    es: "Una vez en RA, la etapa se valida cuando aparece la pista.",
+    it: "Una volta in AR, la tappa si convalida quando l'indizio appare.",
+  },
   'play.notTheTarget': {
     fr: 'Ce n\'est pas le bon endroit', en: 'Not the right place', de: 'Nicht der richtige Ort', es: 'No es el lugar correcto', it: 'Non e il posto giusto',
   },

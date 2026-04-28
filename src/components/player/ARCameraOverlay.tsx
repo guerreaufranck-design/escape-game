@@ -51,6 +51,12 @@ interface ARCameraOverlayProps {
   /** Latest unlocked hint text — shown as a yellow toast inside the AR
    *  view so the player can read it without leaving the camera. */
   latestHint?: string | null;
+  /** Fired after the player has been LOCKED ON for ~3.5s (long enough
+   *  to read the golden letters that materialised on the facade). The
+   *  host should call validateStep with the known answer — this is the
+   *  AR-first auto-validation that replaces a manual "Validate" button.
+   *  Fires AT MOST ONCE per stepKey. */
+  onAutoValidate?: () => void;
   // Legacy props — kept for backwards compatibility with the play page,
   // but these layers were removed from the AR scene to reduce clutter.
   // The treasure reward is now shown in the post-validation success modal,
@@ -98,6 +104,7 @@ export function ARCameraOverlay({
   onSkipStep,
   skipLoading = false,
   latestHint = null,
+  onAutoValidate,
 }: ARCameraOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -243,6 +250,33 @@ export function ARCameraOverlay({
       vibratedRef.current = false;
     }
   }, [absH, distance, hasGps, orientation.hasCompass]);
+
+  // --- Auto-validate when lockedOn for long enough ---------------------
+  // The "AR-first" model: if the player is on-site, facing the right
+  // direction, holding the camera steady — they HAVE seen the golden
+  // letters that materialised on the facade. So validation is automatic.
+  // No more manual "Valider" button. Fires once per stepKey, after a
+  // ~3.5s grace period (enough to read the answer + feel the magic).
+  const autoValidatedRef = useRef<string | null>(null);
+  useEffect(() => {
+    // Reset the once-per-step latch when stepKey changes.
+    autoValidatedRef.current = null;
+  }, [stepKey]);
+
+  useEffect(() => {
+    if (!onAutoValidate) return;
+    if (!lockedOn) return;
+    if (autoValidatedRef.current === stepKey) return;
+
+    const t = setTimeout(() => {
+      // Re-check we're STILL locked (player might have moved away).
+      if (autoValidatedRef.current !== stepKey) {
+        autoValidatedRef.current = stepKey;
+        onAutoValidate();
+      }
+    }, 3500);
+    return () => clearTimeout(t);
+  }, [lockedOn, stepKey, onAutoValidate]);
 
   // --- Radar maths ------------------------------------------------------
   // Place the target as a dot on a circular radar, rotated so that the

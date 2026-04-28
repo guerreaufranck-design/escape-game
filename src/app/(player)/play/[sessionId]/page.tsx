@@ -327,14 +327,26 @@ export default function PlayPage() {
     }
   }, [showFinalCode, gameState, notebook, finalCodeInput]);
 
-  // Validate step. AR-first model: the gate is the player's typed answer
-  // (matched server-side against the stored expected answer), not the GPS
-  // distance. The AR overlay already enforces "you must be on site to see
-  // the clue", so a second GPS check on submit was redundant + caused
-  // false negatives in dense urban areas with GPS drift.
-  const validateStep = async () => {
+  // Validate step. AR-first model:
+  //   - Auto-fire from ARCameraOverlay onAutoValidate after the player
+  //     has been locked on for ~3.5s (the answer materialised on the
+  //     facade and they read it). The host calls this with the
+  //     EXPLICIT answer pulled from gameState.arFacadeText.
+  //   - Manual fallback: the function still works without an arg, in
+  //     which case it reads from notebookInput / notebook (legacy
+  //     manual flow).
+  // The server-side check matches against the stored expected answer
+  // (case-insensitive + accent-folded), so passing the AR-revealed
+  // facade text always succeeds.
+  const validateStep = async (explicitAnswer?: string) => {
     if (!gameState) return;
-    const submittedAnswer = (notebookInput || notebook[gameState.currentStep] || "").trim();
+    if (validating) return; // re-entrancy guard for fast double-fires
+    const submittedAnswer = (
+      explicitAnswer ||
+      notebookInput ||
+      notebook[gameState.currentStep] ||
+      ""
+    ).trim();
     if (!submittedAnswer) {
       setError("Tape la reponse decouverte en RA avant de valider");
       setTimeout(() => setError(null), 3000);
@@ -1170,12 +1182,13 @@ export default function PlayPage() {
             </div>
           )}
 
-          {/* Bottom action bar — AR is the PRIMARY action (the new mechanic),
-              answer-validation is secondary and only lights up once the
-              player has typed something they discovered in AR. */}
-          <div className="sticky bottom-0 z-20 mt-auto bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4 space-y-2.5" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
-            <div className="max-w-lg mx-auto space-y-2.5">
-              {/* PRIMARY: open AR — purple/fuchsia, the wow button */}
+          {/* Bottom action bar — AR is the ONLY action.
+              The manual "Valider la reponse" button is gone: validation
+              is now automatic when the AR has shown the answer for
+              ~3.5s. The skip button lives inside the AR overlay if the
+              player gets stuck. */}
+          <div className="sticky bottom-0 z-20 mt-auto bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
+            <div className="max-w-lg mx-auto">
               <Button
                 size="lg"
                 className="w-full bg-gradient-to-br from-fuchsia-600 to-violet-700 hover:from-fuchsia-500 hover:to-violet-600 text-white font-bold h-14 rounded-xl text-base shadow-lg shadow-fuchsia-900/40 animate-pulse-slow"
@@ -1184,18 +1197,9 @@ export default function PlayPage() {
                 <Sparkles className="h-5 w-5 mr-2" />
                 Ouvrir la Realite Augmentee
               </Button>
-              {/* SECONDARY: validate the typed answer — emerald, only
-                  active once the player has typed what AR revealed. */}
-              <Button
-                size="lg"
-                variant="outline"
-                className="w-full border-emerald-500/40 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/20 font-bold h-12 rounded-xl text-sm"
-                disabled={validating || !(notebookInput || notebook[gameState.currentStep] || "").trim()}
-                onClick={validateStep}
-              >
-                {validating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle2 className="h-4 w-4 mr-2" />}
-                Valider la reponse
-              </Button>
+              <p className="mt-2 text-center text-[11px] text-slate-500">
+                {tt('play.arAutoValidate', locale) || "Une fois en RA, l'etape se valide quand l'indice s'affiche."}
+              </p>
             </div>
           </div>
         </div>
@@ -1539,6 +1543,20 @@ export default function PlayPage() {
               : undefined
           }
           latestHint={hints[hints.length - 1]?.text || null}
+          onAutoValidate={() => {
+            // The AR overlay confirms the player has been on-site
+            // long enough to read the magical letters. Validate
+            // server-side using the EXACT answer Claude generated
+            // (the facade text uppercase = answer_text uppercase).
+            const knownAnswer =
+              gameState.arFacadeText ||
+              gameState.currentRiddle?.text ||
+              "";
+            // Close AR before opening the success modal so the
+            // celebration takes over the screen.
+            setArOpen(false);
+            void validateStep(knownAnswer);
+          }}
           skipLoading={skipping}
           onSkipStep={() => {
             if (confirm(tt('play.skipConfirm', locale))) {
