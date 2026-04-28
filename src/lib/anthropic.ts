@@ -194,35 +194,37 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 5. "answer_text": ONLY the short evocative answer. A year, a roman
    numeral, ONE word. NEVER a sentence. Copy from the location data.
 
-6. "hints": Array of EXACTLY 3 hints, in this STRICT JSON shape:
+6. "hints": Array of EXACTLY 1 hint, in this STRICT JSON shape:
      [
-       { "order": 1, "text": "first hint string here" },
-       { "order": 2, "text": "second hint string here" },
-       { "order": 3, "text": "third hint string here" }
+       { "order": 1, "text": "the single helpful hint here" }
      ]
    The "order" and "text" keys are MANDATORY. Do NOT return a string
-   array like ["hint 1", "hint 2", "hint 3"] — that breaks the
-   pipeline. Each hint escalates in PRECISION about WHERE the AR
-   clue lives. Players who can't find the clue while scanning unlock
-   these progressively. Each hint gives more geographic precision
-   than the last, then the final one nudges the answer's shape.
+   array like ["hint"] or a bare object — that breaks the pipeline.
+   The array MUST be length 1.
 
-   - 1: General zone — point at a broad area without naming the
-     exact surface. Examples: "près de l'entrée principale", "vers
-     le mur côté plaza", "regarde du côté du clocher", "autour de
-     la porte cochère". The player still has to scan a wide zone.
-   - 2: Specific surface / object — narrow it to one wall, one
-     door, one pediment. Examples: "concentre-toi sur la porte en
-     bois", "balaie la pierre au-dessus du linteau", "scanne le
-     fronton sculpté", "regarde la plaque en métal à hauteur des
-     yeux". This should make finding the clue easy.
-   - 3: Format of the answer — describe its shape WITHOUT giving
-     it. Examples: "c'est une date à 4 chiffres", "un mot latin
-     de 6 lettres se terminant par -US", "un chiffre romain plus
-     petit que X".
+   Single-hint design — what to write:
+     The hint must combine TWO pieces of information so the player
+     can act on it without needing more hints:
+       (a) WHERE — the specific surface / spot the AR clue is on
+           (e.g. "above the main door", "on the metal plaque at eye
+           level on the south wall", "etched into the cobblestones
+           in front of the fountain")
+       (b) FORMAT — the SHAPE of the answer
+           (e.g. "a 4-digit year", "a single Latin word", "a small
+           roman numeral")
 
-   Each hint costs the player time on the leaderboard, so escalating
-   precision is the right tradeoff. Never name the literal answer.
+   Example (good):
+     "Scan the carved pediment above the main entrance — the answer
+     is a 4-digit year."
+
+   Example (bad — vague):
+     "Look around the church."
+
+   Example (bad — spoils the answer):
+     "Scan the wall, the answer is 1532."
+
+   Hint is unlocked at a time penalty. Never reveal the literal
+   answer. Keep it under 200 characters.
 
 7. "anecdote": 2-3 fascinating, factually-true sentences about the
    place's history. The player's reward after solving. This is where

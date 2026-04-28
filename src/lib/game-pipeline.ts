@@ -440,7 +440,7 @@ async function insertGameIntoDatabase(
     difficulty: template.difficulty,
     estimated_duration_min: template.estimatedDurationMin,
     is_published: true, // Auto-published — generated games are ready to play
-    max_hints_per_step: 3,
+    max_hints_per_step: 1,
     hint_penalty_seconds: 30,
     cover_image: template.coverImage || null,
     // Narrative epilogue (English only here — translated on demand like other fields)
@@ -485,14 +485,14 @@ async function insertGameIntoDatabase(
   // Insert steps
   const stepsToInsert = steps.map((step, index) => {
     const hints = normalizeHints(step.hints as unknown);
-    if (hints.length < 3) {
+    if (hints.length < 1) {
       // Hard fail rather than silently shipping a step the player can't
-      // get help on. The retry loop above should have already kicked
-      // bad outputs back to Claude — if we're here with < 3 valid
-      // hints, something deeper is wrong and a thrown error surfaces
-      // it loudly in the alert email instead of breaking on the field.
+      // get help on. We now ship a single hint per step (down from 3)
+      // for simplicity, but that one hint MUST be present and have
+      // text. A throw here surfaces the issue loudly in the alert
+      // email instead of breaking on the field.
       throw new Error(
-        `Step ${index + 1} has only ${hints.length}/3 valid hint(s) — refusing to insert. Raw: ${JSON.stringify(step.hints).slice(0, 200)}`,
+        `Step ${index + 1} has 0 valid hint — refusing to insert. Raw: ${JSON.stringify(step.hints).slice(0, 200)}`,
       );
     }
     return {
