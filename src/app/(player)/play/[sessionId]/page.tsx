@@ -851,39 +851,18 @@ export default function PlayPage() {
               </Card>
             )}
 
-            {/* Notebook input - note your answer */}
-            <Card className="bg-slate-900/95 border-emerald-800/50">
-              <CardContent className="pt-4 pb-3">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-lg">📝</span>
-                  <p className="text-sm font-medium text-emerald-400">{tt('play.noteAnswer', locale)}</p>
-                </div>
-                <p className="text-xs text-orange-400/80 mb-2">
-                  {tt('play.answerLocked', locale)}
-                </p>
-                <input
-                  type="text"
-                  value={notebookInput}
-                  onChange={(e) => setNotebookInput(e.target.value)}
-                  placeholder={tt('play.answerPlaceholder', locale)}
-                  className="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 text-center text-lg font-mono focus:border-emerald-500 focus:outline-none"
-                  autoFocus
-                />
-              </CardContent>
-            </Card>
+            {/* Notebook input REMOVED — the AR auto-validate already
+                stores the answer in notebook[currentStep] before this
+                modal opens, and the player sees their answer rendered
+                in the "correct answer" header above. Asking them to
+                retype was pure friction. */}
 
-            {/* Continue button — disabled until notebook entry is filled */}
-            {!notebookInput.trim() && (
-              <p className="text-center text-xs text-orange-400 animate-pulse">
-                {tt('play.mustNoteAnswer', locale)}
-              </p>
-            )}
+            {/* Continue button — always enabled now (notebook is set,
+                player just acknowledges the success). */}
             <Button
               size="lg"
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl disabled:opacity-40 disabled:cursor-not-allowed"
-              disabled={!notebookInput.trim()}
+              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
               onClick={() => {
-                setNotebook((prev) => ({ ...prev, [gameState.currentStep]: notebookInput.trim() }));
                 setNotebookInput("");
                 setStepSuccess(false);
                 setAnecdote(null);
