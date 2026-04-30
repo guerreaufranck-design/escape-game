@@ -51,6 +51,8 @@ import { NavigationGuide } from "@/components/player/NavigationGuide";
 import { ARCameraOverlay } from "@/components/player/ARCameraOverlay";
 import { ValidationParticles } from "@/components/player/ValidationParticles";
 import { Tutorial } from "@/components/player/Tutorial";
+import { StepTransitionOverlay } from "@/components/player/StepTransitionOverlay";
+import { useUITranslations } from "@/components/player/UITranslationsProvider";
 import { NarrationButton } from "@/components/player/NarrationButton";
 import { ReportError } from "@/components/player/ReportError";
 import { useNarration } from "@/hooks/useNarration";
@@ -85,6 +87,9 @@ export default function PlayPage() {
   });
 
   const [locale] = useLocale();
+  // Loads the dynamic UI pack for non-static locales (Asian langs etc.)
+  // and forces a re-render when the freshly-translated strings land.
+  useUITranslations(locale);
   const [validating, setValidating] = useState(false);
   const [hints, setHints] = useState<Hint[]>([]);
   const [hintLoading, setHintLoading] = useState(false);
@@ -209,7 +214,7 @@ export default function PlayPage() {
     try {
       setLoading(true);
       const res = await fetch(`/api/game/${sessionId}?lang=${locale}`);
-      if (!res.ok) throw new Error("Impossible de charger la partie");
+      if (!res.ok) throw new Error(tt('play.error.loadFailed', locale));
       const data: GameState = await res.json();
       setGameState(data);
       if (data.status === "completed") {
@@ -217,7 +222,7 @@ export default function PlayPage() {
       }
     } catch (err) {
       setError(
-        err instanceof Error ? err.message : "Erreur de chargement"
+        err instanceof Error ? err.message : tt('play.error.fetchFailed', locale)
       );
     } finally {
       setLoading(false);
@@ -348,7 +353,7 @@ export default function PlayPage() {
       ""
     ).trim();
     if (!submittedAnswer) {
-      setError("Tape la reponse decouverte en RA avant de valider");
+      setError(tt('play.error.typeAnswerFirst', locale));
       setTimeout(() => setError(null), 3000);
       return;
     }
@@ -394,17 +399,17 @@ export default function PlayPage() {
         // feels instant instead of a 30-40s blocking wait.
         void fetchGameState();
       } else if (data.reason === "wrong_answer") {
-        setError("Reponse incorrecte. Verifie ce que tu as decouvert en RA.");
+        setError(tt('play.error.wrongAnswer', locale));
         setTimeout(() => setError(null), 3500);
       } else if (data.error) {
         setError(data.error);
         setTimeout(() => setError(null), 3000);
       } else {
-        setError("Validation echouee. Reessaie.");
+        setError(tt('play.error.validationFailed', locale));
         setTimeout(() => setError(null), 3000);
       }
     } catch {
-      setError("Erreur de validation");
+      setError(tt('play.error.validationGeneric', locale));
     } finally {
       setValidating(false);
     }
@@ -431,7 +436,7 @@ export default function PlayPage() {
         fetchGameState();
       }
     } catch {
-      setError("Erreur lors de la demande d'indice");
+      setError(tt('play.error.hintFailed', locale));
     } finally {
       setHintLoading(false);
     }
@@ -456,7 +461,7 @@ export default function PlayPage() {
       });
       const data = await res.json();
       if (data.success) {
-        setSkipAnswer(data.answer || "Reponse non disponible");
+        setSkipAnswer(data.answer || tt('play.error.answerNotAvailable', locale));
         setSkipCompleted(!!data.completed);
         setHints([]);
 
@@ -466,7 +471,7 @@ export default function PlayPage() {
         void fetchGameState();
       }
     } catch {
-      setError("Erreur lors du passage de l'etape");
+      setError(tt('play.error.skipFailed', locale));
     } finally {
       setSkipping(false);
     }
@@ -486,14 +491,15 @@ export default function PlayPage() {
     setSkipCompleted(false);
   };
 
-  // Temperature indicator
+  // Temperature indicator (proximity to target). Labels go through tt()
+  // so they translate for non-static locales just like the rest of the UI.
   const getTemperature = (d: number | null) => {
-    if (d === null) return { label: "Recherche...", color: "text-slate-400", icon: Navigation };
-    if (d < 30) return { label: "Brulant!", color: "text-red-500", icon: Flame };
-    if (d < 100) return { label: "Tres chaud", color: "text-orange-500", icon: Flame };
-    if (d < 300) return { label: "Chaud", color: "text-yellow-500", icon: Thermometer };
-    if (d < 1000) return { label: "Tiede", color: "text-emerald-400", icon: Thermometer };
-    return { label: "Froid", color: "text-blue-400", icon: Snowflake };
+    if (d === null) return { label: tt('play.temp.searching', locale), color: "text-slate-400", icon: Navigation };
+    if (d < 30) return { label: tt('play.temp.burning', locale), color: "text-red-500", icon: Flame };
+    if (d < 100) return { label: tt('play.temp.veryHot', locale), color: "text-orange-500", icon: Flame };
+    if (d < 300) return { label: tt('play.temp.hot', locale), color: "text-yellow-500", icon: Thermometer };
+    if (d < 1000) return { label: tt('play.temp.warm', locale), color: "text-emerald-400", icon: Thermometer };
+    return { label: tt('play.temp.cold', locale), color: "text-blue-400", icon: Snowflake };
   };
 
   if (isLoading && !gameState) {
@@ -501,7 +507,7 @@ export default function PlayPage() {
       <div className="min-h-screen flex items-center justify-center bg-slate-950">
         <div className="text-center space-y-4">
           <Loader2 className="h-12 w-12 animate-spin text-emerald-500 mx-auto" />
-          <p className="text-slate-400">Chargement de la partie...</p>
+          <p className="text-slate-400">{tt('play.loading', locale)}</p>
         </div>
       </div>
     );
@@ -514,7 +520,7 @@ export default function PlayPage() {
           <CardContent className="pt-6 text-center">
             <p className="text-red-400 mb-4">{error}</p>
             <Button onClick={() => router.push("/")} variant="outline">
-              Retour
+              {tt('play.back', locale)}
             </Button>
           </CardContent>
         </Card>
@@ -722,7 +728,7 @@ export default function PlayPage() {
                   setShowIntro(false);
                 }
               } catch {
-                setError("Erreur lors du demarrage");
+                setError(tt('play.error.startFailed', locale));
               } finally {
                 setStartingGame(false);
               }
@@ -1174,7 +1180,7 @@ export default function PlayPage() {
                 onClick={() => setArOpen(true)}
               >
                 <Sparkles className="h-5 w-5 mr-2" />
-                Ouvrir la Realite Augmentee
+                {tt('play.arMode', locale)}
               </Button>
               <p className="mt-2 text-center text-[11px] text-slate-500">
                 {tt('play.arAutoValidate', locale) || "Une fois en RA, l'etape se valide quand l'indice s'affiche."}
@@ -1313,10 +1319,10 @@ export default function PlayPage() {
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">
                 <BookOpen className="h-4 w-4 text-emerald-400" />
-                <span className="text-sm font-medium text-emerald-400">Mon carnet</span>
+                <span className="text-sm font-medium text-emerald-400">{tt('play.notebook.title', locale)}</span>
               </div>
               <button onClick={() => setShowNotebook(false)} className="text-slate-500 text-xs hover:text-white">
-                Fermer
+                {tt('play.notebook.close', locale)}
               </button>
             </div>
             <div className="space-y-1.5">
@@ -1599,6 +1605,17 @@ export default function PlayPage() {
           `}</style>
         </div>
       )}
+
+      {/* Fullscreen reassurance overlay for the long-running transitions:
+          - Skip step (API + next-step Gemini translation, can be 5-30s)
+          - Step transition fetch when player has just reached/validated a step
+          The thin top bar above is too discreet — players reported "app
+          crashed" during the wait. This overlay rotates messages so the
+          screen never looks frozen. */}
+      <StepTransitionOverlay
+        active={skipping || (isLoading && !!gameState && tutorialDone && !showIntro && !skipAnswer && !stepSuccess)}
+        locale={locale}
+      />
     </div>
   );
 }

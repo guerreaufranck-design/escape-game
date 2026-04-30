@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import { formatTime, formatScore } from "@/lib/scoring";
 import { useLocale } from "@/components/player/LocaleSelector";
+import { useUITranslations } from "@/components/player/UITranslationsProvider";
 import { ReportError } from "@/components/player/ReportError";
 import { SelfieARScreen } from "@/components/player/SelfieARScreen";
 import { GameEpilogue } from "@/components/player/GameEpilogue";
@@ -33,6 +34,7 @@ export default function ResultsPage() {
   const sessionId = params.sessionId as string;
 
   const [locale] = useLocale();
+  useUITranslations(locale);
   const [results, setResults] = useState<GameResults | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);

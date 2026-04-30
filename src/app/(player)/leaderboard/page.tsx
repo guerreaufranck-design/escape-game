@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { formatTime, formatScore } from "@/lib/scoring";
 import { useLocale } from "@/components/player/LocaleSelector";
+import { useUITranslations } from "@/components/player/UITranslationsProvider";
 import type { LeaderboardEntry } from "@/types/database";
 
 export default function LeaderboardPage() {
@@ -32,6 +33,7 @@ function LeaderboardContent() {
   const gameId = searchParams.get("gameId");
 
   const [locale] = useLocale();
+  useUITranslations(locale);
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [loading, setLoading] = useState(true);
 
