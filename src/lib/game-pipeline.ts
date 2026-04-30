@@ -495,6 +495,25 @@ async function insertGameIntoDatabase(
         `Step ${index + 1} has 0 valid hint — refusing to insert. Raw: ${JSON.stringify(step.hints).slice(0, 200)}`,
       );
     }
+
+    // Trim hints to max_hints_per_step=1 (Claude often over-delivers
+    // 3 even though the prompt asks for 1; the UI only ever shows the
+    // first one, the rest is just disk waste).
+    const trimmedHints = hints.slice(0, 1);
+
+    // CRITICAL: enforce ar_facade_text === answer_text in uppercase.
+    // Claude has a strong creative bias toward decorating the facade
+    // text ("ANNO DOMINI 1189" instead of "1189", "TRES DOMINI" instead
+    // of "III"). With AR auto-validate sending arFacadeText to the
+    // server for comparison against answer_text, ANY decoration breaks
+    // validation server-side and the player gets stuck. The prompt
+    // says MUST EXACTLY match but Claude ignored it on the Agen test
+    // game (5/8 steps mismatched). We override here, server-side, so
+    // it can NEVER happen again regardless of what the model said.
+    const enforcedFacade = step.answer_text
+      ? String(step.answer_text).toUpperCase()
+      : step.ar_facade_text || null;
+
     return {
       id: uuidv4(),
       game_id: gameId,
@@ -505,7 +524,7 @@ async function insertGameIntoDatabase(
       latitude: step.latitude,
       longitude: step.longitude,
       validation_radius_meters: step.validation_radius_meters,
-      hints,
+      hints: trimmedHints,
       anecdote: step.anecdote,
       bonus_time_seconds: step.bonus_time_seconds,
       has_photo_challenge: false,
@@ -517,24 +536,34 @@ async function insertGameIntoDatabase(
       // AR runtime layer — populated by Claude during generation
       ar_character_type: step.ar_character_type || "default",
       ar_character_dialogue: step.ar_character_dialogue || null,
-      ar_facade_text: step.ar_facade_text || null,
+      ar_facade_text: enforcedFacade,
       ar_treasure_reward: step.ar_treasure_reward || null,
       // Route POIs — defensive normalization (drop entries missing
-      // name or fact, cap at 3, no empty array required so legacy
-      // games stay valid).
-      route_attractions: Array.isArray(step.route_attractions)
-        ? step.route_attractions
-            .filter(
-              (a): a is { name: string; fact: string } =>
-                !!a &&
-                typeof a === "object" &&
-                typeof (a as { name?: unknown }).name === "string" &&
-                typeof (a as { fact?: unknown }).fact === "string" &&
-                (a as { name: string }).name.trim().length > 0 &&
-                (a as { fact: string }).fact.trim().length > 0,
-            )
-            .slice(0, 3)
-        : [],
+      // name or fact, cap at 3). We log a warning when a step has 0
+      // entries so the post-generation alert email surfaces the gap;
+      // we don't hard-fail (legacy games would break) but the next
+      // attractions-fill script can pick up the slack.
+      route_attractions: (() => {
+        const valid = Array.isArray(step.route_attractions)
+          ? step.route_attractions
+              .filter(
+                (a): a is { name: string; fact: string } =>
+                  !!a &&
+                  typeof a === "object" &&
+                  typeof (a as { name?: unknown }).name === "string" &&
+                  typeof (a as { fact?: unknown }).fact === "string" &&
+                  (a as { name: string }).name.trim().length > 0 &&
+                  (a as { fact: string }).fact.trim().length > 0,
+              )
+              .slice(0, 3)
+          : [];
+        if (valid.length === 0) {
+          console.warn(
+            `[Pipeline] Step ${index + 1} has NO route_attractions — UI card will be hidden. Consider re-running fill-step1-attractions or similar.`,
+          );
+        }
+        return valid;
+      })(),
     };
   });
 
