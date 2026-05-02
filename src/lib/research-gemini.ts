@@ -53,13 +53,19 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 /**
- * Validate the shape of a Gemini-returned ResearchedLocation. Discards
- * entries that lack the essentials. Coords get rescued via Nominatim
- * downstream — what we filter here are the truly broken entries.
+ * Validate the shape of a Gemini-returned ResearchedLocation. Only `name`
+ * is strictly required — the answer can be invented by Claude later
+ * (every step is virtual_ar, so the answer is revealed via AR overlay,
+ * not on a physical inscription). Coords get rescued via Nominatim
+ * downstream when missing.
+ *
+ * Pre-virtual_ar this filter required `answer` too, which caused the
+ * pipeline to drop stops in modern districts (Shibuya, etc.) where
+ * Gemini couldn't find a verifiable inscription. With AR-first, that
+ * filter is obsolete — we accept any stop with a name.
  */
 function isValidLocation(loc: Partial<ResearchedLocation>): boolean {
   if (!loc.name || typeof loc.name !== "string") return false;
-  if (!loc.answer || typeof loc.answer !== "string") return false;
   return true;
 }
 
@@ -151,9 +157,47 @@ If you don't have enough information to give plausible coordinates for a stop, r
   }
 
   // Filter shape-invalid entries before geocoding.
-  const valid = parsed.filter(isValidLocation);
+  let valid = parsed.filter(isValidLocation);
   if (valid.length === 0) {
     throw new Error("[gemini-research] no valid entries returned");
+  }
+
+  // PADDING: if Gemini dropped some of the user's stops (it sometimes
+  // skips locations it can't link to the theme), reinsert them as bare
+  // stubs. Every stop the designer chose MUST appear in the final game
+  // — AR mode means Claude can invent the answer + riddle from just
+  // the name + GPS, so we never need to drop a stop again.
+  if (valid.length < stops.length) {
+    console.warn(
+      `[gemini-research] Gemini returned ${valid.length}/${stops.length}, padding missing stops`,
+    );
+    const validNames = new Set(valid.map((v) => v.name.toLowerCase().trim()));
+    for (const original of stops) {
+      const name = original.name.trim();
+      if (!validNames.has(name.toLowerCase())) {
+        valid.push({
+          name,
+          latitude: 0, // Nominatim will rescue this in the geocode step below
+          longitude: 0,
+          whatToObserve:
+            "Reach the location and point your camera at the facade — the AR will reveal the secret.",
+          answer: "REVEAL", // Claude rewrites this during narrative gen
+          answerType: "name" as const,
+          answerSource: "virtual_ar" as const,
+          source: "padding",
+          themeLink: original.description || "",
+        });
+      }
+    }
+    // Preserve original input order
+    const indexByName = new Map(
+      stops.map((s, i) => [s.name.toLowerCase().trim(), i]),
+    );
+    valid = valid.sort(
+      (a, b) =>
+        (indexByName.get(a.name.toLowerCase().trim()) ?? 999) -
+        (indexByName.get(b.name.toLowerCase().trim()) ?? 999),
+    );
   }
 
   // Force virtual_ar contract regardless of what the model said.
@@ -180,6 +224,9 @@ If you don't have enough information to give plausible coordinates for a stop, r
         ...loc,
         latitude,
         longitude,
+        // Provide a default answer for downstream Claude narration if
+        // Gemini didn't supply one. Claude is free to override.
+        answer: loc.answer && loc.answer.trim() ? loc.answer : "REVEAL",
         answerSource: "virtual_ar" as const,
         source: loc.source || "gemini-training",
       };
