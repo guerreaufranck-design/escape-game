@@ -6,6 +6,15 @@ import {
   corsHeaders,
 } from "@/lib/external-auth";
 import { sendCodeGenerationFailureAlert } from "@/lib/email";
+import { prepareGamePackage } from "@/lib/game-package";
+
+/**
+ * Pre-generation of text + audio takes 30-60s for one new (game × lang).
+ * Vercel default function timeout is 10s on Hobby, 60s on Pro. Bump to
+ * 5 minutes — synchronous flow lets the merchant know everything is
+ * ready before they email the customer.
+ */
+export const maxDuration = 300;
 
 /**
  * OPTIONS /api/external/generate-code
@@ -43,10 +52,31 @@ function extractTitle(title: unknown, lang = "en"): string {
  *   Authorization: Bearer {EXTERNAL_API_SECRET}
  *
  * Body:
- *   { gameId: string, buyerEmail: string, buyerName?: string, orderId?: string }
+ *   {
+ *     gameId: string,                 // required
+ *     buyerEmail: string,             // required
+ *     buyerName?: string,
+ *     orderId?: string,
+ *     language?: string               // 2-letter ISO code (fr|en|de|es|it|pt|...|ja|ko|zh|...)
+ *                                     // If provided, app pre-generates text translations + ElevenLabs audio
+ *                                     // for this game in this language. Adds 30-60s to the response on the
+ *                                     // first sale of a (game × language) pair (cached forever after).
+ *   }
  *
  * Returns:
- *   { code: string, gameTitle: string, gameCity: string, activationUrl: string }
+ *   {
+ *     code: string,
+ *     gameTitle: string,
+ *     gameCity: string,
+ *     activationUrl: string,          // includes ?lang=<language> if language was passed
+ *     audio?: {
+ *       prepared: boolean,
+ *       generated: number,
+ *       skipped: number,
+ *       failed: number,
+ *       durationMs: number,
+ *     }
+ *   }
  */
 export async function POST(request: NextRequest) {
   try {
@@ -59,6 +89,10 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { gameId, buyerEmail, buyerName, orderId } = body;
+    const rawLanguage =
+      typeof body.language === "string" ? body.language.toLowerCase().trim() : null;
+    // Defensive: only accept a clean 2-letter ISO code
+    const language = rawLanguage && /^[a-z]{2}$/.test(rawLanguage) ? rawLanguage : null;
 
     if (!gameId) {
       return NextResponse.json(
@@ -107,6 +141,8 @@ export async function POST(request: NextRequest) {
         // expires_at stays null — set to now+8h upon activation
       });
 
+    let finalCode = code;
+
     if (insertError) {
       // Code collision (extremely unlikely) — retry once
       const retryCode = generateActivationCode(game.city);
@@ -124,7 +160,6 @@ export async function POST(request: NextRequest) {
 
       if (retryError) {
         console.error("Erreur insertion code:", retryError);
-        // Alert admin on failure
         await sendCodeGenerationFailureAlert({
           gameId,
           gameCity: game.city,
@@ -137,31 +172,66 @@ export async function POST(request: NextRequest) {
           { status: 500, headers: corsHeaders }
         );
       }
-
-      return NextResponse.json(
-        {
-          code: retryCode,
-          gameTitle: extractTitle(game.title),
-          gameCity: game.city,
-          activationUrl: `https://escape-game-indol.vercel.app?code=${retryCode}`,
-        },
-        { headers: corsHeaders }
-      );
+      finalCode = retryCode;
     }
 
-    // Log buyer info for traceability (optional metadata)
-    if (buyerEmail || orderId) {
-      console.log(
-        `[external/generate-code] code=${code} game=${game.city} email=${buyerEmail} order=${orderId || "N/A"}`
-      );
+    // Log buyer info for traceability
+    console.log(
+      `[external/generate-code] code=${finalCode} game=${game.city} email=${buyerEmail} order=${orderId || "N/A"} lang=${language || "—"}`
+    );
+
+    // ─── Pre-generation: text translation + ElevenLabs audio ─────────
+    // Synchronous: caller (Stripe webhook) must await so they email the
+    // customer only after everything is ready. ~30-60s on first sale of
+    // (game × language); near-instant on subsequent sales (cache hit).
+    let audioReport: PackageStatsForResponse | undefined;
+    if (language) {
+      try {
+        const result = await prepareGamePackage(gameId, language);
+        audioReport = {
+          prepared: result.success,
+          generated: result.audioGenerated,
+          skipped: result.audioSkipped,
+          failed: result.audioFailed,
+          durationMs: result.durationMs,
+        };
+        if (result.errors.length > 0) {
+          console.error(
+            `[external/generate-code] package errors for ${gameId}/${language}:`,
+            result.errors,
+          );
+        }
+      } catch (err) {
+        // Audio prep failure must NOT block code delivery — the player
+        // can still play with Web Speech fallback. Log + continue.
+        console.error(
+          `[external/generate-code] package prep crashed for ${gameId}/${language}:`,
+          err,
+        );
+        audioReport = {
+          prepared: false,
+          generated: 0,
+          skipped: 0,
+          failed: 0,
+          durationMs: 0,
+        };
+      }
     }
+
+    // Activation URL pre-fills the language so the player lands directly
+    // in the right locale (no language picker step on first visit).
+    const activationBase = "https://escape-game-indol.vercel.app";
+    const activationUrl = language
+      ? `${activationBase}?code=${finalCode}&lang=${language}`
+      : `${activationBase}?code=${finalCode}`;
 
     return NextResponse.json(
       {
-        code,
+        code: finalCode,
         gameTitle: extractTitle(game.title),
         gameCity: game.city,
-        activationUrl: `https://escape-game-indol.vercel.app?code=${code}`,
+        activationUrl,
+        ...(audioReport && { audio: audioReport }),
       },
       { headers: corsHeaders }
     );
@@ -172,4 +242,12 @@ export async function POST(request: NextRequest) {
       { status: 500, headers: corsHeaders }
     );
   }
+}
+
+interface PackageStatsForResponse {
+  prepared: boolean;
+  generated: number;
+  skipped: number;
+  failed: number;
+  durationMs: number;
 }

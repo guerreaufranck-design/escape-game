@@ -2,9 +2,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { translateText, getGeminiModel } from "@/lib/gemini";
 import { getLanguageName } from "@/lib/i18n";
 
-// Hard upper bound per single Gemini call. Fast networks finish in < 2s,
-// but a P99 spike can hang for 30s+ otherwise — we'd rather serve EN.
-const TRANSLATION_TIMEOUT_MS = 6000;
+// Hard upper bound per single Gemini call. Short fields (riddle, hint)
+// finish in < 4s; long-form fields (epilogue: 4-6 paragraphs) routinely
+// take 8-12s in Japanese/Chinese where every char matters. 30s gives
+// plenty of headroom for the epilogue without locking the player out
+// indefinitely on a Gemini hiccup.
+const TRANSLATION_TIMEOUT_MS = 30000;
 // Number of retry attempts before giving up. The first attempt + 1 retry
 // catches most transient blips without paying double cost on every call.
 const TRANSLATION_RETRY_ATTEMPTS = 2;

@@ -4,6 +4,14 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
 /**
  * Returns a Gemini 2.5 Flash model instance.
+ *
+ * NOTE: The @google/generative-ai SDK (deprecated by Google in favor of
+ * @google/genai) ships with an x-goog-api-key header auth that has started
+ * returning misleading API_KEY_INVALID errors on certain accounts. The
+ * direct REST endpoint (?key=...) works fine — see translateText() below
+ * for the workaround. Other places using getGeminiModel() (validatePhoto,
+ * translateGameContent batch) still go through the SDK because they need
+ * vision / streaming features. If those fail too, swap them to fetch.
  */
 export function getGeminiModel() {
   return genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
@@ -11,7 +19,11 @@ export function getGeminiModel() {
 
 /**
  * Translates text to a target language using Gemini.
- * Accepts ISO 639-1 codes (fr, zh, ja, etc.) or full language names.
+ *
+ * Bypasses the @google/generative-ai SDK and calls the REST endpoint
+ * directly. Uses the URL-param key auth which is more permissive than
+ * the SDK's header auth (the SDK was failing with API_KEY_INVALID even
+ * when curl with the same key succeeds).
  */
 export async function translateText(
   text: string,
@@ -19,9 +31,11 @@ export async function translateText(
 ): Promise<string> {
   const { getLanguageName } = await import("@/lib/i18n");
   const langName = getLanguageName(targetLang);
-  const model = getGeminiModel();
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY missing");
 
-  const result = await model.generateContent({
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+  const body = {
     contents: [
       {
         role: "user",
@@ -35,10 +49,25 @@ export async function translateText(
     generationConfig: {
       temperature: 0.2,
     },
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
 
-  const response = result.response;
-  return response.text().trim();
+  if (!res.ok) {
+    const errBody = await res.text();
+    throw new Error(`Gemini translateText ${res.status}: ${errBody.slice(0, 200)}`);
+  }
+
+  const data = await res.json();
+  const out =
+    data?.candidates?.[0]?.content?.parts?.[0]?.text ??
+    data?.candidates?.[0]?.content?.parts?.map((p: { text?: string }) => p.text).join("") ??
+    "";
+  return String(out).trim();
 }
 
 /**
