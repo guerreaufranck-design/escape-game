@@ -616,6 +616,8 @@ export default function PlayPage() {
                       speaking={narration.speaking}
                       currentText={narrationText}
                       onSpeak={handleSpeak}
+                      variant="pill"
+                      locale={locale}
                     />
                   )}
                 </div>
@@ -854,6 +856,8 @@ export default function PlayPage() {
                         speaking={narration.speaking}
                         currentText={narrationText}
                         onSpeak={(t) => handleSpeak(t, gameState.audioMap?.anecdote)}
+                        variant="pill"
+                        locale={locale}
                       />
                     )}
                   </div>
@@ -985,12 +989,14 @@ export default function PlayPage() {
                     {gameState.currentRiddle.text}
                   </p>
                   {narration.supported && (
-                    <div className="mt-3 pl-3">
+                    <div className="mt-4 pl-3">
                       <NarrationButton
                         text={gameState.currentRiddle.text}
                         speaking={narration.speaking}
                         currentText={narrationText}
                         onSpeak={handleSpeak}
+                        variant="pill"
+                        locale={locale}
                       />
                     </div>
                   )}

@@ -500,6 +500,12 @@ export const ui: Translations = {
   'play.notebook.title': {
     fr: 'Mon carnet', en: 'My notebook', de: 'Mein Notizbuch', es: 'Mi cuaderno', it: 'Il mio taccuino',
   },
+  'play.audio.listen': {
+    fr: 'Ecouter', en: 'Listen', de: 'Anhoren', es: 'Escuchar', it: 'Ascolta',
+  },
+  'play.audio.stop': {
+    fr: 'Arreter', en: 'Stop', de: 'Stoppen', es: 'Detener', it: 'Ferma',
+  },
   'play.notebook.close': {
     fr: 'Fermer', en: 'Close', de: 'Schliessen', es: 'Cerrar', it: 'Chiudi',
   },
