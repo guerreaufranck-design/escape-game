@@ -181,11 +181,28 @@ export default function PlayPage() {
   // Auto-narrate riddle when step changes
   useEffect(() => {
     if (gameState?.currentRiddle?.text && !showIntro && !stepSuccess && !skipAnswer && !showFinalCode) {
-      // Small delay to let the UI render first
-      const t = setTimeout(() => autoSpeak(gameState.currentRiddle!.text), 600);
+      // Small delay to let the UI render first. We auto-narrate ONLY when
+      // an ElevenLabs MP3 is available — otherwise we skip auto-play and
+      // let the player tap "Listen" themselves. Falling back to Web Speech
+      // here would shatter the immersion (robotic browser TTS instead of
+      // the premium voice the customer paid for).
+      const audioUrl = gameState?.audioMap?.riddle;
+      if (!audioUrl) return;
+      const t = setTimeout(
+        () => autoSpeak(gameState.currentRiddle!.text, audioUrl),
+        600,
+      );
       return () => clearTimeout(t);
     }
-  }, [gameState?.currentStep, gameState?.currentRiddle?.text, showIntro, stepSuccess, skipAnswer, showFinalCode]);
+  }, [
+    gameState?.currentStep,
+    gameState?.currentRiddle?.text,
+    gameState?.audioMap?.riddle,
+    showIntro,
+    stepSuccess,
+    skipAnswer,
+    showFinalCode,
+  ]);
 
   // Auto-narrate anecdote when it appears (uses ElevenLabs MP3 if available)
   useEffect(() => {
@@ -994,7 +1011,7 @@ export default function PlayPage() {
                         text={gameState.currentRiddle.text}
                         speaking={narration.speaking}
                         currentText={narrationText}
-                        onSpeak={handleSpeak}
+                        onSpeak={(t) => handleSpeak(t, gameState.audioMap?.riddle)}
                         variant="pill"
                         locale={locale}
                       />

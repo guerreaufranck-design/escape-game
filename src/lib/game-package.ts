@@ -37,7 +37,7 @@ export interface PackageResult {
 
 interface AudioJob {
   stepOrder: number;
-  slot: "character" | "anecdote" | "epilogue";
+  slot: "character" | "anecdote" | "epilogue" | "riddle";
   text: string;
   voiceId: string;
 }
@@ -84,7 +84,7 @@ export async function prepareGamePackage(
   // 2. Fetch all steps with the voiceable fields
   const { data: steps, error: stepsErr } = await supabase
     .from("game_steps")
-    .select("id, step_order, anecdote, ar_character_dialogue, ar_character_type")
+    .select("id, step_order, riddle_text, anecdote, ar_character_dialogue, ar_character_type")
     .eq("game_id", gameId)
     .order("step_order");
 
@@ -124,7 +124,11 @@ export async function prepareGamePackage(
     if (stepIdx > 0 && !isStaticLocale(language)) {
       await new Promise((r) => setTimeout(r, 800));
     }
-    // Get translated text for this step's character + anecdote
+    // Get translated text for this step's riddle + character + anecdote.
+    // The riddle is the FIRST thing the player hears on each step (auto-
+    // narrated), so giving it the same ElevenLabs voice as the rest is
+    // critical — otherwise the immersion shatters on every step entry.
+    const englishRiddle = t(step.riddle_text, "en");
     const englishCharacter = t(step.ar_character_dialogue, "en");
     const englishAnecdote = t(step.anecdote, "en");
 
@@ -133,12 +137,24 @@ export async function prepareGamePackage(
     // json"` mode ran into a soft rate-limit on this account that returned
     // a misleading API_KEY_INVALID. Per-field calls go through cache first
     // and only hit Gemini once per (sourceId, field, language).
+    let riddleText: string;
     let characterText: string;
     let anecdoteText: string;
     if (isStaticLocale(language)) {
+      riddleText = t(step.riddle_text, language);
       characterText = t(step.ar_character_dialogue, language);
       anecdoteText = t(step.anecdote, language);
     } else {
+      riddleText = englishRiddle
+        ? await translateGameField(
+            step.id,
+            "game_steps",
+            "riddle_text",
+            englishRiddle,
+            language,
+          )
+        : "";
+      await new Promise((r) => setTimeout(r, 400));
       characterText = englishCharacter
         ? await translateGameField(
             step.id,
@@ -148,7 +164,6 @@ export async function prepareGamePackage(
             language,
           )
         : "";
-      // Tiny pause before the second call to stay under Gemini's burst limit
       await new Promise((r) => setTimeout(r, 400));
       anecdoteText = englishAnecdote
         ? await translateGameField(
@@ -161,6 +176,17 @@ export async function prepareGamePackage(
         : "";
     }
     const voiceId = voiceFor(step.ar_character_type, language);
+
+    if (riddleText?.trim() && !cachedSlots.has(`${step.step_order}:riddle`)) {
+      jobs.push({
+        stepOrder: step.step_order,
+        slot: "riddle",
+        text: riddleText,
+        voiceId: voiceFor("narrator", language),
+      });
+    } else if (cachedSlots.has(`${step.step_order}:riddle`)) {
+      audioSkipped++;
+    }
 
     if (characterText?.trim() && !cachedSlots.has(`${step.step_order}:character`)) {
       jobs.push({

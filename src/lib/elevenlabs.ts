@@ -133,7 +133,7 @@ export function buildAudioPath(
   gameId: string,
   language: string,
   stepOrder: number,
-  slot: "character" | "anecdote" | "epilogue",
+  slot: "character" | "anecdote" | "epilogue" | "riddle",
 ): string {
   return `${gameId}/${language}/step${stepOrder}_${slot}.mp3`;
 }

@@ -392,6 +392,7 @@ export async function GET(
 
       if (audioRows && audioRows.length > 0) {
         gameState.audioMap = {
+          riddle: audioRows.find((r) => r.slot === "riddle")?.public_url || null,
           character: audioRows.find((r) => r.slot === "character")?.public_url || null,
           anecdote: audioRows.find((r) => r.slot === "anecdote")?.public_url || null,
         };

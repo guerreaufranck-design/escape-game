@@ -60,6 +60,8 @@ export interface GameState {
    * customer picks their language on the merchant site.
    */
   audioMap: {
+    /** Riddle text — auto-narrated on step entry */
+    riddle: string | null;
     /** AR character dialogue voiced in the player's language */
     character: string | null;
     /** Step anecdote (historical fact after validation) */
