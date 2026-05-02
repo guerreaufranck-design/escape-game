@@ -43,50 +43,56 @@ export function useNarration(locale: string) {
     currentTextRef.current = "";
   }, []);
 
-  /** Play a pre-generated MP3 (e.g. ElevenLabs). Returns true on success. */
-  const playMp3 = useCallback(
-    (audioUrl: string, identifier: string) =>
-      new Promise<boolean>((resolve) => {
-        try {
-          const audio = new Audio(audioUrl);
-          audio.preload = "auto";
-          currentAudioRef.current = audio;
+  /**
+   * Play a pre-generated MP3 (e.g. ElevenLabs). Optimistic — assumes
+   * playback will succeed and updates the speaking state immediately.
+   * If the audio actually errors (true 404 / CORS), the error handler
+   * resets the state. We deliberately don't await play() because iOS
+   * Safari rejects play() on the FIRST user gesture sometimes (audio
+   * context still locked) even though the audio CAN play after — and
+   * falling back to Web Speech in that case produced exactly the bug
+   * the user just reported (Samantha robot voice on first tap).
+   */
+  const playMp3 = useCallback((audioUrl: string, identifier: string) => {
+    try {
+      const audio = new Audio(audioUrl);
+      audio.preload = "auto";
+      currentAudioRef.current = audio;
 
-          let resolved = false;
-          const settle = (value: boolean) => {
-            if (!resolved) {
-              resolved = true;
-              resolve(value);
-            }
-          };
+      // Optimistically mark as speaking so the UI updates instantly.
+      setSpeaking(true);
+      currentTextRef.current = identifier;
 
-          audio.addEventListener("playing", () => {
-            setSpeaking(true);
-            currentTextRef.current = identifier;
-            settle(true);
-          });
-          audio.addEventListener("ended", () => {
-            setSpeaking(false);
-            currentTextRef.current = "";
-            currentAudioRef.current = null;
-          });
-          audio.addEventListener("error", () => {
-            setSpeaking(false);
-            currentAudioRef.current = null;
-            settle(false);
-          });
+      audio.addEventListener("playing", () => {
+        // Already optimistic-set above; this just confirms.
+        setSpeaking(true);
+        currentTextRef.current = identifier;
+      });
+      audio.addEventListener("ended", () => {
+        setSpeaking(false);
+        currentTextRef.current = "";
+        currentAudioRef.current = null;
+      });
+      audio.addEventListener("error", () => {
+        setSpeaking(false);
+        currentTextRef.current = "";
+        currentAudioRef.current = null;
+      });
 
-          audio.play().catch(() => {
-            // play() may reject if user hasn't interacted yet (autoplay
-            // policy) or if the URL 404s. Either way, fall back to TTS.
-            settle(false);
-          });
-        } catch {
-          resolve(false);
-        }
-      }),
-    [],
-  );
+      audio.play().catch(() => {
+        // play() rejection (autoplay policy on first interaction) is a
+        // soft failure — the audio is loaded and will play on the next
+        // tap. Do NOT fall back to Web Speech: hearing Samantha when
+        // the customer paid for ElevenLabs is the WORST outcome. Just
+        // reset the speaking state so the user can tap again.
+        setSpeaking(false);
+        currentTextRef.current = "";
+      });
+    } catch {
+      setSpeaking(false);
+      currentTextRef.current = "";
+    }
+  }, []);
 
   /** Internal: speak via the browser's TTS engine. */
   const speakWithTts = useCallback(
@@ -127,7 +133,7 @@ export function useNarration(locale: string) {
   );
 
   const speak = useCallback(
-    async (text: string, options?: SpeakOptions) => {
+    (text: string, options?: SpeakOptions) => {
       if (!text) return;
 
       // Toggle off if same content is being read
@@ -139,14 +145,16 @@ export function useNarration(locale: string) {
       // Stop any current speech / audio
       stop();
 
-      // Try the pre-generated MP3 first if provided. If it fails (404,
-      // network, autoplay policy), fall back transparently to TTS so the
-      // player never gets silence.
+      // If an ElevenLabs MP3 URL is provided, play it. We do NOT fall
+      // back to Web Speech when the URL is present — falling back would
+      // mean the customer hears the robot voice they paid not to hear.
+      // The MP3 element handles its own errors silently.
       if (options?.audioUrl) {
-        const ok = await playMp3(options.audioUrl, text);
-        if (ok) return;
+        playMp3(options.audioUrl, text);
+        return;
       }
 
+      // No MP3 available — use Web Speech as the only narration option.
       speakWithTts(text);
     },
     [speaking, stop, playMp3, speakWithTts],
