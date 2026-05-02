@@ -113,13 +113,28 @@ function HomePageInner() {
   const [error, setError] = useState<string | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null]);
 
-  // Pre-fill code from URL ?code=XXXX-XXXX-XXXX
+  // Pre-fill code from URL ?code=XXXX-XXXX-XXXX and skip the language
+  // picker entirely when the player arrived from an email/Klook link.
+  // The locale was either chosen at purchase (?lang=xx) or recovered from
+  // localStorage/browser, so showing the picker is friction. They can
+  // still change language later from the in-game settings.
   useEffect(() => {
     const codeParam = searchParams.get("code");
     if (codeParam) {
       const codeParts = codeParam.toUpperCase().replace(/[^A-Z0-9-]/g, "").split("-").filter(p => p.length > 0);
       if (codeParts.length >= 3) {
         setParts([codeParts[0].slice(0, 4), codeParts[1].slice(0, 4), codeParts[2].slice(0, 4)]);
+      }
+      setLangChosen(true);
+    }
+    // Also skip the picker if a locale is already stored — repeat visitors
+    // shouldn't be asked again. Only true first-timers without any code see
+    // the picker.
+    if (typeof window !== "undefined") {
+      const urlLang = searchParams.get("lang");
+      const stored = window.localStorage.getItem("escape-game-locale");
+      if (urlLang || stored) {
+        setLangChosen(true);
       }
     }
   }, [searchParams]);
