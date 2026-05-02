@@ -16,6 +16,21 @@ export function useLocale(): [string, (l: string) => void] {
   const [locale, setLocaleState] = useState<string>(DEFAULT_LOCALE);
 
   useEffect(() => {
+    // Resolution order:
+    //   1. URL ?lang=xx  — set by the activation email when language was
+    //      chosen at purchase. Wins over localStorage so the player lands
+    //      directly in the correct locale even on a shared device.
+    //   2. localStorage  — sticky choice from a previous session
+    //   3. browser language fallback
+    if (typeof window !== "undefined") {
+      const urlLang = new URLSearchParams(window.location.search).get("lang");
+      if (urlLang && /^[a-z]{2}$/i.test(urlLang)) {
+        const normalized = urlLang.toLowerCase();
+        setLocaleState(normalized);
+        localStorage.setItem("escape-game-locale", normalized);
+        return;
+      }
+    }
     const stored = localStorage.getItem('escape-game-locale');
     if (stored) {
       setLocaleState(stored);

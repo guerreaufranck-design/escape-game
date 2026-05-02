@@ -135,23 +135,32 @@ export default function PlayPage() {
   const [narrationText, setNarrationText] = useState("");
   const [lastAutoNarrated, setLastAutoNarrated] = useState("");
   const [navigationHint, setNavigationHint] = useState<string | null>(null);
-  const handleSpeak = (text: string) => {
+  /**
+   * Speak `text`. If `audioUrl` is provided AND points to a pre-generated
+   * ElevenLabs MP3 in audio_cache, the hook plays the MP3 (immersive
+   * voice). Otherwise it falls back to Web Speech (browser TTS — robotic).
+   * Always pass an audioUrl when one is available from gameState.audioMap.
+   */
+  const handleSpeak = (text: string, audioUrl?: string | null) => {
     if (narration.speaking && narrationText === text) {
       narration.stop();
       setNarrationText("");
     } else {
       setNarrationText(text);
-      narration.speak(text);
+      narration.speak(text, audioUrl ? { audioUrl } : undefined);
     }
   };
-  const autoSpeak = useCallback((text: string) => {
-    if (!text || !narration.supported) return;
-    // Avoid re-reading the same text
-    if (text === lastAutoNarrated) return;
-    setLastAutoNarrated(text);
-    setNarrationText(text);
-    narration.speak(text);
-  }, [narration, lastAutoNarrated]);
+  const autoSpeak = useCallback(
+    (text: string, audioUrl?: string | null) => {
+      if (!text || !narration.supported) return;
+      // Avoid re-reading the same text
+      if (text === lastAutoNarrated) return;
+      setLastAutoNarrated(text);
+      setNarrationText(text);
+      narration.speak(text, audioUrl ? { audioUrl } : undefined);
+    },
+    [narration, lastAutoNarrated],
+  );
 
   // Lazy-load walking directions for current step
   useEffect(() => {
@@ -178,12 +187,12 @@ export default function PlayPage() {
     }
   }, [gameState?.currentStep, gameState?.currentRiddle?.text, showIntro, stepSuccess, skipAnswer, showFinalCode]);
 
-  // Auto-narrate anecdote when it appears
+  // Auto-narrate anecdote when it appears (uses ElevenLabs MP3 if available)
   useEffect(() => {
     if (anecdote?.text && stepSuccess) {
       const t = setTimeout(() => {
         setLastAutoNarrated(""); // Reset to allow anecdote after riddle
-        autoSpeak(anecdote.text);
+        autoSpeak(anecdote.text, gameState?.audioMap?.anecdote);
       }, 500);
       return () => clearTimeout(t);
     }
@@ -844,7 +853,7 @@ export default function PlayPage() {
                         text={anecdote.text}
                         speaking={narration.speaking}
                         currentText={narrationText}
-                        onSpeak={handleSpeak}
+                        onSpeak={(t) => handleSpeak(t, gameState.audioMap?.anecdote)}
                       />
                     )}
                   </div>
@@ -1519,6 +1528,7 @@ export default function PlayPage() {
           stepKey={gameState.currentStepId}
           onChestOpen={() => setParticleBurst((n) => n + 1)}
           character={gameState.arCharacter ?? null}
+          characterAudioUrl={gameState.audioMap?.character ?? null}
           hintsUsed={hints.length}
           hintsAvailable={gameState.hintsAvailable}
           hintLoading={hintLoading}

@@ -35,6 +35,12 @@ interface ARCameraOverlayProps {
   stepKey?: string | null;
   /** Optional animated character that talks to the player when locked on */
   character?: { type: string; dialogue: string } | null;
+  /**
+   * Pre-generated ElevenLabs MP3 URL for the character's dialogue, in
+   * the player's chosen language. Passed to ARCharacterSpeaker which
+   * plays it instead of Web Speech when available.
+   */
+  characterAudioUrl?: string | null;
   /** Number of hints already unlocked on this step (0 = none yet) */
   hintsUsed?: number;
   /** Total hints available on this step (typically 1 in the new flow) */
@@ -97,6 +103,7 @@ export function ARCameraOverlay({
   facadeTextIsAnswer = false,
   stepKey = null,
   character = null,
+  characterAudioUrl = null,
   hintsUsed = 0,
   hintsAvailable = 0,
   onRequestHint,
@@ -608,6 +615,7 @@ export function ARCameraOverlay({
           dialogue={character.dialogue}
           stepKey={stepKey}
           locale={locale}
+          audioUrl={characterAudioUrl}
         />
       )}
 

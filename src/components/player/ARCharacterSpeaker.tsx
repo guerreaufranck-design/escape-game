@@ -20,6 +20,13 @@ interface ARCharacterSpeakerProps {
   stepKey: string | null;
   /** Player's UI locale, used to pick the right TTS voice */
   locale?: string;
+  /**
+   * Pre-generated ElevenLabs MP3 URL for this character's dialogue, in
+   * the player's chosen language. When provided, plays the MP3 (immersive
+   * narrator voice) instead of the browser's Web Speech API. Null = falls
+   * back to Web Speech.
+   */
+  audioUrl?: string | null;
 }
 
 // Friendly display names + accent colour per archetype.
@@ -129,6 +136,7 @@ export function ARCharacterSpeaker({
   dialogue,
   stepKey,
   locale = "fr",
+  audioUrl = null,
 }: ARCharacterSpeakerProps) {
   const [dismissed, setDismissed] = useState(false);
   const [mounted, setMounted] = useState(false);
@@ -250,7 +258,11 @@ export function ARCharacterSpeaker({
 
           {supported && (
             <button
-              onClick={() => (speaking ? stop() : speak(dialogue))}
+              onClick={() =>
+                speaking
+                  ? stop()
+                  : speak(dialogue, audioUrl ? { audioUrl } : undefined)
+              }
               aria-label={speaking ? "Stop narration" : "Play narration"}
               className={`absolute right-1.5 top-9 rounded-full p-1 transition-colors ${
                 speaking

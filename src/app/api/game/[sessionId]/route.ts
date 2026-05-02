@@ -375,7 +375,28 @@ export async function GET(
       hintsAvailable,
       hintsUsed: session.total_hints_used,
       completedSteps,
+      audioMap: null,
     };
+
+    // Pre-generated narration MP3 URLs for the current step (ElevenLabs).
+    // If the customer chose their language at purchase, /api/external/
+    // generate-code already populated audio_cache. Otherwise nothing here
+    // and the player falls back to Web Speech.
+    if (gameState.currentStepId && session.status !== "completed") {
+      const { data: audioRows } = await supabase
+        .from("audio_cache")
+        .select("slot, public_url")
+        .eq("game_id", session.game_id)
+        .eq("language", locale)
+        .eq("step_order", session.current_step);
+
+      if (audioRows && audioRows.length > 0) {
+        gameState.audioMap = {
+          character: audioRows.find((r) => r.slot === "character")?.public_url || null,
+          anecdote: audioRows.find((r) => r.slot === "anecdote")?.public_url || null,
+        };
+      }
+    }
 
     return NextResponse.json(gameState);
   } catch {
