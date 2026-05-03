@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useTimer } from "@/hooks/useTimer";
@@ -131,6 +131,41 @@ export default function PlayPage() {
   const [view, setView] = useState<"riddle" | "navigation">("riddle");
   const [arOpen, setArOpen] = useState(false);
   const [particleBurst, setParticleBurst] = useState(0);
+
+  // Auto-open the AR camera once per virtual_ar step the moment the
+  // player physically enters the validation radius. The previous design
+  // hid AR behind a "Mode AR" button buried in a menu, so players who
+  // never tapped it stayed stuck reading the riddle text — there was no
+  // possible answer in the riddle, only in the AR overlay (Forest +
+  // Philippat in Tournus burned 1h15 each before skipping). The
+  // `autoOpenedArRef` latch makes this fire ONCE per step so the player
+  // can still close the AR voluntarily without it bouncing back open.
+  const autoOpenedArRef = useRef<string | null>(null);
+  useEffect(() => {
+    autoOpenedArRef.current = null;
+  }, [gameState?.currentStepId]);
+  useEffect(() => {
+    if (!gameState) return;
+    if (gameState.currentRiddle?.answerSource !== "virtual_ar") return;
+    if (distance === null) return;
+    if (distance > gameState.validationRadius) return;
+    if (arOpen) return;
+    if (!tutorialDone) return;
+    if (showIntro) return;
+    if (stepSuccess) return;
+    if (showFinalCode) return;
+    if (autoOpenedArRef.current === gameState.currentStepId) return;
+    autoOpenedArRef.current = gameState.currentStepId ?? "_";
+    setArOpen(true);
+  }, [
+    distance,
+    gameState,
+    arOpen,
+    tutorialDone,
+    showIntro,
+    stepSuccess,
+    showFinalCode,
+  ]);
   const [startingGame, setStartingGame] = useState(false);
   const [gpsTooFarDistance, setGpsTooFarDistance] = useState<number>(0);
   const narration = useNarration(locale);
@@ -1001,7 +1036,7 @@ export default function PlayPage() {
             {/* Step title */}
             {gameState.currentRiddle && (
               <>
-                <div className="text-center mb-8">
+                <div className="text-center mb-6">
                   <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 mb-4">
                     <MapPin className="h-6 w-6 text-emerald-400" />
                   </div>
@@ -1009,6 +1044,31 @@ export default function PlayPage() {
                     {gameState.currentRiddle.title}
                   </h2>
                 </div>
+
+                {/* AR-required banner. The riddle text on virtual_ar
+                    steps describes a story but never tells the player to
+                    open the camera — the answer materialises only in AR.
+                    Without this banner, players (Forest + Philippat in
+                    Tournus) read the riddle, search the real-world
+                    stones for an inscription that doesn't exist, and
+                    get stuck. The pulsing border + sparkle icon are
+                    intentional: this MUST be the first thing they see
+                    after the title. */}
+                {gameState.currentRiddle.answerSource === "virtual_ar" && (
+                  <div className="mb-6 rounded-xl border border-fuchsia-500/40 bg-gradient-to-br from-fuchsia-500/15 via-violet-500/10 to-transparent p-4 shadow-lg shadow-fuchsia-900/20 animate-pulse-slow">
+                    <div className="flex items-start gap-3">
+                      <Sparkles className="h-5 w-5 text-fuchsia-300 shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-xs font-bold uppercase tracking-wider text-fuchsia-300">
+                          {tt('play.arRequiredBadge', locale)}
+                        </p>
+                        <p className="mt-1 text-sm text-fuchsia-50/90 leading-relaxed">
+                          {tt('play.arRequiredHint', locale)}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 {/* Riddle text - immersive */}
                 <div className="relative mb-6">

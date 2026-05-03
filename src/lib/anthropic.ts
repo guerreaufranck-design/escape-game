@@ -198,37 +198,53 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 5. "answer_text": ONLY the short evocative answer. A year, a roman
    numeral, ONE word. NEVER a sentence. Copy from the location data.
 
-6. "hints": Array of EXACTLY 1 hint, in this STRICT JSON shape:
+6. "hints": Array of EXACTLY 3 hints, in this STRICT JSON shape:
      [
-       { "order": 1, "text": "the single helpful hint here" }
+       { "order": 1, "text": "atmospheric nudge" },
+       { "order": 2, "text": "where to look + tell them to open the AR camera" },
+       { "order": 3, "text": "shape of the answer (no spoiler)" }
      ]
    The "order" and "text" keys are MANDATORY. Do NOT return a string
    array like ["hint"] or a bare object — that breaks the pipeline.
-   The array MUST be length 1.
+   The array MUST be length 3, no more, no less.
 
-   Single-hint design — what to write:
-     The hint must combine TWO pieces of information so the player
-     can act on it without needing more hints:
-       (a) WHERE — the specific surface / spot the AR clue is on
-           (e.g. "above the main door", "on the metal plaque at eye
-           level on the south wall", "etched into the cobblestones
-           in front of the fountain")
-       (b) FORMAT — the SHAPE of the answer
-           (e.g. "a 4-digit year", "a single Latin word", "a small
-           roman numeral")
+   Each hint serves a distinct purpose — together they form a
+   ladder so a stuck player can climb without skipping the step:
 
-   Example (good):
-     "Scan the carved pediment above the main entrance — the answer
-     is a 4-digit year."
+   Hint 1 — ATMOSPHERIC NUDGE
+     Re-anchors the player in the riddle's world without giving away
+     the mechanism. Refers to a real visible element of the place
+     (a stone, a window, a colour) without saying what to do.
+     Example: "The stones themselves remember the founding century."
 
-   Example (bad — vague):
+   Hint 2 — OPEN THE CAMERA + WHERE TO LOOK
+     This is the CRITICAL one. The player likely doesn't know the
+     answer is hidden in AR. This hint MUST tell them to:
+       (a) open / point their camera at a SPECIFIC surface
+           ("aim your phone camera at the pediment above the main
+           door", "open the AR camera and slowly sweep the south
+           wall left to right")
+       (b) name the surface in plain words anyone can find
+     Without this hint, the player thinks the answer is hidden in the
+     real-world stones and never opens the camera. Game-over.
+
+   Hint 3 — SHAPE OF THE ANSWER
+     Tells what FORMAT the answer takes, never the literal value.
+     Example: "It's a Roman numeral followed by a single Latin word."
+
+   Example (good for hint 2):
+     "Open your phone's camera in the AR mode and aim it at the
+     carved pediment above the main entrance — the magical letters
+     will materialise on the stone."
+
+   Example (bad — too vague):
      "Look around the church."
 
    Example (bad — spoils the answer):
      "Scan the wall, the answer is 1532."
 
-   Hint is unlocked at a time penalty. Never reveal the literal
-   answer. Keep it under 200 characters.
+   Hints are unlocked at a small time penalty. Never reveal the
+   literal answer. Keep each hint under 200 characters.
 
 7. "anecdote": 2-3 fascinating, factually-true sentences about the
    place's history. The player's reward after solving. This is where

@@ -83,8 +83,12 @@ export async function POST(
       );
     }
 
-    // Progressive penalty: first 3 hints = base penalty (2min), extras = 10min each
-    const EXTRA_HINT_PENALTY = 600; // 10 minutes in seconds
+    // Progressive penalty: a hint within the per-game cheap allowance
+    // (`max_hints_per_step`) costs the game's base penalty; anything
+    // beyond is a small extra cost so the leaderboard stays meaningful
+    // without making players feel punished for asking. Soft enough that
+    // the player's emotional cost of asking is the real limit.
+    const EXTRA_HINT_PENALTY = 60; // 1 minute in seconds
     const penaltySeconds = hintIndex < game.max_hints_per_step
       ? game.hint_penalty_seconds
       : EXTRA_HINT_PENALTY;

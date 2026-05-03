@@ -3,7 +3,12 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { t, detectLocale } from "@/lib/i18n";
 import { calculateScore } from "@/lib/scoring";
 
-const SKIP_PENALTY_SECONDS = 2700; // 45 minutes
+// Skip is no longer a punishment — it's a safety net so a player who
+// can't crack a step still gets to learn the answer and continue the
+// adventure. Five minutes is enough to keep the leaderboard meaningful
+// (a player who skips every step still finishes well behind one who
+// solved them) without being a screen-of-shame.
+const SKIP_PENALTY_SECONDS = 300; // 5 minutes
 
 export async function POST(
   request: NextRequest,

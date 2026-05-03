@@ -196,14 +196,14 @@ export const ui: Translations = {
   // Tutorial slides (11 slides x title/text). The {duration} placeholder
   // in s1.text is replaced client-side with the game's estimated duration.
   'tutorial.s1.title': {
-    fr: 'Avant de partir', en: 'Before you head out', de: 'Bevor Sie loslegen', es: 'Antes de salir', it: 'Prima di partire',
+    fr: 'Lis bien ce qui suit', en: 'Read what follows carefully', de: 'Lies das Folgende sorgfaltig', es: 'Lee bien lo que sigue', it: 'Leggi attentamente quanto segue',
   },
   'tutorial.s1.text': {
-    fr: "Duree estimee : {duration}, entierement a pied en exterieur. Prevoyez de l'eau, des chaussures confortables et un telephone bien charge — la camera et le GPS vont tourner pendant tout le parcours. Vous avez 24 heures a partir de l'activation pour terminer votre aventure (pause dejeuner, retour le lendemain matin, tout est OK).",
-    en: 'Estimated duration: {duration}, entirely on foot outdoors. Bring water, comfortable shoes and a well-charged phone — camera and GPS run the whole way. You have 24 hours from activation to finish your adventure (lunch break, come back the next morning, all fine).',
-    de: 'Geschatzte Dauer: {duration}, komplett zu Fuss im Freien. Bringen Sie Wasser, bequeme Schuhe und ein gut geladenes Telefon mit — Kamera und GPS laufen die ganze Zeit. Sie haben 24 Stunden ab Aktivierung Zeit, um Ihr Abenteuer zu beenden (Mittagspause, am nachsten Morgen weitermachen, alles OK).',
-    es: 'Duracion estimada: {duration}, totalmente a pie al aire libre. Lleva agua, calzado comodo y un movil bien cargado — la camara y el GPS funcionan todo el rato. Tienes 24 horas desde la activacion para terminar tu aventura (pausa para comer, volver al dia siguiente, todo vale).',
-    it: "Durata stimata: {duration}, interamente a piedi all'aperto. Portate acqua, scarpe comode e uno smartphone ben carico — fotocamera e GPS lavorano per tutto il percorso. Avete 24 ore dall'attivazione per terminare l'avventura (pausa pranzo, ripresa il mattino dopo, tutto OK).",
+    fr: "5 ecrans, 30 secondes. C'est tout ce qu'il te faut pour comprendre comment jouer. Sans ces 5 ecrans, tu vas tourner en rond sur place sans savoir quoi faire. Personne n'a deja tout devine sans tutoriel. Prends le temps de les lire jusqu'au bout, vraiment.",
+    en: '5 screens, 30 seconds. That is all you need to understand how to play. Without these 5 screens, you will go in circles on-site with no clue what to do. No one has ever figured it out without the tutorial. Take the time to read them through, really.',
+    de: '5 Bildschirme, 30 Sekunden. Das ist alles, was du brauchst, um das Spiel zu verstehen. Ohne diese 5 Bildschirme drehst du dich vor Ort im Kreis, ohne zu wissen, was zu tun ist. Niemand hat es je ohne Tutorial herausgefunden. Nimm dir die Zeit, sie wirklich bis zum Ende zu lesen.',
+    es: '5 pantallas, 30 segundos. Es todo lo que necesitas para entender como jugar. Sin estas 5 pantallas, vas a dar vueltas en el sitio sin saber que hacer. Nadie lo ha adivinado nunca sin el tutorial. Toma el tiempo de leerlas hasta el final, de verdad.',
+    it: "5 schermate, 30 secondi. E tutto cio che ti serve per capire come si gioca. Senza queste 5 schermate, girerai a vuoto sul posto senza sapere cosa fare. Nessuno l'ha mai capito senza il tutorial. Prenditi il tempo di leggerle fino in fondo, davvero.",
   },
   'tutorial.s2.title': {
     fr: "Realite Augmentee : la regle d'or", en: 'Augmented Reality: the golden rule', de: 'Augmented Reality: die goldene Regel', es: 'Realidad Aumentada: la regla de oro', it: "Realta Aumentata: la regola d'oro",
@@ -236,14 +236,14 @@ export const ui: Translations = {
     it: 'Sulla mappa del gioco, un radar circonda la tua posizione e punta al prossimo luogo. Una distanza in metri viene mostrata e un anello colorato cambia mentre vi avvicinate (rosso lontano, verde vicino). Nessuna bussola da regolare: tutto e calcolato live dal vostro GPS.',
   },
   'tutorial.s5.title': {
-    fr: 'Le grand bouton violet', en: 'The big purple button', de: 'Der grosse lila Knopf', es: 'El gran boton morado', it: 'Il grande pulsante viola',
+    fr: 'Ouvre la camera', en: 'Open the camera', de: 'Offne die Kamera', es: 'Abre la camara', it: 'Apri la fotocamera',
   },
   'tutorial.s5.text': {
-    fr: "Une fois sur place, regardez en bas de votre ecran : le grand bouton violet \"{arButton}\" est votre seul outil. Tapez-le. La camera s'ouvre, vous etes dans le mode jeu. C'est ICI que les indices se reveleront — jamais dans le monde reel.",
-    en: "Once on site, look at the bottom of your screen: the big purple button \"{arButton}\" is your only tool. Tap it. The camera opens, you're in game mode. This is WHERE the clues reveal themselves — never in the real world.",
-    de: "Wenn Sie vor Ort sind, schauen Sie auf den unteren Bildschirmrand: Der grosse lila Knopf \"{arButton}\" ist Ihr einziges Werkzeug. Tippen Sie darauf. Die Kamera offnet sich, Sie sind im Spielmodus. HIER offenbaren sich die Hinweise — nie in der realen Welt.",
-    es: "Una vez en el lugar, mira la parte inferior de tu pantalla: el gran boton morado \"{arButton}\" es tu unica herramienta. Pulsalo. La camara se abre, estas en modo juego. AQUI se revelan las pistas — nunca en el mundo real.",
-    it: "Una volta sul posto, guardate il fondo dello schermo: il grande pulsante viola \"{arButton}\" e il vostro unico strumento. Toccatelo. La fotocamera si apre, siete in modalita gioco. E QUI che gli indizi si rivelano — mai nel mondo reale.",
+    fr: "Une fois arrive sur la zone, la camera de ton telephone s'ouvre automatiquement. Si elle ne s'ouvre pas, regarde en bas de l'ecran : le grand bouton violet \"{arButton}\" la lance. La premiere fois, ton telephone te demandera l'autorisation d'utiliser la camera : accepte-la, sinon le jeu ne peut pas demarrer.",
+    en: 'Once you reach the zone, your phone camera opens automatically. If it does not, look at the bottom of the screen: the big purple "{arButton}" button starts it. The first time, your phone will ask permission to use the camera — accept it, otherwise the game cannot run.',
+    de: 'Sobald du die Zone erreichst, offnet sich deine Handy-Kamera automatisch. Falls nicht, schaue unten auf den Bildschirm: Der grosse lila Knopf "{arButton}" startet sie. Beim ersten Mal fragt dein Handy nach Kameraerlaubnis — akzeptiere sie, sonst kann das Spiel nicht laufen.',
+    es: 'Una vez llegues a la zona, la camara de tu movil se abre automaticamente. Si no se abre, mira abajo de la pantalla: el gran boton morado "{arButton}" la inicia. La primera vez, tu movil te pedira permiso para usar la camara — acepta, si no el juego no puede arrancar.',
+    it: 'Una volta arrivato nella zona, la fotocamera del telefono si apre automaticamente. Se non si apre, guarda in basso allo schermo: il grande pulsante viola "{arButton}" la avvia. La prima volta il telefono chiedera il permesso di usare la fotocamera — accettalo, altrimenti il gioco non puo partire.',
   },
   'tutorial.s6.title': {
     fr: "Cherchez l'indice partout", en: 'Hunt the clue everywhere', de: 'Suchen Sie den Hinweis uberall', es: 'Busca la pista por todas partes', it: "Cercate l'indizio ovunque",
@@ -276,14 +276,14 @@ export const ui: Translations = {
     it: "Quando appaiono le lettere dorate, chiudete la fotocamera e digitate esattamente cio che avete visto nel taccuino (icona libro in alto a destra). Convalidate con il pulsante verde \"Convalida risposta\". Tutte le risposte si accumulano: alla fine digitate il codice completo per sbloccare vittoria ed epilogo narrativo.",
   },
   'tutorial.s9.title': {
-    fr: 'Coince ? Demandez un indice', en: 'Stuck? Ask for a hint', de: 'Festgefahren? Fordern Sie einen Hinweis an', es: 'Atascado? Pide una pista', it: 'Bloccati? Chiedete un indizio',
+    fr: 'Bloque ? Demande de l aide', en: 'Stuck? Ask for help', de: 'Festgefahren? Hol dir Hilfe', es: 'Atascado? Pide ayuda', it: 'Bloccato? Chiedi aiuto',
   },
   'tutorial.s9.text': {
-    fr: "Vous tournez en rond, l'indice ne se montre pas ? Demandez UN indice (icone ampoule). Il vous donnera la SURFACE precise a scanner et la FORME de la reponse (par exemple : \"scanne la facade au-dessus de la porte principale, c'est une date a 4 chiffres\"). Cout : un peu de temps sur votre score. Vraiment bloque ? Vous pouvez aussi passer l'etape (penalite plus lourde, mais la reponse vous est revelee).",
-    en: "Going in circles, the clue won't show? Ask for ONE hint (bulb icon). It will tell you the exact SURFACE to scan and the SHAPE of the answer (e.g. \"scan the facade above the main door, it's a 4-digit year\"). Cost: a small time penalty on your score. Really stuck? You can also skip the step (heavier penalty, but the answer is revealed).",
-    de: "Drehen sich im Kreis, der Hinweis erscheint nicht? Fordern Sie EINEN Hinweis an (Gluhbirnen-Symbol). Er nennt Ihnen die genaue FLACHE zum Scannen und die FORM der Antwort (z.B. \"scannen Sie die Fassade uber der Haupttur, es ist eine 4-stellige Jahreszahl\"). Kosten: eine kleine Zeitstrafe. Festgefahren? Sie konnen auch die Etappe uberspringen (schwerere Strafe, aber die Antwort wird enthullt).",
-    es: "Das vueltas, la pista no aparece? Pide UNA pista (icono bombilla). Te dira la SUPERFICIE exacta a escanear y la FORMA de la respuesta (ej: \"escanea la fachada sobre la puerta principal, es un ano de 4 cifras\"). Coste: una pequena penalizacion de tiempo. Muy atascado? Tambien puedes saltar la etapa (penalizacion mas fuerte, pero la respuesta se revela).",
-    it: "Girate a vuoto, l'indizio non appare? Chiedete UN indizio (icona lampadina). Vi dira la SUPERFICIE esatta da scansionare e la FORMA della risposta (es: \"scansiona la facciata sopra la porta principale, e un anno a 4 cifre\"). Costo: una piccola penalita di tempo. Davvero bloccati? Potete anche saltare la tappa (penalita piu pesante, ma la risposta viene rivelata).",
+    fr: "Pas de panique. A chaque etape tu as plusieurs indices a ta disposition (icone ampoule en bas) qui te disent ou regarder et ce que tu cherches. Et si vraiment tu n'y arrives pas, tu peux passer l'etape (icone fleche) — la reponse te sera revelee et tu continues l'aventure. Le but c'est de profiter, pas de te bloquer.",
+    en: "No panic. Each step has several hints at your disposal (bulb icon at the bottom) telling you where to look and what you're after. And if you truly cannot crack it, you can skip the step (arrow icon) — the answer is revealed and you continue the adventure. The point is enjoyment, not getting stuck.",
+    de: "Keine Panik. Bei jedem Schritt hast du mehrere Hinweise (Gluhbirnen-Symbol unten), die dir sagen, wo zu schauen und was zu suchen ist. Und wenn du wirklich nicht weiterkommst, kannst du die Etappe uberspringen (Pfeil-Symbol) — die Antwort wird enthullt und du setzt das Abenteuer fort. Es geht um Spass, nicht ums Festhangen.",
+    es: "Sin panico. En cada etapa tienes varias pistas a tu disposicion (icono bombilla abajo) que te dicen donde mirar y que buscar. Y si de verdad no lo consigues, puedes saltar la etapa (icono flecha) — la respuesta se revela y sigues con la aventura. El objetivo es disfrutar, no quedarse atascado.",
+    it: "Nessun panico. Ad ogni tappa hai piu indizi a disposizione (icona lampadina in basso) che ti dicono dove guardare e cosa cerchi. E se davvero non ce la fai, puoi saltare la tappa (icona freccia) — la risposta viene rivelata e continui l'avventura. Lo scopo e divertirsi, non rimanere bloccati.",
   },
   'tutorial.s10.title': {
     fr: 'Victoire, selfie et classement', en: 'Victory, selfie and leaderboard', de: 'Sieg, Selfie und Rangliste', es: 'Victoria, selfie y clasificacion', it: 'Vittoria, selfie e classifica',
@@ -888,6 +888,25 @@ export const ui: Translations = {
     de: 'Spiel verlassen? Hinweise und Fortschritt werden gespeichert, aber der Timer lauft weiter.',
     es: '¿Salir del juego? Tus pistas y progreso se guardan, pero el cronometro sigue.',
     it: 'Uscire dalla partita? I tuoi indizi e progressi sono salvati, ma il timer continua.',
+  },
+
+  // ── AR badge on the riddle view (shown above the riddle text on
+  //    every virtual_ar step, so the player knows from the start that
+  //    the answer is hidden in the AR camera and not in the surrounding
+  //    real-world stones).
+  'play.arRequiredBadge': {
+    fr: 'Realite augmentee',
+    en: 'Augmented reality',
+    de: 'Augmented Reality',
+    es: 'Realidad aumentada',
+    it: 'Realta aumentata',
+  },
+  'play.arRequiredHint': {
+    fr: "Sur place, ouvre la camera de ton telephone : la reponse apparaitra en surimpression sur la facade ou autour de toi.",
+    en: 'Once on site, open your phone camera: the answer will appear overlaid on the facade or around you.',
+    de: 'Sobald du vor Ort bist, offne die Handy-Kamera: die Antwort erscheint als Uberlagerung auf der Fassade oder um dich herum.',
+    es: 'Una vez en el lugar, abre la camara del movil: la respuesta aparecera superpuesta sobre la fachada o a tu alrededor.',
+    it: "Una volta sul posto, apri la fotocamera del telefono: la risposta apparira in sovrimpressione sulla facciata o intorno a te.",
   },
 
   // ── Generic confirm dialog buttons (used by ConfirmDialog) ───────────

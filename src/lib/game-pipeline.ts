@@ -440,7 +440,13 @@ async function insertGameIntoDatabase(
     difficulty: template.difficulty,
     estimated_duration_min: template.estimatedDurationMin,
     is_published: true, // Auto-published — generated games are ready to play
-    max_hints_per_step: 1,
+    // 3 cheap hints per step is the sweet spot: hint 1 = atmospheric
+    // nudge, hint 2 = where to look (e.g. "scan the facade above the
+    // main door"), hint 3 = the SHAPE of the answer ("a Latin word + a
+    // century in Roman numerals"). Without #2 and #3 the player has no
+    // way to guess they should open the AR camera, which is exactly
+    // what blocked Forest+Philippat in Tournus.
+    max_hints_per_step: 3,
     hint_penalty_seconds: 30,
     cover_image: template.coverImage || null,
     // Narrative epilogue (English only here — translated on demand like other fields)
@@ -485,21 +491,24 @@ async function insertGameIntoDatabase(
   // Insert steps
   const stepsToInsert = steps.map((step, index) => {
     const hints = normalizeHints(step.hints as unknown);
-    if (hints.length < 1) {
+    if (hints.length < 3) {
       // Hard fail rather than silently shipping a step the player can't
-      // get help on. We now ship a single hint per step (down from 3)
-      // for simplicity, but that one hint MUST be present and have
-      // text. A throw here surfaces the issue loudly in the alert
-      // email instead of breaking on the field.
+      // get unstuck on. AR-locked steps need the full 3-hint ladder
+      // (atmosphere → where to look → shape of the answer) — without it,
+      // a player whose AR doesn't render perfectly has no way forward.
+      // The throw surfaces in the pipeline failure email so we know to
+      // re-prompt Claude rather than ship a broken game.
       throw new Error(
-        `Step ${index + 1} has 0 valid hint — refusing to insert. Raw: ${JSON.stringify(step.hints).slice(0, 200)}`,
+        `Step ${index + 1} has only ${hints.length} hint(s), need >= 3. Raw: ${JSON.stringify(step.hints).slice(0, 200)}`,
       );
     }
 
-    // Trim hints to max_hints_per_step=1 (Claude often over-delivers
-    // 3 even though the prompt asks for 1; the UI only ever shows the
-    // first one, the rest is just disk waste).
-    const trimmedHints = hints.slice(0, 1);
+    // Keep up to 3 hints (Claude is asked for exactly 3). We used to
+    // trim to 1 to match a previous max_hints_per_step=1 default, which
+    // wasted the hints we'd already paid Claude to generate AND made
+    // AR-locked games unrecoverable when the player couldn't see the
+    // facade text.
+    const trimmedHints = hints.slice(0, 3);
 
     // CRITICAL: enforce ar_facade_text === answer_text in uppercase.
     // Claude has a strong creative bias toward decorating the facade
