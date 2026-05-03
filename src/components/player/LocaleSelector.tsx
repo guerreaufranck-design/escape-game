@@ -12,32 +12,57 @@ function getBrowserLocale(): string {
   return found ? lang : DEFAULT_LOCALE;
 }
 
+/**
+ * Resolve the player's locale on the very first render, so consumers
+ * (fetchGameState etc.) start with the right `lang` from the get-go.
+ *
+ * Resolution order:
+ *   1. URL ?lang=xx  — set by the activation email when language was
+ *      chosen at purchase. Wins over localStorage so the player lands
+ *      directly in the correct locale even on a shared device.
+ *   2. localStorage  — sticky choice from a previous session
+ *   3. browser language fallback
+ *
+ * Why a lazy initializer instead of a useEffect: with the previous
+ * useEffect-after-mount approach, the very first render had locale='fr'
+ * (the default), which kicked off a /api/game?lang=fr fetch. By the time
+ * useEffect ran and updated locale to e.g. 'es', a second fetch was
+ * spawned — but if the FR response landed AFTER the ES response, it
+ * silently overwrote the ES game data in the zustand store. The player
+ * would see Spanish UI strings (tt() reacted live to locale change) but
+ * a French gameTitle / gameDescription (stuck on whichever fetch resolved
+ * last). Initialising the state synchronously eliminates the duplicate
+ * fetch and the race entirely.
+ */
+function resolveInitialLocale(): string {
+  if (typeof window === "undefined") return DEFAULT_LOCALE;
+  const urlLang = new URLSearchParams(window.location.search).get("lang");
+  if (urlLang && /^[a-z]{2}$/i.test(urlLang)) {
+    return urlLang.toLowerCase();
+  }
+  const stored = localStorage.getItem('escape-game-locale');
+  if (stored) return stored;
+  return getBrowserLocale();
+}
+
 export function useLocale(): [string, (l: string) => void] {
-  const [locale, setLocaleState] = useState<string>(DEFAULT_LOCALE);
+  // Lazy init — runs once on the very first render. On the client this is
+  // the first paint; on the server it returns DEFAULT_LOCALE (the
+  // `'use client'` pages then re-resolve on hydration).
+  const [locale, setLocaleState] = useState<string>(resolveInitialLocale);
 
   useEffect(() => {
-    // Resolution order:
-    //   1. URL ?lang=xx  — set by the activation email when language was
-    //      chosen at purchase. Wins over localStorage so the player lands
-    //      directly in the correct locale even on a shared device.
-    //   2. localStorage  — sticky choice from a previous session
-    //   3. browser language fallback
-    if (typeof window !== "undefined") {
-      const urlLang = new URLSearchParams(window.location.search).get("lang");
-      if (urlLang && /^[a-z]{2}$/i.test(urlLang)) {
-        const normalized = urlLang.toLowerCase();
-        setLocaleState(normalized);
-        localStorage.setItem("escape-game-locale", normalized);
-        return;
-      }
+    // Sync the resolved locale back to localStorage so it sticks across
+    // sessions, and persist URL ?lang=xx wins so a shared device picks up
+    // the email-link language even after the URL gets cleaned.
+    if (typeof window === "undefined") return;
+    const urlLang = new URLSearchParams(window.location.search).get("lang");
+    if (urlLang && /^[a-z]{2}$/i.test(urlLang)) {
+      const normalized = urlLang.toLowerCase();
+      if (normalized !== locale) setLocaleState(normalized);
+      localStorage.setItem("escape-game-locale", normalized);
     }
-    const stored = localStorage.getItem('escape-game-locale');
-    if (stored) {
-      setLocaleState(stored);
-    } else {
-      setLocaleState(getBrowserLocale());
-    }
-  }, []);
+  }, [locale]);
 
   const setLocale = useCallback((l: string) => {
     setLocaleState(l);

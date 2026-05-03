@@ -19,25 +19,19 @@ const supabase = createClient(
 
 const GAME_ID = "b9192887-2d5e-4d5d-ae49-30094ce950ec";
 
-async function safeDelete(
-  table: string,
-  filter: (q: ReturnType<typeof supabase.from>) => unknown,
-  label: string,
-) {
-  const q = supabase.from(table).delete({ count: "exact" });
-  const final = filter(q) as ReturnType<typeof q.eq>;
-  const { error, count } = await final;
-  if (error) {
-    console.warn(`  ⚠ ${label}: ${error.message}`);
+type DeleteResult = { error: { message: string } | null; count: number | null };
+
+async function report(label: string, result: DeleteResult) {
+  if (result.error) {
+    console.warn(`  ⚠ ${label}: ${result.error.message}`);
   } else {
-    console.log(`  ✓ ${label}: ${count ?? 0} row(s) deleted`);
+    console.log(`  ✓ ${label}: ${result.count ?? 0} row(s) deleted`);
   }
 }
 
 async function main() {
   console.log(`Deleting game ${GAME_ID} (Los Cristianos)...`);
 
-  // 1. Find related IDs we'll cascade through.
   const { data: sessions } = await supabase
     .from("game_sessions")
     .select("id")
@@ -52,84 +46,81 @@ async function main() {
   const stepIds = (steps || []).map((s) => s.id);
   console.log(`  found ${stepIds.length} step(s)`);
 
-  // 2. Children of sessions
+  // Children of sessions
   for (const sid of sessionIds) {
-    await safeDelete(
-      "step_completions",
-      (q) => q.eq("session_id", sid),
+    await report(
       `step_completions for session ${sid.slice(0, 8)}`,
+      await supabase.from("step_completions").delete({ count: "exact" }).eq("session_id", sid),
     );
-    await safeDelete(
-      "hint_uses",
-      (q) => q.eq("session_id", sid),
+    await report(
       `hint_uses for session ${sid.slice(0, 8)}`,
+      await supabase.from("hint_uses").delete({ count: "exact" }).eq("session_id", sid),
     );
   }
   if (sessionIds.length) {
-    await safeDelete(
+    await report(
       "game_sessions",
-      (q) => q.eq("game_id", GAME_ID),
-      "game_sessions",
+      await supabase.from("game_sessions").delete({ count: "exact" }).eq("game_id", GAME_ID),
     );
   }
 
-  // 3. Children of steps
+  // Children of steps
   for (const stepId of stepIds) {
-    await safeDelete(
-      "step_photos",
-      (q) => q.eq("step_id", stepId),
+    await report(
       `step_photos for step ${stepId.slice(0, 8)}`,
+      await supabase.from("step_photos").delete({ count: "exact" }).eq("step_id", stepId),
     );
-    await safeDelete(
-      "step_feedback",
-      (q) => q.eq("step_id", stepId),
+    await report(
       `step_feedback for step ${stepId.slice(0, 8)}`,
+      await supabase.from("step_feedback").delete({ count: "exact" }).eq("step_id", stepId),
     );
   }
 
-  // 4. Translation cache — three families of source_ids:
-  //    a) gameId itself (game.title, game.description, game.epilogue_text)
+  // Translation cache — three families of source_ids:
+  //    a) gameId (game.title, game.description, game.epilogue_text)
   //    b) hint-<gameId>-<step>-<idx> (per-hint synthetic key)
   //    c) <stepId> (step.title, step.riddle_text, etc.)
   //    d) <stepId>-attraction-<idx> (per-attraction synthetic key)
-  await safeDelete(
-    "translations_cache",
-    (q) => q.eq("source_id", GAME_ID),
+  await report(
     "translations_cache (game-level)",
+    await supabase.from("translations_cache").delete({ count: "exact" }).eq("source_id", GAME_ID),
   );
-  await safeDelete(
-    "translations_cache",
-    (q) => q.like("source_id", `hint-${GAME_ID}-%`),
+  await report(
     "translations_cache (hints)",
+    await supabase.from("translations_cache").delete({ count: "exact" }).like("source_id", `hint-${GAME_ID}-%`),
   );
   if (stepIds.length) {
-    await safeDelete(
-      "translations_cache",
-      (q) => q.in("source_id", stepIds),
+    await report(
       "translations_cache (steps)",
+      await supabase.from("translations_cache").delete({ count: "exact" }).in("source_id", stepIds),
     );
-    // Attractions are keyed as `<stepId>-attraction-<idx>`. We can't
-    // express that with `.in()`, so loop per step.
     for (const stepId of stepIds) {
-      await safeDelete(
-        "translations_cache",
-        (q) => q.like("source_id", `${stepId}-attraction-%`),
+      await report(
         `translations_cache (attractions for step ${stepId.slice(0, 8)})`,
+        await supabase.from("translations_cache").delete({ count: "exact" }).like("source_id", `${stepId}-attraction-%`),
       );
     }
   }
 
-  // 5. Audio + codes
-  await safeDelete("audio_cache", (q) => q.eq("game_id", GAME_ID), "audio_cache");
-  await safeDelete(
+  // Audio + codes
+  await report(
+    "audio_cache",
+    await supabase.from("audio_cache").delete({ count: "exact" }).eq("game_id", GAME_ID),
+  );
+  await report(
     "activation_codes",
-    (q) => q.eq("game_id", GAME_ID),
-    "activation_codes",
+    await supabase.from("activation_codes").delete({ count: "exact" }).eq("game_id", GAME_ID),
   );
 
-  // 6. Steps and the game itself
-  await safeDelete("game_steps", (q) => q.eq("game_id", GAME_ID), "game_steps");
-  await safeDelete("games", (q) => q.eq("id", GAME_ID), "games");
+  // Steps and the game itself
+  await report(
+    "game_steps",
+    await supabase.from("game_steps").delete({ count: "exact" }).eq("game_id", GAME_ID),
+  );
+  await report(
+    "games",
+    await supabase.from("games").delete({ count: "exact" }).eq("id", GAME_ID),
+  );
 
   console.log("\n✅ Done. Los Cristianos is wiped — safe to regenerate.");
 }
