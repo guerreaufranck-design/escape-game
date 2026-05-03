@@ -79,6 +79,44 @@ export async function POST(
           final_score: finalScore,
         })
         .eq("id", sessionId);
+
+      // Notify OddballTrip that the game is finished, so the
+      // review-email cron sends the "rate your adventure" email 24h
+      // later. We only ping on the first transition to completed (this
+      // branch) so a player reloading the results page doesn't trigger
+      // duplicate calls — the OddballTrip endpoint is idempotent
+      // anyway, but no point hitting it every reload.
+      //
+      // Lookup activation_code via activation_code_id (game_sessions
+      // stores the FK, not the plain text code). Fire-and-forget : if
+      // the ping fails, the player still sees the results page; the
+      // worst that happens is no review email — better than the
+      // alternative (asking for an avis to someone who didn't finish).
+      try {
+        const { data: codeRow } = await supabase
+          .from("activation_codes")
+          .select("code")
+          .eq("id", session.activation_code_id)
+          .single();
+
+        const apiSecret = process.env.EXTERNAL_API_SECRET;
+        if (codeRow?.code && apiSecret) {
+          // Don't await — fire and forget so the player's results page
+          // isn't slowed down by a network call to oddballtrip.com.
+          fetch("https://www.oddballtrip.com/api/external/game-finished", {
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${apiSecret}`,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({ code: codeRow.code }),
+          }).catch((err) => {
+            console.warn("[complete] game-finished ping failed:", err);
+          });
+        }
+      } catch (err) {
+        console.warn("[complete] game-finished lookup failed:", err);
+      }
     }
 
     const { data: leaderboardEntry } = await supabase
