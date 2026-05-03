@@ -18,6 +18,7 @@
 
 import { useEffect, useState } from "react";
 import { BookOpen } from "lucide-react";
+import { tt } from "@/lib/translations";
 
 interface GameEpilogueProps {
   title: string;
@@ -25,6 +26,7 @@ interface GameEpilogueProps {
   imageUrl?: string | null;
   /** Optional intro line shown above the title, e.g. "✓ Code final trouvé !" */
   overline?: string;
+  locale?: string;
 }
 
 export function GameEpilogue({
@@ -32,6 +34,7 @@ export function GameEpilogue({
   text,
   imageUrl = null,
   overline,
+  locale = "fr",
 }: GameEpilogueProps) {
   // Split the text into paragraphs (on double newline, single newline fallback)
   const paragraphs = text
@@ -87,7 +90,7 @@ export function GameEpilogue({
         <div className="flex items-center justify-center gap-2 text-amber-400">
           <BookOpen className="h-5 w-5" />
           <span className="text-xs uppercase tracking-[0.25em]">
-            L&apos;Épilogue
+            {tt('epilogue.label', locale)}
           </span>
         </div>
 

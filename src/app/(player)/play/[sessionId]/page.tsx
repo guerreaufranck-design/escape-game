@@ -55,6 +55,7 @@ import { StepTransitionOverlay } from "@/components/player/StepTransitionOverlay
 import { useUITranslations } from "@/components/player/UITranslationsProvider";
 import { NarrationButton } from "@/components/player/NarrationButton";
 import { ReportError } from "@/components/player/ReportError";
+import { useConfirm } from "@/components/player/ConfirmDialog";
 import { useNarration } from "@/hooks/useNarration";
 import dynamic from "next/dynamic";
 
@@ -90,6 +91,7 @@ export default function PlayPage() {
   // Loads the dynamic UI pack for non-static locales (Asian langs etc.)
   // and forces a re-render when the freshly-translated strings land.
   useUITranslations(locale);
+  const confirm = useConfirm();
   const [validating, setValidating] = useState(false);
   const [hints, setHints] = useState<Hint[]>([]);
   const [hintLoading, setHintLoading] = useState(false);
@@ -303,18 +305,23 @@ export default function PlayPage() {
     } catch { /* ignore */ }
 
     const onPopState = () => {
-      const ok = window.confirm(
-        "Quitter la partie ? Tes indices et ta progression sont sauvegardes, mais le chrono continue.",
-      );
-      if (!ok) {
-        // Re-push to keep the player on the page.
-        try {
-          window.history.pushState({ inGame: true }, "");
-        } catch { /* ignore */ }
-      } else {
-        // Allow native back to take effect.
-        window.history.back();
-      }
+      // popstate is synchronous — the browser already moved us back one
+      // entry. Re-push immediately so the player stays put while we ask
+      // them, then handle the (async) answer.
+      try {
+        window.history.pushState({ inGame: true }, "");
+      } catch { /* ignore */ }
+      void confirm({
+        message: tt('play.exitConfirm', locale),
+        locale,
+        tone: "destructive",
+      }).then((ok) => {
+        if (ok) {
+          // Programmatically navigate back. Pop the sentinel state we
+          // just re-pushed, then go back one more to leave the page.
+          window.history.go(-1);
+        }
+      });
     };
 
     const onBeforeUnload = (e: BeforeUnloadEvent) => {
@@ -328,7 +335,11 @@ export default function PlayPage() {
       window.removeEventListener("popstate", onPopState);
       window.removeEventListener("beforeunload", onBeforeUnload);
     };
-  }, [gameState?.status]);
+    // confirm + locale are stable enough that we don't want to re-run
+    // this effect on every locale change — the listener captures the
+    // latest by closure refresh on next render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gameState?.status, locale]);
 
   useEffect(() => {
     if (gameState?.startedAt) {
@@ -1105,11 +1116,13 @@ export default function PlayPage() {
                 <button
                   className="inline-flex items-center gap-1.5 text-xs text-yellow-500 hover:text-yellow-400 disabled:opacity-50"
                   disabled={hintLoading || hints.length >= gameState.hintsAvailable}
-                  onClick={() => {
+                  onClick={async () => {
                     const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
-                    if (confirm(tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty))) {
-                      requestHint(hints.length);
-                    }
+                    const ok = await confirm({
+                      message: tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty),
+                      locale,
+                    });
+                    if (ok) requestHint(hints.length);
                   }}
                 >
                   {hintLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lightbulb className="h-4 w-4" />}
@@ -1118,10 +1131,13 @@ export default function PlayPage() {
                 <button
                   className="inline-flex items-center gap-1.5 text-xs text-orange-400 hover:text-orange-300 disabled:opacity-50"
                   disabled={skipping}
-                  onClick={() => {
-                    if (confirm(tt('play.skipConfirm', locale))) {
-                      skipStep();
-                    }
+                  onClick={async () => {
+                    const ok = await confirm({
+                      message: tt('play.skipConfirm', locale),
+                      locale,
+                      tone: "destructive",
+                    });
+                    if (ok) skipStep();
                   }}
                 >
                   {skipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <SkipForward className="h-4 w-4" />}
@@ -1295,9 +1311,13 @@ export default function PlayPage() {
               {/* Hint */}
               <button
                 disabled={hintLoading || hints.length >= gameState.hintsAvailable}
-                onClick={() => {
+                onClick={async () => {
                   const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
-                  if (confirm(tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty))) {
+                  const ok = await confirm({
+                    message: tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty),
+                    locale,
+                  });
+                  if (ok) {
                     setShowActionMenu(false);
                     requestHint(hints.length);
                   }
@@ -1322,8 +1342,13 @@ export default function PlayPage() {
               {/* Skip step */}
               <button
                 disabled={skipping}
-                onClick={() => {
-                  if (confirm(tt('play.skipConfirm', locale))) {
+                onClick={async () => {
+                  const ok = await confirm({
+                    message: tt('play.skipConfirm', locale),
+                    locale,
+                    tone: "destructive",
+                  });
+                  if (ok) {
                     setShowActionMenu(false);
                     skipStep();
                   }
@@ -1495,7 +1520,7 @@ export default function PlayPage() {
                         setCodeResult({ valid: data.valid, message: data.message });
                         if (data.valid) setParticleBurst((n) => n + 1);
                       } catch {
-                        setCodeResult({ valid: false, message: "Erreur de verification" });
+                        setCodeResult({ valid: false, message: tt('play.verifyError', locale) });
                       } finally {
                         setValidatingCode(false);
                       }
@@ -1506,7 +1531,7 @@ export default function PlayPage() {
                     ) : (
                       <Send className="h-4 w-4 mr-2" />
                     )}
-                    Verifier
+                    {tt('play.verify', locale)}
                   </Button>
                 </div>
 
@@ -1520,11 +1545,7 @@ export default function PlayPage() {
                       router.push(`/results/${sessionId}?revealed=1`);
                     }}
                   >
-                    {locale === "en" ? "Reveal the story and the truth" :
-                     locale === "es" ? "Revelar la historia y la verdad" :
-                     locale === "de" ? "Die Geschichte und Wahrheit enthüllen" :
-                     locale === "it" ? "Rivelare la storia e la verità" :
-                     "Découvrir l'histoire et la vérité"}
+                    {tt('play.revealStory', locale)}
                   </Button>
                 )}
               </>
@@ -1576,8 +1597,13 @@ export default function PlayPage() {
             void validateStep(knownAnswer);
           }}
           skipLoading={skipping}
-          onSkipStep={() => {
-            if (confirm(tt('play.skipConfirm', locale))) {
+          onSkipStep={async () => {
+            const ok = await confirm({
+              message: tt('play.skipConfirm', locale),
+              locale,
+              tone: "destructive",
+            });
+            if (ok) {
               setArOpen(false);
               skipStep();
             }

@@ -6,7 +6,13 @@ import { translateStepFields, translateGameField } from "@/lib/translate-service
 import type { GameState, CompletedStepInfo, Hint } from "@/types/game";
 
 /**
- * Resolve a multilingual field: extract English base text from JSONB or plain string.
+ * Extract the source-language base text from a JSONB or plain string.
+ *
+ * Historically named getEnglishBase since modern game content is generated
+ * by Claude in English, but the translator no longer assumes English —
+ * `translateGameField` and `translateStepFields` detect French source
+ * automatically (see lib/lang-detect.ts) so legacy games stored as plain
+ * French translate cleanly too.
  */
 function getEnglishBase(value: unknown): string {
   if (!value) return "";

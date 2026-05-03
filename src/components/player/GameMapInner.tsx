@@ -139,12 +139,14 @@ function RecenterButton({
   targetLat,
   targetLon,
   defaultZoom,
+  locale = "fr",
 }: {
   playerLat: number | null;
   playerLon: number | null;
   targetLat: number | null;
   targetLon: number | null;
   defaultZoom: number;
+  locale?: string;
 }) {
   const map = useMap();
 
@@ -162,7 +164,7 @@ function RecenterButton({
         <button
           onClick={handleRecenter}
           className="flex items-center justify-center w-9 h-9 bg-zinc-900/90 backdrop-blur border border-zinc-700 rounded-lg shadow-lg text-emerald-400 hover:bg-zinc-800 hover:text-emerald-300 transition-colors"
-          title="Recentrer la carte"
+          title={tt('map.recenter', locale)}
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="3" />
@@ -238,6 +240,7 @@ export default function GameMapInner({
           targetLat={targetLat}
           targetLon={targetLon}
           defaultZoom={zoom}
+          locale={locale}
         />
 
         {/* DIVAN: live line from player to target with distance badge */}

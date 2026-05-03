@@ -19,7 +19,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
-import { translateGameField, translateUIStrings } from "@/lib/translate-service";
+import { translateGameField, translateStepFields, translateUIStrings } from "@/lib/translate-service";
 import { generateAndStoreAudio, buildAudioPath } from "@/lib/elevenlabs";
 import { voiceFor } from "@/lib/voice-map";
 import { t, isStaticLocale } from "@/lib/i18n";
@@ -62,10 +62,14 @@ export async function prepareGamePackage(
 
   const supabase = createAdminClient();
 
-  // 1. Fetch game (epilogue + check existence)
+  // 1. Fetch game (title + description + epilogue + check existence).
+  // Title and description are shown on the briefing screen, so they
+  // must be in the player's language at activation — pre-translating
+  // them here means /api/game hits a warm cache instead of a 5-15s
+  // Gemini round-trip.
   const { data: game, error: gameErr } = await supabase
     .from("games")
-    .select("id, epilogue_text")
+    .select("id, title, description, epilogue_text")
     .eq("id", gameId)
     .single();
 
@@ -101,10 +105,52 @@ export async function prepareGamePackage(
     }
   }
 
-  // 2. Fetch all steps with the voiceable fields
+  // 1b. Translate game-level fields (title + description) so the
+  // briefing screen renders straight from cache.
+  if (language !== "en") {
+    const englishGameTitle = t(game.title, "en");
+    const englishGameDescription = t(game.description, "en");
+    if (englishGameTitle) {
+      try {
+        await translateGameField(
+          game.id,
+          "games",
+          "title",
+          englishGameTitle,
+          language,
+        );
+      } catch (err) {
+        console.warn(
+          `[game-package] game.title translation failed for ${language}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    if (englishGameDescription) {
+      try {
+        await translateGameField(
+          game.id,
+          "games",
+          "description",
+          englishGameDescription,
+          language,
+        );
+      } catch (err) {
+        console.warn(
+          `[game-package] game.description translation failed for ${language}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+
+  // 2. Fetch all steps with every translatable field. We pre-translate
+  // ALL of them (riddle, anecdote, character dialogue, treasure reward,
+  // hints, attractions) so the player API only ever reads from cache —
+  // no inline Gemini calls during the playthrough.
   const { data: steps, error: stepsErr } = await supabase
     .from("game_steps")
-    .select("id, step_order, title, riddle_text, anecdote, ar_character_dialogue, ar_character_type")
+    .select("id, step_order, title, riddle_text, anecdote, ar_character_dialogue, ar_character_type, ar_treasure_reward, hints, route_attractions")
     .eq("game_id", gameId)
     .order("step_order");
 
@@ -200,6 +246,83 @@ export async function prepareGamePackage(
           language,
         )
       : "";
+
+    // Pre-translate every remaining display field so the in-game APIs
+    // never need to call Gemini at runtime. Same pattern as above:
+    // skip when targetLang === "en" (source) and pace between calls.
+    if (language !== "en") {
+      // ar_treasure_reward — shown when the player opens the AR chest.
+      const englishTreasure = t(step.ar_treasure_reward, "en");
+      if (englishTreasure) {
+        await new Promise((r) => setTimeout(r, 400));
+        try {
+          await translateGameField(
+            step.id,
+            "game_steps",
+            "ar_treasure_reward",
+            englishTreasure,
+            language,
+          );
+        } catch (err) {
+          console.warn(
+            `[game-package] step ${step.step_order} ar_treasure_reward translation failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+
+      // hints — JSONB array. Translate each entry's text under the same
+      // synthetic cache key the player API uses (`hint-<gameId>-<stepNum>-<idx>`).
+      const rawHints = Array.isArray(step.hints) ? step.hints : [];
+      for (let hintIdx = 0; hintIdx < rawHints.length; hintIdx++) {
+        const hint = rawHints[hintIdx] as { text?: unknown } | null;
+        if (!hint || hint.text === undefined || hint.text === null) continue;
+        const englishHint = t(hint.text, "en");
+        if (!englishHint) continue;
+        await new Promise((r) => setTimeout(r, 400));
+        try {
+          await translateGameField(
+            `hint-${gameId}-${step.step_order}-${hintIdx}`,
+            "game_steps",
+            "hint_text",
+            englishHint,
+            language,
+          );
+        } catch (err) {
+          console.warn(
+            `[game-package] step ${step.step_order} hint ${hintIdx} translation failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+
+      // route_attractions — JSONB array of {name, fact}. Translated under
+      // the synthetic cache key `<stepId>-attraction-<idx>` via the
+      // batch helper (one Gemini call per attraction covering both fields).
+      const rawAttractions = Array.isArray(step.route_attractions)
+        ? (step.route_attractions as Array<{ name?: unknown; fact?: unknown }>)
+        : [];
+      for (let attrIdx = 0; attrIdx < rawAttractions.length; attrIdx++) {
+        const attr = rawAttractions[attrIdx];
+        const enFields: Record<string, string> = {};
+        const enName = t(attr?.name, "en");
+        const enFact = t(attr?.fact, "en");
+        if (enName) enFields.name = enName;
+        if (enFact) enFields.fact = enFact;
+        if (Object.keys(enFields).length === 0) continue;
+        await new Promise((r) => setTimeout(r, 400));
+        try {
+          await translateStepFields(
+            `${step.id}-attraction-${attrIdx}`,
+            enFields,
+            language,
+          );
+        } catch (err) {
+          console.warn(
+            `[game-package] step ${step.step_order} attraction ${attrIdx} translation failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+    }
+
     const voiceId = voiceFor(step.ar_character_type, language);
 
     if (riddleText?.trim() && !cachedSlots.has(`${step.step_order}:riddle`)) {

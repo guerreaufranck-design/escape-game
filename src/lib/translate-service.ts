@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { translateText, getGeminiModel } from "@/lib/gemini";
 import { getLanguageName } from "@/lib/i18n";
+import { detectSourceLanguage } from "@/lib/lang-detect";
 
 // Hard upper bound per single Gemini call. Short fields (riddle, hint)
 // finish in < 4s; long-form fields (epilogue: 4-6 paragraphs) routinely
@@ -86,9 +87,22 @@ export async function translateGameField(
     return cached.translated_text;
   }
 
+  // If the source text is actually French (legacy games stored as plain
+  // French), tell Gemini that — otherwise the "Translate from English to
+  // Japanese" prompt confuses it and it sometimes returns the French
+  // unchanged. The detector returns "en" by default, so this is a no-op
+  // for the modern English-source pipeline.
+  const detectedSource = detectSourceLanguage(englishText);
+
+  // If the source already matches the target, return as-is — translating
+  // French→French is wasteful and risks a no-op cache write.
+  if (detectedSource === targetLang) {
+    return englishText;
+  }
+
   // Cache miss — call Gemini with bounded timeout + 1 retry, then cache.
   const translated = await translateWithRetry(
-    () => translateText(englishText, targetLang),
+    () => translateText(englishText, targetLang, detectedSource),
     `translateGameField:${sourceField}`,
   );
 
@@ -168,6 +182,15 @@ export async function translateStepFields(
   // entire steps to be served in EN when one tricky field broke the
   // batch parse, which is exactly the bug the user just reported.
   const langName = getLanguageName(targetLang);
+  // Detect the source language across all fields. If any field looks
+  // French, treat the whole batch as French → makes the prompt accurate
+  // for legacy games stored in plain French.
+  const detectedSourceLang = Object.values(toTranslate).some(
+    (txt) => detectSourceLanguage(txt) === "fr",
+  )
+    ? "fr"
+    : "en";
+  const sourceLangName = getLanguageName(detectedSourceLang);
 
   let batchSucceeded = false;
   try {
@@ -179,7 +202,7 @@ export async function translateStepFields(
             role: "user",
             parts: [
               {
-                text: `You are a professional translator. Translate ALL values in the following JSON object from English to ${langName}. Keep the keys exactly as they are. Return ONLY a valid JSON object, nothing else.\n\n${JSON.stringify(toTranslate, null, 2)}`,
+                text: `You are a professional translator. Translate ALL values in the following JSON object from ${sourceLangName} to ${langName}. Keep the keys exactly as they are. Return ONLY a valid JSON object, nothing else.\n\n${JSON.stringify(toTranslate, null, 2)}`,
               },
             ],
           },
@@ -245,8 +268,9 @@ export async function translateStepFields(
       );
       const perFieldResults = await Promise.allSettled(
         missingFields.map(async ([field, en]) => {
+          const detectedFieldLang = detectSourceLanguage(en);
           const t = await translateWithRetry(
-            () => translateText(en, targetLang),
+            () => translateText(en, targetLang, detectedFieldLang),
             `translateStepFields:fallback:${stepId}:${field}`,
           );
           return { field, text: t };

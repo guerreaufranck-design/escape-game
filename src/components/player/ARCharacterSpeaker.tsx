@@ -8,6 +8,7 @@ import {
   getSpriteUrl,
   pickFallbackGuide,
 } from "@/lib/ar-sprites";
+import { tt } from "@/lib/translations";
 
 interface ARCharacterSpeakerProps {
   /** True when the player is locked on target (close + aligned) */
@@ -29,68 +30,70 @@ interface ARCharacterSpeakerProps {
   audioUrl?: string | null;
 }
 
-// Friendly display names + accent colour per archetype.
+// Per-archetype visual style. Display names live in translations.ts under
+// `character.*` keys so every locale gets a proper translation; we only
+// store accent + aura here.
 const CHARACTER_META: Record<
   string,
-  { name: string; accent: string; aura: string }
+  { nameKey: string; accent: string; aura: string }
 > = {
   knight: {
-    name: "Le Chevalier",
+    nameKey: 'character.knight',
     accent: "border-slate-300",
     aura: "from-slate-400/40 via-slate-500/10 to-transparent",
   },
   witch: {
-    name: "La Sorcière",
+    nameKey: 'character.witch',
     accent: "border-violet-400",
     aura: "from-violet-500/40 via-purple-500/15 to-transparent",
   },
   monk: {
-    name: "Le Moine",
+    nameKey: 'character.monk',
     accent: "border-amber-400",
     aura: "from-amber-500/40 via-orange-500/15 to-transparent",
   },
   sailor: {
-    name: "Le Marin",
+    nameKey: 'character.sailor',
     accent: "border-sky-300",
     aura: "from-sky-500/40 via-cyan-500/15 to-transparent",
   },
   detective: {
-    name: "Le Détective",
+    nameKey: 'character.detective',
     accent: "border-zinc-300",
     aura: "from-zinc-400/40 via-zinc-500/10 to-transparent",
   },
   ghost: {
-    name: "Le Fantôme",
+    nameKey: 'character.ghost',
     accent: "border-slate-200",
     aura: "from-cyan-300/45 via-blue-400/15 to-transparent",
   },
   princess: {
-    name: "La Princesse",
+    nameKey: 'character.princess',
     accent: "border-pink-300",
     aura: "from-pink-400/40 via-fuchsia-400/15 to-transparent",
   },
   peasant: {
-    name: "Le Villageois",
+    nameKey: 'character.peasant',
     accent: "border-amber-200",
     aura: "from-amber-600/35 via-yellow-700/15 to-transparent",
   },
   soldier: {
-    name: "Le Soldat",
+    nameKey: 'character.soldier',
     accent: "border-emerald-300",
     aura: "from-green-700/40 via-olive-700/15 to-transparent",
   },
   guide_male: {
-    name: "Le Guide",
+    nameKey: 'character.guideMale',
     accent: "border-indigo-300",
     aura: "from-indigo-500/40 via-blue-500/15 to-transparent",
   },
   guide_female: {
-    name: "La Guide",
+    nameKey: 'character.guideFemale',
     accent: "border-rose-300",
     aura: "from-rose-500/40 via-pink-500/15 to-transparent",
   },
   default: {
-    name: "Le Guide",
+    nameKey: 'character.guideMale',
     accent: "border-indigo-300",
     aura: "from-indigo-500/40 via-blue-500/15 to-transparent",
   },
@@ -170,6 +173,7 @@ export function ARCharacterSpeaker({
   const { type, meta } = resolveCharacter(characterType, stepKey);
   const pose = speaking ? "talking" : "idle";
   const spriteUrl = getSpriteUrl(type, pose);
+  const characterName = tt(meta.nameKey, locale);
 
   return (
     <>
@@ -207,7 +211,7 @@ export function ARCharacterSpeaker({
             {!imageError ? (
               <img
                 src={spriteUrl}
-                alt={meta.name}
+                alt={characterName}
                 className="h-full w-full object-contain object-bottom select-none"
                 style={{
                   filter:
@@ -230,7 +234,7 @@ export function ARCharacterSpeaker({
           <span
             className={`absolute bottom-2 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full border bg-slate-950/95 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-amber-100 shadow-lg ${meta.accent}`}
           >
-            {meta.name}
+            {characterName}
           </span>
         </div>
 
@@ -250,7 +254,7 @@ export function ARCharacterSpeaker({
               setDismissed(true);
               setMounted(false);
             }}
-            aria-label="Dismiss"
+            aria-label={tt('ar.dismissCharacter', locale)}
             className="absolute right-1.5 top-1.5 rounded-full p-1 text-slate-400 hover:bg-slate-800 hover:text-white"
           >
             <X className="h-4 w-4" />
@@ -263,7 +267,7 @@ export function ARCharacterSpeaker({
                   ? stop()
                   : speak(dialogue, audioUrl ? { audioUrl } : undefined)
               }
-              aria-label={speaking ? "Stop narration" : "Play narration"}
+              aria-label={speaking ? tt('ar.stopNarration', locale) : tt('ar.playNarration', locale)}
               className={`absolute right-1.5 top-9 rounded-full p-1 transition-colors ${
                 speaking
                   ? "bg-amber-500/30 text-amber-200 animate-pulse"

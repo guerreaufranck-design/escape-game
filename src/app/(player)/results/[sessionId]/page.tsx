@@ -25,6 +25,7 @@ import { ReportError } from "@/components/player/ReportError";
 import { SelfieARScreen } from "@/components/player/SelfieARScreen";
 import { GameEpilogue } from "@/components/player/GameEpilogue";
 import { TruthReveal } from "@/components/player/TruthReveal";
+import { tt } from "@/lib/translations";
 import type { GameResults } from "@/types/game";
 
 export default function ResultsPage() {
@@ -71,7 +72,7 @@ export default function ResultsPage() {
             setResults({
               sessionId,
               gameTitle: data.gameTitle,
-              playerName: data.playerName || "Joueur",
+              playerName: data.playerName || tt('results.defaultPlayerName', locale),
               teamName: data.teamName || null,
               totalTimeSeconds: data.totalTimeSeconds || 0,
               totalHintsUsed: data.totalHintsUsed || 0,
@@ -88,7 +89,7 @@ export default function ResultsPage() {
           // ignore
         }
         setError(
-          err instanceof Error ? err.message : "Impossible de charger les resultats"
+          err instanceof Error ? err.message : tt('results.loadError', locale)
         );
       } finally {
         setLoading(false);
@@ -100,12 +101,15 @@ export default function ResultsPage() {
 
   const handleShare = async () => {
     if (!results) return;
-    const text = `J'ai termine "${results.gameTitle}" avec un score de ${formatScore(results.finalScore)} points! (${formatTime(results.totalTimeSeconds)})`;
+    const text = tt('results.shareText', locale)
+      .replace('{title}', results.gameTitle)
+      .replace('{score}', formatScore(results.finalScore))
+      .replace('{time}', formatTime(results.totalTimeSeconds));
 
     if (navigator.share) {
       try {
         await navigator.share({
-          title: "Escape Game Outdoor",
+          title: tt('results.shareTitle', locale),
           text,
         });
       } catch {
@@ -129,9 +133,9 @@ export default function ResultsPage() {
       <div className="min-h-screen flex items-center justify-center bg-slate-950 p-4">
         <Card className="bg-slate-900 border-red-500/30 max-w-md w-full">
           <CardContent className="pt-6 text-center">
-            <p className="text-red-400 mb-4">{error || "Resultats indisponibles"}</p>
+            <p className="text-red-400 mb-4">{error || tt('results.unavailable', locale)}</p>
             <Button onClick={() => router.push("/")} variant="outline">
-              Retour a l&apos;accueil
+              {tt('results.backHome', locale)}
             </Button>
           </CardContent>
         </Card>
@@ -161,7 +165,7 @@ export default function ResultsPage() {
             <Medal className="h-20 w-20 mx-auto mb-4 text-emerald-400" />
           )}
 
-          <h1 className="text-3xl font-bold mb-2">Felicitations!</h1>
+          <h1 className="text-3xl font-bold mb-2">{tt('results.congrats', locale)}</h1>
           <p className="text-slate-400 mb-1">{results.gameTitle}</p>
           <p className="text-emerald-400 font-semibold">
             {results.playerName}
@@ -189,19 +193,8 @@ export default function ResultsPage() {
           <GameEpilogue
             title={results.epilogue.title}
             text={results.epilogue.text}
-            overline={
-              revealed
-                ? undefined
-                : locale === "en"
-                  ? "✓ Final code unlocked"
-                  : locale === "es"
-                    ? "✓ Código final descifrado"
-                    : locale === "de"
-                      ? "✓ Code geknackt"
-                      : locale === "it"
-                        ? "✓ Codice finale svelato"
-                        : "✓ Code final trouvé"
-            }
+            overline={revealed ? undefined : `✓ ${tt('epilogue.codeUnlocked', locale)}`}
+            locale={locale}
           />
         )}
 
@@ -209,12 +202,12 @@ export default function ResultsPage() {
         <Card className="bg-slate-900/80 border-emerald-500/30 overflow-hidden">
           <div className="bg-gradient-to-r from-emerald-500/10 to-transparent p-6 text-center">
             <p className="text-sm text-slate-400 uppercase tracking-wider mb-1">
-              Score final
+              {tt('results.scoreFinal', locale)}
             </p>
             <p className="text-5xl font-bold text-emerald-400 font-mono">
               {formatScore(results.finalScore)}
             </p>
-            <p className="text-sm text-slate-500 mt-1">points</p>
+            <p className="text-sm text-slate-500 mt-1">{tt('results.points', locale)}</p>
           </div>
         </Card>
 
@@ -226,7 +219,7 @@ export default function ResultsPage() {
               <p className="text-lg font-bold font-mono">
                 {formatTime(results.totalTimeSeconds)}
               </p>
-              <p className="text-xs text-slate-500">Temps total</p>
+              <p className="text-xs text-slate-500">{tt('results.timeTotal', locale)}</p>
             </CardContent>
           </Card>
 
@@ -234,7 +227,7 @@ export default function ResultsPage() {
             <CardContent className="py-4 text-center">
               <Lightbulb className="h-5 w-5 text-yellow-400 mx-auto mb-1" />
               <p className="text-lg font-bold">{results.totalHintsUsed}</p>
-              <p className="text-xs text-slate-500">Indices</p>
+              <p className="text-xs text-slate-500">{tt('results.hints', locale)}</p>
             </CardContent>
           </Card>
 
@@ -247,7 +240,7 @@ export default function ResultsPage() {
                   /{results.totalPlayers}
                 </span>
               </p>
-              <p className="text-xs text-slate-500">Classement</p>
+              <p className="text-xs text-slate-500">{tt('results.rank', locale)}</p>
             </CardContent>
           </Card>
         </div>
@@ -255,14 +248,14 @@ export default function ResultsPage() {
         {/* Penalty */}
         {results.totalPenaltySeconds > 0 && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-2 text-sm text-red-400 text-center">
-            Penalite indices: +{formatTime(results.totalPenaltySeconds)}
+            {tt('results.hintsPenalty', locale)}: +{formatTime(results.totalPenaltySeconds)}
           </div>
         )}
 
         {/* Step breakdown with corrections */}
         <Card className="bg-slate-900/80 border-slate-800">
           <CardHeader>
-            <CardTitle className="text-base">Correction etape par etape</CardTitle>
+            <CardTitle className="text-base">{tt('results.stepByStep', locale)}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             {results.steps.map((step, i) => (
@@ -284,7 +277,7 @@ export default function ResultsPage() {
                 {/* Answer */}
                 {step.answer && (
                   <div className="ml-10 mb-2 px-3 py-2 bg-emerald-500/10 border border-emerald-800/30 rounded-lg">
-                    <p className="text-xs text-emerald-500 mb-0.5">Reponse :</p>
+                    <p className="text-xs text-emerald-500 mb-0.5">{tt('results.answer', locale)} :</p>
                     <p className="text-sm font-bold text-emerald-300 font-mono">{step.answer}</p>
                   </div>
                 )}
@@ -292,7 +285,7 @@ export default function ResultsPage() {
                 {/* Anecdote */}
                 {step.anecdote && (
                   <div className="ml-10 px-3 py-2 bg-slate-800/50 border border-slate-700/50 rounded-lg">
-                    <p className="text-xs text-slate-500 mb-0.5">Le saviez-vous ?</p>
+                    <p className="text-xs text-slate-500 mb-0.5">{tt('results.didYouKnow', locale)}</p>
                     <p className="text-xs text-slate-400 leading-relaxed">{step.anecdote}</p>
                   </div>
                 )}
@@ -302,12 +295,12 @@ export default function ResultsPage() {
                   <div className="ml-10 mt-1.5 flex gap-3 text-xs">
                     {step.hintsUsed > 0 && (
                       <span className="text-yellow-500">
-                        {step.hintsUsed} indice{step.hintsUsed > 1 ? "s" : ""}
+                        {step.hintsUsed} {tt('results.hintCount', locale)}
                       </span>
                     )}
                     {step.penaltySeconds > 0 && (
                       <span className="text-red-400">
-                        +{formatTime(step.penaltySeconds)} penalite
+                        +{formatTime(step.penaltySeconds)} {tt('results.penalty', locale)}
                       </span>
                     )}
                   </div>
@@ -324,7 +317,7 @@ export default function ResultsPage() {
           className="w-full bg-gradient-to-r from-amber-500 to-amber-600 py-6 text-base font-bold uppercase tracking-wider text-amber-950 shadow-lg hover:from-amber-400 hover:to-amber-500"
         >
           <Camera className="mr-2 h-5 w-5" />
-          Photo souvenir
+          {tt('results.selfie', locale)}
         </Button>
 
         <div className="flex gap-3">
@@ -334,14 +327,14 @@ export default function ResultsPage() {
             onClick={handleShare}
           >
             <Share2 className="h-4 w-4 mr-2" />
-            Partager
+            {tt('results.share', locale)}
           </Button>
           <Button
             className="flex-1 bg-emerald-600 hover:bg-emerald-700"
             onClick={() => router.push(`/leaderboard?gameId=${sessionId}`)}
           >
             <Trophy className="h-4 w-4 mr-2" />
-            Classement
+            {tt('leaderboard.title', locale)}
           </Button>
         </div>
 
@@ -360,7 +353,7 @@ export default function ResultsPage() {
           onClick={() => router.push("/")}
         >
           <Home className="h-4 w-4 mr-2" />
-          Retour a l&apos;accueil
+          {tt('results.backHome', locale)}
         </Button>
       </div>
 

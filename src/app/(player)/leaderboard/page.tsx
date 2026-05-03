@@ -17,6 +17,7 @@ import {
 import { formatTime, formatScore } from "@/lib/scoring";
 import { useLocale } from "@/components/player/LocaleSelector";
 import { useUITranslations } from "@/components/player/UITranslationsProvider";
+import { tt } from "@/lib/translations";
 import type { LeaderboardEntry } from "@/types/database";
 
 export default function LeaderboardPage() {
@@ -105,7 +106,7 @@ function LeaderboardContent() {
           <div>
             <h1 className="text-xl font-bold flex items-center gap-2">
               <Trophy className="h-5 w-5 text-emerald-400" />
-              Classement
+              {tt('leaderboard.title', locale)}
             </h1>
             {entries.length > 0 && entries[0].game_title && (
               <p className="text-sm text-slate-500">{entries[0].game_title}</p>
@@ -122,10 +123,10 @@ function LeaderboardContent() {
             <CardContent className="py-12 text-center">
               <Trophy className="h-12 w-12 text-slate-700 mx-auto mb-3" />
               <p className="text-slate-500">
-                Aucun resultat pour le moment.
+                {tt('leaderboard.empty', locale)}
               </p>
               <p className="text-sm text-slate-600 mt-1">
-                Soyez le premier a terminer!
+                {tt('leaderboard.beFirst', locale)}
               </p>
             </CardContent>
           </Card>

@@ -713,6 +713,212 @@ export const ui: Translations = {
   'nav.arrived': {
     fr: 'Vous etes deja arrive !', en: 'You have already arrived!', de: 'Sie sind bereits angekommen!', es: 'Ya has llegado!', it: 'Sei gia arrivato!',
   },
+
+  // ── Report error widget (player-facing, used after a riddle) ─────────
+  'reportError.trigger': {
+    fr: 'Signaler une erreur', en: 'Report an error', de: 'Fehler melden', es: 'Reportar un error', it: 'Segnala un errore',
+  },
+  'reportError.title': {
+    fr: 'Signaler une erreur', en: 'Report an error', de: 'Fehler melden', es: 'Reportar un error', it: 'Segnala un errore',
+  },
+  'reportError.subtitle': {
+    fr: "Vous avez identifie une erreur dans cette enigme ? Merci de nous la signaler.",
+    en: 'Found an error in this riddle? Thank you for reporting it.',
+    de: 'Haben Sie einen Fehler in diesem Ratsel gefunden? Danke fur die Meldung.',
+    es: '¿Has encontrado un error en este enigma? Gracias por reportarlo.',
+    it: 'Hai trovato un errore in questo enigma? Grazie per la segnalazione.',
+  },
+  'reportError.placeholder': {
+    fr: "Decrivez l'erreur (reponse incorrecte, indice trompeur, lieu introuvable...)",
+    en: 'Describe the error (wrong answer, misleading hint, location not found...)',
+    de: 'Beschreiben Sie den Fehler (falsche Antwort, irrefuhrender Hinweis...)',
+    es: 'Describe el error (respuesta incorrecta, pista enganosa, lugar no encontrado...)',
+    it: "Descrivi l'errore (risposta sbagliata, indizio fuorviante, luogo non trovato...)",
+  },
+  'reportError.send': {
+    fr: 'Envoyer', en: 'Send', de: 'Senden', es: 'Enviar', it: 'Invia',
+  },
+  'reportError.cancel': {
+    fr: 'Annuler', en: 'Cancel', de: 'Abbrechen', es: 'Cancelar', it: 'Annulla',
+  },
+  'reportError.success': {
+    fr: 'Merci ! Votre signalement a ete envoye.',
+    en: 'Thank you! Your report has been sent.',
+    de: 'Danke! Ihre Meldung wurde gesendet.',
+    es: '¡Gracias! Tu reporte ha sido enviado.',
+    it: 'Grazie! La tua segnalazione e stata inviata.',
+  },
+  'reportError.error': {
+    fr: "Erreur lors de l'envoi. Reessayez.",
+    en: 'Error sending report. Please try again.',
+    de: 'Fehler beim Senden. Bitte versuchen Sie es erneut.',
+    es: 'Error al enviar. Intentalo de nuevo.',
+    it: "Errore nell'invio. Riprova.",
+  },
+
+  // ── Truth reveal panel (results page when player gave up / failed) ──
+  'truth.heading': {
+    fr: 'La Verite Revelee', en: 'The Truth Revealed', de: 'Die Enthullte Wahrheit', es: 'La Verdad Revelada', it: 'La Verita Rivelata',
+  },
+  'truth.intro': {
+    fr: "Tu n'as pas trouve le code final, mais chaque enigme a sa cle. Voici ce que les pierres murmuraient pour chacun des lieux que tu as visites.",
+    en: "You didn't crack the final code, but every riddle has its key. Here is what the stones whispered at each place you visited.",
+    de: 'Du hast den finalen Code nicht geknackt, aber jedes Ratsel hat seinen Schlussel. Dies ist, was die Steine an jedem besuchten Ort flusterten.',
+    es: 'No descifraste el codigo final, pero cada enigma tiene su clave. Esto es lo que las piedras susurraban en cada lugar que visitaste.',
+    it: 'Non hai decifrato il codice finale, ma ogni enigma ha la sua chiave. Ecco cosa sussurravano le pietre in ogni luogo che hai visitato.',
+  },
+  'truth.stepLabel': {
+    fr: 'Etape', en: 'Step', de: 'Etappe', es: 'Etapa', it: 'Tappa',
+  },
+  'truth.was': {
+    fr: 'etait', en: 'was', de: 'war', es: 'era', it: 'era',
+  },
+
+  // ── Epilogue ─────────────────────────────────────────────────────────
+  'epilogue.label': {
+    fr: "L'Epilogue", en: 'The Epilogue', de: 'Der Epilog', es: 'El Epilogo', it: "L'Epilogo",
+  },
+  'epilogue.codeUnlocked': {
+    fr: 'Code final trouve', en: 'Final code unlocked', de: 'Code geknackt', es: 'Codigo final descifrado', it: 'Codice finale svelato',
+  },
+
+  // ── Results page ─────────────────────────────────────────────────────
+  'results.unavailable': {
+    fr: 'Resultats indisponibles', en: 'Results unavailable', de: 'Ergebnisse nicht verfugbar', es: 'Resultados no disponibles', it: 'Risultati non disponibili',
+  },
+  'results.backHome': {
+    fr: "Retour a l'accueil", en: 'Back to home', de: 'Zuruck zur Startseite', es: 'Volver al inicio', it: 'Torna alla home',
+  },
+  'results.congrats': {
+    fr: 'Felicitations !', en: 'Congratulations!', de: 'Gluckwunsch!', es: '¡Felicidades!', it: 'Complimenti!',
+  },
+  'results.scoreFinal': {
+    fr: 'Score final', en: 'Final score', de: 'Endpunktzahl', es: 'Puntuacion final', it: 'Punteggio finale',
+  },
+  'results.points': {
+    fr: 'points', en: 'points', de: 'Punkte', es: 'puntos', it: 'punti',
+  },
+  'results.timeTotal': {
+    fr: 'Temps total', en: 'Total time', de: 'Gesamtzeit', es: 'Tiempo total', it: 'Tempo totale',
+  },
+  'results.hints': {
+    fr: 'Indices', en: 'Hints', de: 'Hinweise', es: 'Pistas', it: 'Indizi',
+  },
+  'results.rank': {
+    fr: 'Classement', en: 'Rank', de: 'Rang', es: 'Clasificacion', it: 'Classifica',
+  },
+  'results.hintsPenalty': {
+    fr: 'Penalite indices', en: 'Hint penalty', de: 'Hinweis-Strafe', es: 'Penalizacion pistas', it: 'Penalita indizi',
+  },
+  'results.stepByStep': {
+    fr: 'Correction etape par etape', en: 'Step-by-step review', de: 'Schritt-fur-Schritt-Auswertung', es: 'Repaso paso a paso', it: 'Revisione passo dopo passo',
+  },
+  'results.answer': {
+    fr: 'Reponse', en: 'Answer', de: 'Antwort', es: 'Respuesta', it: 'Risposta',
+  },
+  'results.didYouKnow': {
+    fr: 'Le saviez-vous ?', en: 'Did you know?', de: 'Wussten Sie schon?', es: '¿Sabias que?', it: 'Lo sapevi?',
+  },
+  'results.hintCount': {
+    fr: 'indice(s)', en: 'hint(s)', de: 'Hinweis(e)', es: 'pista(s)', it: 'indizio/i',
+  },
+  'results.penalty': {
+    fr: 'penalite', en: 'penalty', de: 'Strafe', es: 'penalizacion', it: 'penalita',
+  },
+  'results.selfie': {
+    fr: 'Photo souvenir', en: 'Souvenir photo', de: 'Erinnerungsfoto', es: 'Foto de recuerdo', it: 'Foto ricordo',
+  },
+  'results.share': {
+    fr: 'Partager', en: 'Share', de: 'Teilen', es: 'Compartir', it: 'Condividi',
+  },
+  'results.shareText': {
+    fr: 'J\'ai termine "{title}" avec un score de {score} points ! ({time})',
+    en: 'I finished "{title}" with a score of {score} points! ({time})',
+    de: 'Ich habe "{title}" mit {score} Punkten beendet! ({time})',
+    es: 'He terminado "{title}" con {score} puntos! ({time})',
+    it: 'Ho finito "{title}" con {score} punti! ({time})',
+  },
+  'results.shareTitle': {
+    fr: 'Escape Game Outdoor', en: 'Outdoor Escape Game', de: 'Outdoor Escape Game', es: 'Outdoor Escape Game', it: 'Escape Game Outdoor',
+  },
+  'results.defaultPlayerName': {
+    fr: 'Joueur', en: 'Player', de: 'Spieler', es: 'Jugador', it: 'Giocatore',
+  },
+  'results.loadError': {
+    fr: 'Impossible de charger les resultats',
+    en: 'Unable to load results',
+    de: 'Ergebnisse konnten nicht geladen werden',
+    es: 'No se pueden cargar los resultados',
+    it: 'Impossibile caricare i risultati',
+  },
+
+  // ── Leaderboard ──────────────────────────────────────────────────────
+  'leaderboard.title': {
+    fr: 'Classement', en: 'Leaderboard', de: 'Rangliste', es: 'Clasificacion', it: 'Classifica',
+  },
+  'leaderboard.empty': {
+    fr: 'Aucun resultat pour le moment.', en: 'No results yet.', de: 'Noch keine Ergebnisse.', es: 'Aun no hay resultados.', it: 'Nessun risultato ancora.',
+  },
+  'leaderboard.beFirst': {
+    fr: 'Soyez le premier a terminer !', en: 'Be the first to finish!', de: 'Seien Sie der Erste, der fertig wird!', es: '¡Se el primero en terminar!', it: 'Sii il primo a finire!',
+  },
+
+  // ── Map controls ─────────────────────────────────────────────────────
+  'map.recenter': {
+    fr: 'Recentrer la carte', en: 'Recenter map', de: 'Karte zentrieren', es: 'Centrar mapa', it: 'Centra mappa',
+  },
+
+  // ── Play page extras (verify, exit confirm, reveal story) ────────────
+  'play.verify': {
+    fr: 'Verifier', en: 'Verify', de: 'Prufen', es: 'Verificar', it: 'Verifica',
+  },
+  'play.verifyError': {
+    fr: 'Erreur de verification', en: 'Verification error', de: 'Uberprufungsfehler', es: 'Error de verificacion', it: 'Errore di verifica',
+  },
+  'play.revealStory': {
+    fr: "Decouvrir l'histoire et la verite",
+    en: 'Reveal the story and the truth',
+    de: 'Die Geschichte und Wahrheit enthullen',
+    es: 'Revelar la historia y la verdad',
+    it: 'Rivelare la storia e la verita',
+  },
+  'play.exitConfirm': {
+    fr: 'Quitter la partie ? Tes indices et ta progression sont sauvegardes, mais le chrono continue.',
+    en: 'Leave the game? Your hints and progress are saved, but the timer keeps running.',
+    de: 'Spiel verlassen? Hinweise und Fortschritt werden gespeichert, aber der Timer lauft weiter.',
+    es: '¿Salir del juego? Tus pistas y progreso se guardan, pero el cronometro sigue.',
+    it: 'Uscire dalla partita? I tuoi indizi e progressi sono salvati, ma il timer continua.',
+  },
+
+  // ── Generic confirm dialog buttons (used by ConfirmDialog) ───────────
+  'confirm.ok': {
+    fr: 'OK', en: 'OK', de: 'OK', es: 'OK', it: 'OK',
+  },
+  'confirm.cancel': {
+    fr: 'Annuler', en: 'Cancel', de: 'Abbrechen', es: 'Cancelar', it: 'Annulla',
+  },
+
+  // ── AR character speaker (names + a11y) ──────────────────────────────
+  'character.knight': { fr: 'Le Chevalier', en: 'The Knight', de: 'Der Ritter', es: 'El Caballero', it: 'Il Cavaliere' },
+  'character.witch': { fr: 'La Sorciere', en: 'The Witch', de: 'Die Hexe', es: 'La Bruja', it: 'La Strega' },
+  'character.monk': { fr: 'Le Moine', en: 'The Monk', de: 'Der Monch', es: 'El Monje', it: 'Il Monaco' },
+  'character.sailor': { fr: 'Le Marin', en: 'The Sailor', de: 'Der Seemann', es: 'El Marinero', it: 'Il Marinaio' },
+  'character.detective': { fr: 'Le Detective', en: 'The Detective', de: 'Der Detektiv', es: 'El Detective', it: 'Il Detective' },
+  'character.ghost': { fr: 'Le Fantome', en: 'The Ghost', de: 'Das Gespenst', es: 'El Fantasma', it: 'Il Fantasma' },
+  'character.princess': { fr: 'La Princesse', en: 'The Princess', de: 'Die Prinzessin', es: 'La Princesa', it: 'La Principessa' },
+  'character.peasant': { fr: 'Le Villageois', en: 'The Villager', de: 'Der Dorfbewohner', es: 'El Aldeano', it: 'Il Paesano' },
+  'character.soldier': { fr: 'Le Soldat', en: 'The Soldier', de: 'Der Soldat', es: 'El Soldado', it: 'Il Soldato' },
+  'character.guideMale': { fr: 'Le Guide', en: 'The Guide', de: 'Der Fuhrer', es: 'El Guia', it: 'La Guida' },
+  'character.guideFemale': { fr: 'La Guide', en: 'The Guide', de: 'Die Fuhrerin', es: 'La Guia', it: 'La Guida' },
+  'ar.dismissCharacter': {
+    fr: 'Fermer', en: 'Dismiss', de: 'Schliessen', es: 'Cerrar', it: 'Chiudi',
+  },
+  'ar.playNarration': {
+    fr: 'Lire la narration', en: 'Play narration', de: 'Erzahlung abspielen', es: 'Reproducir narracion', it: 'Riproduci narrazione',
+  },
+  'ar.stopNarration': {
+    fr: 'Arreter la narration', en: 'Stop narration', de: 'Erzahlung stoppen', es: 'Detener narracion', it: 'Ferma narrazione',
+  },
 };
 
 // ----------------------------------------------------------------------
