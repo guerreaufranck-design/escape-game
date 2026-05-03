@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { translateText, getGeminiModel } from "@/lib/gemini";
+import { translateText, translateJsonObject } from "@/lib/gemini";
 import { getLanguageName } from "@/lib/i18n";
 import { detectSourceLanguage } from "@/lib/lang-detect";
 
@@ -194,27 +194,13 @@ export async function translateStepFields(
 
   let batchSucceeded = false;
   try {
-    const parsed = await translateWithRetry(async () => {
-      const model = getGeminiModel();
-      const geminiResult = await model.generateContent({
-        contents: [
-          {
-            role: "user",
-            parts: [
-              {
-                text: `You are a professional translator. Translate ALL values in the following JSON object from ${sourceLangName} to ${langName}. Keep the keys exactly as they are. Return ONLY a valid JSON object, nothing else.\n\n${JSON.stringify(toTranslate, null, 2)}`,
-              },
-            ],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          temperature: 0.2,
-        },
-      });
-      const translatedText = geminiResult.response.text().trim();
-      return JSON.parse(translatedText) as Record<string, string>;
-    }, `translateStepFields:${stepId}`);
+    const parsed = await translateWithRetry(
+      () =>
+        translateJsonObject<Record<string, string>>(
+          `You are a professional translator. Translate ALL values in the following JSON object from ${sourceLangName} to ${langName}. Keep the keys exactly as they are. Return ONLY a valid JSON object, nothing else.\n\n${JSON.stringify(toTranslate, null, 2)}`,
+        ),
+      `translateStepFields:${stepId}`,
+    );
 
     let cachedCount = 0;
     for (const [field, text] of Object.entries(parsed)) {
@@ -354,26 +340,9 @@ export async function translateUIStrings(
   const langName = getLanguageName(targetLang);
 
   try {
-    const model = getGeminiModel();
-    const geminiResult = await model.generateContent({
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `You are a professional translator. Translate ALL values in the following JSON object from English to ${langName}. Keep the keys exactly as they are. Return ONLY a valid JSON object, nothing else.\n\n${JSON.stringify(toTranslate, null, 2)}`,
-            },
-          ],
-        },
-      ],
-      generationConfig: {
-        responseMimeType: "application/json",
-        temperature: 0.2,
-      },
-    });
-
-    const translatedText = geminiResult.response.text().trim();
-    const parsed = JSON.parse(translatedText) as Record<string, string>;
+    const parsed = await translateJsonObject<Record<string, string>>(
+      `You are a professional translator. Translate ALL values in the following JSON object from English to ${langName}. Keep the keys exactly as they are. Return ONLY a valid JSON object, nothing else.\n\n${JSON.stringify(toTranslate, null, 2)}`,
+    );
 
     for (const [key, text] of Object.entries(parsed)) {
       if (text && toTranslate[key]) {

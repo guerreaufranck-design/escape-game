@@ -52,13 +52,43 @@ export async function translateText(
 }
 
 async function translateViaGemini(prompt: string): Promise<string> {
+  return geminiRestCall(prompt, false);
+}
+
+/**
+ * Same Gemini-REST + Claude-fallback path as `translateText`, but for
+ * prompts that must return a JSON object. Used by `translateStepFields`
+ * and `translateUIStrings`. Going through REST avoids the SDK's
+ * intermittent fake "API_KEY_INVALID" errors.
+ */
+export async function translateJsonObject<T = Record<string, string>>(
+  prompt: string,
+): Promise<T> {
+  let raw: string;
+  try {
+    raw = await geminiRestCall(prompt, true);
+  } catch (geminiErr) {
+    console.warn(
+      `[translateJsonObject] Gemini failed (${(geminiErr as Error).message.slice(0, 100)}), falling back to Claude`,
+    );
+    raw = await translateViaClaude(prompt);
+  }
+  // Strip code fences / prose around the JSON object.
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error(`translateJsonObject: no JSON in response: ${raw.slice(0, 200)}`);
+  return JSON.parse(match[0]) as T;
+}
+
+async function geminiRestCall(prompt: string, jsonMode: boolean): Promise<string> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY missing");
 
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
   const body = {
     contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.2 },
+    generationConfig: jsonMode
+      ? { temperature: 0.2, responseMimeType: "application/json" }
+      : { temperature: 0.2 },
   };
 
   const res = await fetch(url, {
