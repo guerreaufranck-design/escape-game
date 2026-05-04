@@ -101,7 +101,7 @@ export default function NarratorIntro({
 
     const utterance = new SpeechSynthesisUtterance(narratorIntro);
     utterance.lang = getLang(playerLanguage);
-    utterance.rate = 0.9;
+    utterance.rate = 1.0;
     utterance.pitch = 0.85;
 
     utterance.onstart = () => {

@@ -44,7 +44,7 @@ interface GenerateOptions {
    */
   stability?: number;
   similarityBoost?: number;
-  /** Playback speed (0.7 - 1.2). Default 0.85 = ~15% slower than natural. */
+  /** Playback speed (0.7 - 1.2). Default 1.0 = natural speech. */
   speed?: number;
 }
 
@@ -81,10 +81,11 @@ export async function generateAndStoreAudio(
         voice_settings: {
           stability: opts.stability ?? 0.6,
           similarity_boost: opts.similarityBoost ?? 0.75,
-          // 0.85 = noticeably slower than natural speech. Players walking
-          // need time to absorb the line; rushed narration breaks the
-          // immersive escape-game atmosphere we want.
-          speed: opts.speed ?? 0.85,
+          // 1.0 = natural speech. Earlier we slowed this to 0.85 for
+          // walking-immersion reasons, but field test feedback was
+          // "too slow / drags". Natural rate is the right default;
+          // players who want to re-listen can replay.
+          speed: opts.speed ?? 1.0,
         },
       }),
     },

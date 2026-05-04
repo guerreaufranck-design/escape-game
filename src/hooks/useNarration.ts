@@ -102,7 +102,7 @@ export function useNarration(locale: string) {
 
       const utterance = new SpeechSynthesisUtterance(text);
       utterance.lang = LOCALE_TO_LANG[locale] || "fr-FR";
-      utterance.rate = 0.95;
+      utterance.rate = 1.0;
       utterance.pitch = 1;
 
       const voices = window.speechSynthesis.getVoices();
