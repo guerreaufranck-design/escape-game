@@ -1176,14 +1176,7 @@ export default function PlayPage() {
                 <button
                   className="inline-flex items-center gap-1.5 text-xs text-yellow-500 hover:text-yellow-400 disabled:opacity-50"
                   disabled={hintLoading || hints.length >= gameState.hintsAvailable}
-                  onClick={async () => {
-                    const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
-                    const ok = await confirm({
-                      message: tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty),
-                      locale,
-                    });
-                    if (ok) requestHint(hints.length);
-                  }}
+                  onClick={() => requestHint(hints.length)}
                 >
                   {hintLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lightbulb className="h-4 w-4" />}
                   {tt('play.hint', locale)} ({hints.length}/{gameState.hintsAvailable})
@@ -1191,14 +1184,7 @@ export default function PlayPage() {
                 <button
                   className="inline-flex items-center gap-1.5 text-xs text-orange-400 hover:text-orange-300 disabled:opacity-50"
                   disabled={skipping}
-                  onClick={async () => {
-                    const ok = await confirm({
-                      message: tt('play.skipConfirm', locale),
-                      locale,
-                      tone: "destructive",
-                    });
-                    if (ok) skipStep();
-                  }}
+                  onClick={() => skipStep()}
                 >
                   {skipping ? <Loader2 className="h-4 w-4 animate-spin" /> : <SkipForward className="h-4 w-4" />}
                   {tt('play.skip', locale)}
@@ -1368,19 +1354,12 @@ export default function PlayPage() {
                 <ChevronRight className="h-5 w-5 text-slate-500 flex-shrink-0" />
               </button>
 
-              {/* Hint */}
+              {/* Hint — direct, no confirmation popup. */}
               <button
                 disabled={hintLoading || hints.length >= gameState.hintsAvailable}
-                onClick={async () => {
-                  const penalty = hints.length < 3 ? "2 minutes" : "10 minutes";
-                  const ok = await confirm({
-                    message: tt('play.askHint', locale).replace('{n}', String(hints.length + 1)).replace('{total}', String(gameState.hintsAvailable)).replace('{penalty}', penalty),
-                    locale,
-                  });
-                  if (ok) {
-                    setShowActionMenu(false);
-                    requestHint(hints.length);
-                  }
+                onClick={() => {
+                  setShowActionMenu(false);
+                  requestHint(hints.length);
                 }}
                 className="w-full flex items-center gap-4 p-4 rounded-2xl bg-yellow-500/10 border border-yellow-500/30 hover:bg-yellow-500/20 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -1399,19 +1378,16 @@ export default function PlayPage() {
 
               {/* Photo validate removed — AR-first flow uses typed answer */}
 
-              {/* Skip step */}
+              {/* Skip step — direct, no confirmation popup. The
+                  reveal-the-answer modal that the front shows after a
+                  skip already gives the player a clear "I just skipped"
+                  signal; an extra confirm dialog before that broke the
+                  flow. */}
               <button
                 disabled={skipping}
-                onClick={async () => {
-                  const ok = await confirm({
-                    message: tt('play.skipConfirm', locale),
-                    locale,
-                    tone: "destructive",
-                  });
-                  if (ok) {
-                    setShowActionMenu(false);
-                    skipStep();
-                  }
+                onClick={() => {
+                  setShowActionMenu(false);
+                  skipStep();
                 }}
                 className="w-full flex items-center gap-4 p-4 rounded-2xl bg-orange-500/10 border border-orange-500/30 hover:bg-orange-500/20 transition-colors text-left disabled:opacity-40 disabled:cursor-not-allowed"
               >
@@ -1443,33 +1419,65 @@ export default function PlayPage() {
               </button>
             </div>
             <div className="space-y-1.5">
-              {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step) => (
-                <div
-                  key={step}
-                  className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
-                    step <= gameState.currentStep
-                      ? "bg-slate-800/80 border border-slate-700"
-                      : "bg-slate-800/30 border border-slate-800/50"
-                  }`}
-                >
-                  <span className="text-xs text-slate-500 w-14 shrink-0">{tt('play.step', locale)} {step}</span>
-                  {notebook[step] ? (
-                    <span className="flex-1 text-sm font-mono font-bold text-emerald-400">
-                      {notebook[step]} <span className="text-emerald-600 text-[10px]">🔒</span>
-                    </span>
-                  ) : step <= gameState.currentStep ? (
-                    <input
-                      type="text"
-                      value=""
-                      onChange={(e) => setNotebook((prev) => ({ ...prev, [step]: e.target.value }))}
-                      placeholder={tt('play.answerPlaceholder', locale)}
-                      className="flex-1 bg-transparent border-none text-sm font-mono font-bold text-emerald-400 placeholder-slate-600 focus:outline-none"
-                    />
-                  ) : (
-                    <span className="text-slate-600 italic text-xs">{tt('play.upcoming', locale)}</span>
-                  )}
-                </div>
-              ))}
+              {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step) => {
+                // A step is "locked" (answer saved + step done) when the
+                // game has advanced past it. Previously we locked on the
+                // mere presence of notebook[step], which meant typing the
+                // first letter would freeze the row at one character —
+                // exactly the field-test bug Forest hit.
+                const isPast = step < gameState.currentStep;
+                const isCurrent = step === gameState.currentStep;
+                const draft = notebook[step] || "";
+                return (
+                  <div
+                    key={step}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm ${
+                      step <= gameState.currentStep
+                        ? "bg-slate-800/80 border border-slate-700"
+                        : "bg-slate-800/30 border border-slate-800/50"
+                    }`}
+                  >
+                    <span className="text-xs text-slate-500 w-14 shrink-0">{tt('play.step', locale)} {step}</span>
+                    {isPast ? (
+                      <span className="flex-1 text-sm font-mono font-bold text-emerald-400">
+                        {draft || "—"} <span className="text-emerald-600 text-[10px]">🔒</span>
+                      </span>
+                    ) : isCurrent ? (
+                      <>
+                        <input
+                          type="text"
+                          value={draft}
+                          onChange={(e) =>
+                            setNotebook((prev) => ({ ...prev, [step]: e.target.value }))
+                          }
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && draft.trim()) {
+                              e.preventDefault();
+                              void validateStep(draft.trim());
+                            }
+                          }}
+                          placeholder={tt('play.answerPlaceholder', locale)}
+                          className="flex-1 bg-transparent border-none text-sm font-mono font-bold text-emerald-400 placeholder-slate-600 focus:outline-none"
+                          autoComplete="off"
+                          autoCorrect="off"
+                          spellCheck={false}
+                        />
+                        <button
+                          onClick={() => {
+                            if (draft.trim()) void validateStep(draft.trim());
+                          }}
+                          disabled={!draft.trim() || validating}
+                          className="shrink-0 rounded-md bg-emerald-600 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-white hover:bg-emerald-500 disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                          {tt('play.verify', locale)}
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-slate-600 italic text-xs">{tt('play.upcoming', locale)}</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
             <p className="text-[10px] text-slate-600 text-center mt-2">
               {tt('play.notebookHint', locale)}
@@ -1657,16 +1665,9 @@ export default function PlayPage() {
             void validateStep(knownAnswer);
           }}
           skipLoading={skipping}
-          onSkipStep={async () => {
-            const ok = await confirm({
-              message: tt('play.skipConfirm', locale),
-              locale,
-              tone: "destructive",
-            });
-            if (ok) {
-              setArOpen(false);
-              skipStep();
-            }
+          onSkipStep={() => {
+            setArOpen(false);
+            skipStep();
           }}
         />
       )}

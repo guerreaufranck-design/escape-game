@@ -237,12 +237,24 @@ export function ARCameraOverlay({
 
   // --- Lock-on detection ------------------------------------------------
   useEffect(() => {
+    // Lock-on logic relaxed after the Los Cristianos field test:
+    // requiring orientation.hasCompass meant iOS Safari players who
+    // didn't grant the compass permission could NEVER auto-validate.
+    // Same goes for the bearing-angle check — it was never strictly
+    // necessary because the AR facade text shown on the wall is the
+    // SAME literal string regardless of where the player aims their
+    // phone. GPS proximity alone is enough to confirm "you're on
+    // the right spot". Compass + bearing become a bonus signal: if
+    // the phone DOES expose them and the player DOES face the
+    // target, that's nice (haptic feedback fires), but it's no
+    // longer a precondition.
     const onTarget =
       hasGps &&
-      orientation.hasCompass &&
-      absH < LOCK_ON_ANGLE &&
       distance !== null &&
-      distance < LOCK_ON_DISTANCE;
+      distance < LOCK_ON_DISTANCE &&
+      // If we have a compass + bearing, prefer aligned-on-target;
+      // if we don't, accept GPS proximity as the lock signal.
+      (!orientation.hasCompass || absH < LOCK_ON_ANGLE);
     setLockedOn(onTarget);
     if (onTarget && !vibratedRef.current) {
       vibratedRef.current = true;
@@ -281,7 +293,11 @@ export function ARCameraOverlay({
         autoValidatedRef.current = stepKey;
         onAutoValidate();
       }
-    }, 3500);
+    }, 1500); // Reduced from 3500ms — field test showed players
+              // often left the lock-on zone before the 3.5s timer
+              // fired (small head movements were enough). 1.5s is
+              // long enough to feel intentional, short enough to
+              // tolerate fluctuating GPS / bearing.
     return () => clearTimeout(t);
   }, [lockedOn, stepKey, onAutoValidate]);
 
@@ -607,8 +623,10 @@ export function ARCameraOverlay({
         </div>
       )}
 
-      {/* Animated character — the cinematic AR moment when player locks on */}
-      {character && cameraReady && orientation.hasCompass && (
+      {/* Animated character — the cinematic AR moment when player locks on.
+          Compass dependency dropped so iOS Safari players without
+          motion permission still see the character. */}
+      {character && cameraReady && (
         <ARCharacterSpeaker
           lockedOn={lockedOn}
           characterType={character.type}
@@ -618,6 +636,35 @@ export function ARCameraOverlay({
           audioUrl={characterAudioUrl}
         />
       )}
+
+      {/* "Validate now" emergency button — appears when the player is
+          within 80 m of the target but auto-validate hasn't fired
+          (compass quirks, sustained lock-on flickering, or just an
+          edge case we haven't anticipated). Field-test safety net so
+          a player who's clearly on the right spot can manually unlock
+          the step. Hidden once the auto-latch has fired so it can't
+          double-validate. */}
+      {cameraReady &&
+        onAutoValidate &&
+        distance !== null &&
+        distance <= 80 &&
+        autoValidatedRef.current !== stepKey && (
+          <div className="absolute left-1/2 bottom-32 -translate-x-1/2 z-20 pointer-events-auto">
+            <button
+              onClick={() => {
+                if (autoValidatedRef.current === stepKey) return;
+                autoValidatedRef.current = stepKey;
+                onAutoValidate();
+              }}
+              className="flex flex-col items-center gap-1 rounded-2xl border-2 border-emerald-400/70 bg-emerald-950/90 px-5 py-3 text-sm font-bold uppercase tracking-wider text-emerald-100 shadow-2xl backdrop-blur-md hover:bg-emerald-900/90 active:scale-95 transition-all"
+            >
+              <span className="text-base">✓ {tt("ar.validateNow", locale)}</span>
+              <span className="text-[10px] font-normal normal-case tracking-normal text-emerald-300/80 max-w-[240px] text-center">
+                {tt("ar.validateNowHelp", locale)}
+              </span>
+            </button>
+          </div>
+        )}
 
       {/* In-AR action buttons — floating side panel, right edge.
           Player can request a hint or skip the step without leaving

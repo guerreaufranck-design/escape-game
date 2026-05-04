@@ -1,16 +1,19 @@
 "use client";
 
 import { useEffect } from "react";
-import { Clock, AlertTriangle } from "lucide-react";
+import { Clock } from "lucide-react";
 import { useTimer } from "@/hooks/useTimer";
 import { formatTime } from "@/lib/scoring";
 
 interface TimerProps {
   startedAt: string;
-  penaltySeconds: number;
+  // Kept on the props type for backwards compat with old callers, but
+  // no longer displayed in-game — penalties are only revealed on the
+  // results page so the player isn't punished visually mid-walk.
+  penaltySeconds?: number;
 }
 
-export function Timer({ startedAt, penaltySeconds }: TimerProps) {
+export function Timer({ startedAt }: TimerProps) {
   const { elapsedSeconds, start } = useTimer(startedAt);
 
   useEffect(() => {
@@ -23,15 +26,6 @@ export function Timer({ startedAt, penaltySeconds }: TimerProps) {
       <span className="font-mono text-xl font-bold tabular-nums text-emerald-100">
         {formatTime(elapsedSeconds)}
       </span>
-
-      {penaltySeconds > 0 && (
-        <div className="flex items-center gap-1 rounded-md border border-red-900/50 bg-red-950/30 px-2 py-0.5">
-          <AlertTriangle className="h-3.5 w-3.5 text-red-400" />
-          <span className="font-mono text-sm font-medium text-red-400">
-            +{formatTime(penaltySeconds)}
-          </span>
-        </div>
-      )}
     </div>
   );
 }

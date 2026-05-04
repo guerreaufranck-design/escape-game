@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X, Volume2, VolumeX } from "lucide-react";
 import { useNarration } from "@/hooks/useNarration";
 import {
@@ -143,14 +143,20 @@ export function ARCharacterSpeaker({
 }: ARCharacterSpeakerProps) {
   const [dismissed, setDismissed] = useState(false);
   const [mounted, setMounted] = useState(false);
+  const [fading, setFading] = useState(false);
   const [imageError, setImageError] = useState(false);
+  const [hasSpoken, setHasSpoken] = useState(false);
   const { speak, stop, speaking, supported } = useNarration(locale);
+  const autoPlayedRef = useRef<string | null>(null);
 
   // Reset on step change
   useEffect(() => {
     setDismissed(false);
     setMounted(false);
+    setFading(false);
     setImageError(false);
+    setHasSpoken(false);
+    autoPlayedRef.current = null;
     stop();
   }, [stepKey, stop]);
 
@@ -168,6 +174,40 @@ export function ARCharacterSpeaker({
     if (dismissed) stop();
   }, [dismissed, stop]);
 
+  // Auto-play the dialogue audio once the character is mounted, so the
+  // player doesn't have to tap to hear it. iOS Safari may block on the
+  // first interaction; we still surface the speak/stop button as a
+  // fallback. Latched on stepKey so we don't replay when re-mounting.
+  useEffect(() => {
+    if (!mounted || !dialogue) return;
+    if (autoPlayedRef.current === stepKey) return;
+    autoPlayedRef.current = stepKey;
+    speak(dialogue, audioUrl ? { audioUrl } : undefined);
+  }, [mounted, dialogue, stepKey, speak, audioUrl]);
+
+  // Track whether speech ever started (for the auto-dismiss logic).
+  useEffect(() => {
+    if (speaking) setHasSpoken(true);
+  }, [speaking]);
+
+  // Auto-dismiss the character so the AR facade text behind it becomes
+  // visible. Bug found in field test: the ghost sprite covered "MENCEY"
+  // and the player only saw "MEN", couldn't read the full answer.
+  // Two-phase: trigger a 600ms opacity fade first, then unmount.
+  // Trigger 1.5s after speech ends, OR 9s after mount as a safety net
+  // for when the player never taps play / Web Speech is blocked.
+  useEffect(() => {
+    if (!mounted || dismissed || fading) return;
+    const finishedSpeaking = hasSpoken && !speaking;
+    const fadeStart = finishedSpeaking ? 1500 : 9000;
+    const tFade = setTimeout(() => setFading(true), fadeStart);
+    const tDone = setTimeout(() => setDismissed(true), fadeStart + 600);
+    return () => {
+      clearTimeout(tFade);
+      clearTimeout(tDone);
+    };
+  }, [mounted, dismissed, fading, hasSpoken, speaking]);
+
   if (!dialogue || dismissed || !mounted) return null;
 
   const { type, meta } = resolveCharacter(characterType, stepKey);
@@ -177,14 +217,26 @@ export function ARCharacterSpeaker({
 
   return (
     <>
-      {/* Backdrop dim — focuses attention on the character */}
+      {/* Backdrop dim — focuses attention on the character. Fades out
+          when the dialogue ends so the AR facade text behind isn't
+          dimmed when the player needs to read it. */}
       <div
         className="pointer-events-none absolute inset-0 z-[14] bg-gradient-to-b from-black/60 via-black/30 to-black/80"
-        style={{ animation: "ar-char-fade 600ms ease-out" }}
+        style={{
+          animation: "ar-char-fade 600ms ease-out",
+          opacity: fading ? 0 : 1,
+          transition: "opacity 600ms ease-out",
+        }}
       />
 
       {/* Full-screen cinematic stage */}
-      <div className="pointer-events-none absolute inset-0 z-[15] flex flex-col items-center justify-center px-4 pt-12 pb-6">
+      <div
+        className="pointer-events-none absolute inset-0 z-[15] flex flex-col items-center justify-center px-4 pt-12 pb-6"
+        style={{
+          opacity: fading ? 0 : 1,
+          transition: "opacity 600ms ease-out",
+        }}
+      >
         {/* Character + aura */}
         <div
           className="relative pointer-events-auto"
