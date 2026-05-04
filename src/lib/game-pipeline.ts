@@ -8,12 +8,9 @@
  */
 
 import {
-  researchPredefinedStops,
-  researchGameLocations,
   type PredefinedStop,
   type ResearchedLocation,
 } from "./perplexity";
-import { researchPredefinedStopsWithGemini } from "./research-gemini";
 import {
   generateGameSteps,
   generateEpilogue,
@@ -24,7 +21,7 @@ import {
 } from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
 import { fetchHistoricalPhoto, type HistoricalPhotoResult } from "./wikipedia";
-import { geocodeLocation, haversineMeters } from "./geocode";
+import { geocodeLocation } from "./geocode";
 import { v4 as uuidv4 } from "uuid";
 
 export interface GameTemplate {
@@ -39,6 +36,34 @@ export interface GameTemplate {
   coverImage?: string;
   /** Predefined stops from oddballtrip — if provided, Perplexity only researches these */
   stops?: PredefinedStop[];
+  /**
+   * GPS-FIRST MODE — operator clicks N pins on a satellite map and
+   * provides their exact coords + landmark names. When this field is
+   * set, the research + geocoding phases are SKIPPED entirely; the
+   * pins are taken at face value as the ground-truth coordinates of
+   * the game. This is the only mode that guarantees < 10 m precision
+   * (LLMs hallucinate coords by 50-2 800 m on average).
+   *
+   * Each waypoint's `lat`/`lon` is stored verbatim in
+   * `game_steps.latitude/longitude`. Each `landmarkName` is stored in
+   * `game_steps.landmark_name` (hidden from players, used by audit /
+   * re-geocoding tools). Claude only writes the poetic title + riddle
+   * + AR answer, never touches the coord.
+   */
+  waypoints?: GameWaypoint[];
+}
+
+export interface GameWaypoint {
+  /** Latitude as clicked by the operator on the satellite map. */
+  lat: number;
+  /** Longitude as clicked by the operator on the satellite map. */
+  lon: number;
+  /** The real landmark name ("Abbaye Saint-Philibert"). Stored in DB
+   *  as `landmark_name` for audit. NEVER shown to players. */
+  landmarkName: string;
+  /** Optional context to help Claude write the riddle (e.g.
+   *  "the carved pediment above the main door", "8th-c. crypt"). */
+  context?: string;
 }
 
 export interface PipelineResult {
@@ -73,154 +98,104 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
-    // STEP 1: Research locations
-    //   Primary  : Gemini 2.5 Flash (no grounding) — ~$0.02/game
-    //   Fallback : Perplexity sonar-deep-research  — ~$1.00/game
-    //
-    // Gemini is now the default after Perplexity returned an unstructured
-    // analytical essay on a King's Cross prompt and broke the extraction
-    // step. Set USE_GEMINI_RESEARCH=false on Vercel to revert to the
-    // Perplexity-first behaviour.
+    // STEP 1: GPS-first geocoding of every operator-provided stop
     // ============================================
-    const useGemini = process.env.USE_GEMINI_RESEARCH !== "false";
+    // The legacy LLM-research-first flow (Perplexity + Claude) routinely
+    // produced coordinates that drifted by 50-2 800 m from the real
+    // landmark they described — a 34% / 32% / 34% split of OK / WARNING /
+    // CRITICAL across the existing 11 games. Validation radius is 25-50 m,
+    // so anything past that = player physically arrives but the app says
+    // "you're not there yet".
+    //
+    // The new contract: oddballtrip.com sends a `stops[]` array where each
+    // stop carries an OPTIONAL `landmarkName` field — the real, geocoder-
+    // friendly name ("Abbaye Saint-Philibert, Tournus"). We use that to
+    // fetch authoritative GPS via Google Places (sub-10 m on named
+    // landmarks), Nominatim as fallback. The coords we get are LOCKED:
+    // Claude is never allowed to paraphrase, round, or invent them.
+    //
+    // If a stop has no `landmarkName`, we fall back to its `name`. If
+    // both fail to geocode, the pipeline rejects the whole game with a
+    // clear error — better fail-loud than ship a broken radar to a
+    // paying customer.
+    if (!template.stops || template.stops.length === 0) {
+      throw new Error(
+        "GPS_FIRST_REQUIRED: pipeline now requires `stops[]` from oddballtrip. Discovery mode is deprecated — generation cannot proceed without operator-provided landmark names.",
+      );
+    }
+
     console.log(
-      `[Pipeline] Step 1: Researching locations (primary=${useGemini ? "Gemini" : "Perplexity"})...`,
+      `[Pipeline] Step 1: Geocoding ${template.stops.length} stops directly (GPS-first mode)...`,
     );
     const researchStart = Date.now();
 
-    let locations: ResearchedLocation[] = [];
+    const verifiedLocations: ResearchedLocation[] = [];
+    const geocodeFailures: Array<{ stopName: string; tried: string[] }> = [];
 
-    if (template.stops && template.stops.length > 0) {
-      // Mode 1: Research predefined stops from oddballtrip
-      if (useGemini) {
-        try {
-          locations = await researchPredefinedStopsWithGemini(
-            template.city,
-            template.country,
-            template.theme,
-            template.stops,
-          );
-        } catch (err) {
-          console.warn(
-            `[Pipeline] Gemini research failed, falling back to Perplexity: ${err instanceof Error ? err.message : err}`,
-          );
-          locations = await researchPredefinedStops(
-            template.city,
-            template.country,
-            template.theme,
-            template.stops,
-          );
-        }
-      } else {
-        locations = await researchPredefinedStops(
-          template.city,
-          template.country,
-          template.theme,
-          template.stops,
-        );
-      }
-    } else {
-      // Mode 2: Discover locations from scratch — only Perplexity supports
-      // this for now (Gemini path requires predefined stop names).
-      locations = await researchGameLocations(
+    for (const stop of template.stops) {
+      const queryName = stop.landmarkName?.trim() || stop.name.trim();
+      const tried = [queryName];
+      let geo = await geocodeLocation(
+        queryName,
         template.city,
         template.country,
-        template.theme,
-        template.themeDescription,
+      );
+      // If we used `landmarkName` and it failed, give the poetic `name`
+      // a single second chance — it might still happen to be a real
+      // place ("Iglesia del Carmen" works even without "landmarkName").
+      if (!geo && stop.landmarkName && stop.landmarkName.trim() !== stop.name.trim()) {
+        tried.push(stop.name.trim());
+        geo = await geocodeLocation(
+          stop.name,
+          template.city,
+          template.country,
+        );
+      }
+      if (!geo) {
+        geocodeFailures.push({ stopName: stop.name, tried });
+        continue;
+      }
+      console.log(
+        `[Pipeline] geocoded "${queryName}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (source=${geo.source}, confidence=${geo.confidence})`,
+      );
+      verifiedLocations.push({
+        name: stop.name,
+        landmarkName: stop.landmarkName?.trim() || queryName,
+        latitude: geo.lat,
+        longitude: geo.lon,
+        // Description from operator becomes the "what to observe"
+        // hint Claude uses to anchor the riddle. Fallback wording
+        // works for any virtual_ar step.
+        whatToObserve:
+          stop.description?.trim() ||
+          `Look around ${stop.name} — the AR camera will reveal the answer.`,
+        // "AUTO" = Claude must invent the AR answer (a year, a Latin
+        // word, a Roman numeral) at narrative time. Distinct from the
+        // legacy "UNVERIFIED" flag so we can tell the cases apart in
+        // logs / diagnostics.
+        answer: "AUTO",
+        answerType: "name",
+        answerSource: "virtual_ar",
+        source: "operator-provided",
+        themeLink: "",
+      });
+    }
+
+    if (geocodeFailures.length > 0) {
+      const failureSummary = geocodeFailures
+        .map(
+          (f) =>
+            `  - "${f.stopName}" (tried: ${f.tried.map((s) => `"${s}"`).join(", ")})`,
+        )
+        .join("\n");
+      throw new Error(
+        `GEOCODING_FAILED: ${geocodeFailures.length} stop(s) could not be geocoded via Google Places nor Nominatim:\n${failureSummary}\n\nFix the landmarkName for these stops on oddballtrip and regenerate.`,
       );
     }
 
     const researchDurationMs = Date.now() - researchStart;
     console.log(
-      `[Pipeline] Found ${locations.length} locations in ${Math.round(researchDurationMs / 1000)}s`
-    );
-
-    // No more UNVERIFIED filtering: Claude extraction now always returns a
-    // concrete answer (physical OR virtual_ar). The pipeline only fails if the
-    // number of extracted locations is lower than expected (i.e. Claude
-    // dropped some entries entirely, which is a real extraction bug).
-    //
-    // Legacy safety net: if for any reason an entry still has "UNVERIFIED",
-    // we promote it to virtual_ar with a fallback answer rather than drop it.
-    const normalizedLocations = locations.map((l) => {
-      if (l.answer === "UNVERIFIED" || !l.answer) {
-        return {
-          ...l,
-          answer: "III", // fallback virtual answer (Roman 3, works for most themes)
-          answerType: "number" as const,
-          answerSource: "virtual_ar" as const,
-          whatToObserve:
-            "Point your camera at the facade in AR mode — the answer will appear painted on the wall.",
-        };
-      }
-      return {
-        ...l,
-        answerSource: l.answerSource ?? ("physical" as const),
-      };
-    });
-
-    const minRequired = template.stops?.length ?? 8;
-    if (normalizedLocations.length < minRequired) {
-      throw new Error(
-        `Only ${normalizedLocations.length} locations extracted (need ${minRequired}). Claude extraction dropped entries.`,
-      );
-    }
-
-    // ============================================
-    // STEP 1.5: Verify every coord with a real geocoder
-    // ============================================
-    // The Claude-extracted coords are routinely 50-300 m off the
-    // landmark they describe (Los Cristianos step 1 was 280 m off
-    // the church). Validation radius is 25-50 m, so any drift past
-    // that means the player physically arrives at the right spot
-    // but the app says "you're not there yet". We re-geocode every
-    // location's name with Google Places (preferred) or Nominatim
-    // and override the LLM coords with the geocoder's answer
-    // whenever the drift exceeds 50 m. If a name fails to geocode
-    // at all, we keep the LLM coord — but log loudly so the next
-    // run can diagnose.
-    console.log("[Pipeline] Step 1.5: Verifying coords via geocoder...");
-    const geocodeStart = Date.now();
-    const verifiedLocations: ResearchedLocation[] = [];
-    for (const loc of normalizedLocations) {
-      const geo = await geocodeLocation(
-        loc.name,
-        template.city,
-        template.country,
-      );
-      if (!geo) {
-        console.warn(
-          `[Pipeline] geocode MISS for "${loc.name}" — keeping LLM coord ${loc.latitude},${loc.longitude}`,
-        );
-        verifiedLocations.push(loc);
-        continue;
-      }
-      const drift = haversineMeters(
-        { lat: loc.latitude, lon: loc.longitude },
-        { lat: geo.lat, lon: geo.lon },
-      );
-      // Drift threshold: 50 m. Below that, the LLM coord is plausibly
-      // the building's main entrance and we keep it (geocoders aren't
-      // perfect either). Above it, we override.
-      if (drift > 50) {
-        console.warn(
-          `[Pipeline] geocode OVERRIDE "${loc.name}": ${loc.latitude},${loc.longitude} → ${geo.lat},${geo.lon} (${Math.round(drift)} m drift, source=${geo.source}, confidence=${geo.confidence})`,
-        );
-        verifiedLocations.push({
-          ...loc,
-          latitude: geo.lat,
-          longitude: geo.lon,
-        });
-      } else {
-        console.log(
-          `[Pipeline] geocode OK "${loc.name}": ${Math.round(drift)} m drift (within tolerance)`,
-        );
-        verifiedLocations.push(loc);
-      }
-    }
-    const geocodeDurationMs = Date.now() - geocodeStart;
-    console.log(
-      `[Pipeline] Geocode pass complete in ${Math.round(geocodeDurationMs / 1000)}s`,
+      `[Pipeline] All ${verifiedLocations.length} stops geocoded in ${Math.round(researchDurationMs / 1000)}s — coords are LOCKED for the rest of the pipeline`,
     );
 
     const physicalCount = verifiedLocations.filter(
@@ -406,7 +381,7 @@ export async function generateGameFromTemplate(
     // STEP 3: Insert into Supabase
     // ============================================
     console.log("[Pipeline] Step 3: Inserting into Supabase...");
-    const gameId = await insertGameIntoDatabase(template, steps, stepPhotos, epilogue);
+    const gameId = await insertGameIntoDatabase(template, steps, stepPhotos, epilogue, verifiedLocations);
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
     const durationMs = Date.now() - startTime;
@@ -483,7 +458,12 @@ async function insertGameIntoDatabase(
   template: GameTemplate,
   steps: Awaited<ReturnType<typeof generateGameSteps>>,
   stepPhotos: (HistoricalPhotoResult | null)[] = [],
-  epilogue: GeneratedEpilogue | null = null
+  epilogue: GeneratedEpilogue | null = null,
+  // Indexed by step_order - 1. Carries the locked-in geocoded
+  // coordinates and the real landmark name for each step. Required by
+  // the GPS-first flow: we copy lat/lon from here verbatim into the DB
+  // and never trust whatever Claude returned for that field.
+  verifiedLocations: ResearchedLocation[] = [],
 ): Promise<string> {
   const supabase = createAdminClient();
   const gameId = uuidv4();
@@ -606,15 +586,28 @@ async function insertGameIntoDatabase(
       ? String(step.answer_text).toUpperCase()
       : step.ar_facade_text || null;
 
+    // Pull the locked-in real landmark name from the verified
+    // location list, indexed by step order. This is what gets stored
+    // in `game_steps.landmark_name` — used by audit / re-geocoding
+    // tools, NEVER exposed to the player.
+    const sourceLocation = verifiedLocations[index];
+    const landmarkName =
+      sourceLocation?.landmarkName?.trim() || sourceLocation?.name || null;
+
     return {
       id: uuidv4(),
       game_id: gameId,
       step_order: index + 1,
       title: step.title,
+      landmark_name: landmarkName,
       riddle_text: step.riddle_text,
       answer_text: step.answer_text,
-      latitude: step.latitude,
-      longitude: step.longitude,
+      // Coords are taken VERBATIM from the geocoded source — Claude is
+      // never allowed to override them at this stage. If anything
+      // looks off here, the bug is upstream in the geocoder, not in
+      // Claude.
+      latitude: sourceLocation?.latitude ?? step.latitude,
+      longitude: sourceLocation?.longitude ?? step.longitude,
       validation_radius_meters: step.validation_radius_meters,
       hints: trimmedHints,
       anecdote: step.anecdote,

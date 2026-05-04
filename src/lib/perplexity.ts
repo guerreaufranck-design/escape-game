@@ -37,11 +37,30 @@ export interface ResearchedLocation {
    *   convenient physical indice)
    */
   answerSource?: "physical" | "virtual_ar";
+  /**
+   * Real geocoder-friendly landmark name (e.g. "Abbaye Saint-Philibert,
+   * Tournus"). Used by the GPS-first pipeline to thread the operator-
+   * provided real name through to `game_steps.landmark_name` for audit.
+   * Hidden from players.
+   */
+  landmarkName?: string;
 }
 
 /** A stop predefined by the game designer on oddballtrip */
 export interface PredefinedStop {
+  /** Public-facing name. May be poetic ("Le Sanctuaire des Pierres
+   *  Anciennes"). What the player would see if Claude reuses it
+   *  verbatim, but Claude usually writes its own creative title on
+   *  top. */
   name: string;
+  /** Real, geocoder-friendly landmark name ("Abbaye Saint-Philibert,
+   *  Tournus"). Used by the pipeline to fetch authoritative GPS
+   *  coordinates from Google Places / Nominatim. NEVER exposed to
+   *  the player. Fallback: when missing, the pipeline geocodes
+   *  `name` instead and crosses fingers. */
+  landmarkName?: string;
+  /** Free-text context provided by the operator — historical facts,
+   *  what to observe, etc. Helps Claude write a richer riddle. */
   description?: string;
 }
 

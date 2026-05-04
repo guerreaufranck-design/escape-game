@@ -141,8 +141,13 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 
 1. "title": Evocative, mysterious — max 8 words.
 
-2. "latitude" + "longitude": EXACTLY the coordinates from the location data
-   below. Do not round, do not nudge.
+2. "latitude" + "longitude": EXACTLY the coordinates from the location
+   data below. Do not round, do not nudge, do not "improve". These
+   coordinates have been authoritatively geocoded against Google Places
+   / Nominatim from a real landmark name; any deviation introduces
+   metres of error that break GPS-based step validation in the field.
+   Treat these numbers as immutable INPUT — you copy them, you don't
+   reason about them.
 
 3. "validation_radius_meters": 25-50. Smaller for tight squares, larger for
    open plazas.
@@ -196,7 +201,15 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
        the discovery moment is the player's reward, not a checkbox.
 
 5. "answer_text": ONLY the short evocative answer. A year, a roman
-   numeral, ONE word. NEVER a sentence. Copy from the location data.
+   numeral, ONE word. NEVER a sentence.
+   - If the location data provides an answer (anything other than
+     "AUTO" or empty), copy it EXACTLY.
+   - If the answer is "AUTO" or empty, INVENT a thematic AR answer
+     yourself: a year (preferably tied to a real historical event
+     about this landmark), a Latin / local-language word, a Roman
+     numeral, or a 1-2-word phrase. Must be ALL CAPS or
+     Title Case for readability when it materialises on the AR
+     facade. Max 25 characters total.
 
 6. "hints": Array of EXACTLY 3 hints, in this STRICT JSON shape:
      [

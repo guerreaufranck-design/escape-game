@@ -72,14 +72,26 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Parse optional predefined stops from oddballtrip
+    // Parse predefined stops from oddballtrip. The new contract adds
+    // an optional `landmarkName` field per stop — the real building
+    // name used by the pipeline to fetch authoritative GPS coords
+    // (sub-10 m via Google Places). When missing, the pipeline falls
+    // back to geocoding `name`, which works only when `name` happens
+    // to be a real, findable landmark (likely fails on poetic names).
     const stops = Array.isArray(body.stops)
       ? body.stops
           .filter((s: { name?: string }) => s?.name?.trim())
-          .map((s: { name: string; description?: string }) => ({
-            name: s.name.trim(),
-            description: s.description?.trim() || "",
-          }))
+          .map(
+            (s: {
+              name: string;
+              landmarkName?: string;
+              description?: string;
+            }) => ({
+              name: s.name.trim(),
+              landmarkName: s.landmarkName?.trim() || undefined,
+              description: s.description?.trim() || "",
+            }),
+          )
       : undefined;
 
     const template: GameTemplate = {
