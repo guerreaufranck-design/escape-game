@@ -24,6 +24,7 @@ import {
 } from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
 import { fetchHistoricalPhoto, type HistoricalPhotoResult } from "./wikipedia";
+import { geocodeLocation, haversineMeters } from "./geocode";
 import { v4 as uuidv4 } from "uuid";
 
 export interface GameTemplate {
@@ -164,13 +165,70 @@ export async function generateGameFromTemplate(
         `Only ${normalizedLocations.length} locations extracted (need ${minRequired}). Claude extraction dropped entries.`,
       );
     }
-    const verifiedLocations = normalizedLocations;
-    const physicalCount = normalizedLocations.filter(
+
+    // ============================================
+    // STEP 1.5: Verify every coord with a real geocoder
+    // ============================================
+    // The Claude-extracted coords are routinely 50-300 m off the
+    // landmark they describe (Los Cristianos step 1 was 280 m off
+    // the church). Validation radius is 25-50 m, so any drift past
+    // that means the player physically arrives at the right spot
+    // but the app says "you're not there yet". We re-geocode every
+    // location's name with Google Places (preferred) or Nominatim
+    // and override the LLM coords with the geocoder's answer
+    // whenever the drift exceeds 50 m. If a name fails to geocode
+    // at all, we keep the LLM coord — but log loudly so the next
+    // run can diagnose.
+    console.log("[Pipeline] Step 1.5: Verifying coords via geocoder...");
+    const geocodeStart = Date.now();
+    const verifiedLocations: ResearchedLocation[] = [];
+    for (const loc of normalizedLocations) {
+      const geo = await geocodeLocation(
+        loc.name,
+        template.city,
+        template.country,
+      );
+      if (!geo) {
+        console.warn(
+          `[Pipeline] geocode MISS for "${loc.name}" — keeping LLM coord ${loc.latitude},${loc.longitude}`,
+        );
+        verifiedLocations.push(loc);
+        continue;
+      }
+      const drift = haversineMeters(
+        { lat: loc.latitude, lon: loc.longitude },
+        { lat: geo.lat, lon: geo.lon },
+      );
+      // Drift threshold: 50 m. Below that, the LLM coord is plausibly
+      // the building's main entrance and we keep it (geocoders aren't
+      // perfect either). Above it, we override.
+      if (drift > 50) {
+        console.warn(
+          `[Pipeline] geocode OVERRIDE "${loc.name}": ${loc.latitude},${loc.longitude} → ${geo.lat},${geo.lon} (${Math.round(drift)} m drift, source=${geo.source}, confidence=${geo.confidence})`,
+        );
+        verifiedLocations.push({
+          ...loc,
+          latitude: geo.lat,
+          longitude: geo.lon,
+        });
+      } else {
+        console.log(
+          `[Pipeline] geocode OK "${loc.name}": ${Math.round(drift)} m drift (within tolerance)`,
+        );
+        verifiedLocations.push(loc);
+      }
+    }
+    const geocodeDurationMs = Date.now() - geocodeStart;
+    console.log(
+      `[Pipeline] Geocode pass complete in ${Math.round(geocodeDurationMs / 1000)}s`,
+    );
+
+    const physicalCount = verifiedLocations.filter(
       (l) => l.answerSource === "physical",
     ).length;
-    const virtualCount = normalizedLocations.length - physicalCount;
+    const virtualCount = verifiedLocations.length - physicalCount;
     console.log(
-      `[Pipeline] ${normalizedLocations.length} locations: ${physicalCount} physical, ${virtualCount} virtual_ar`,
+      `[Pipeline] ${verifiedLocations.length} locations: ${physicalCount} physical, ${virtualCount} virtual_ar`,
     );
 
     // ============================================
