@@ -503,6 +503,31 @@ async function insertGameIntoDatabase(
       );
     }
 
+    // Coords sanity check — refuse to publish a step with missing or
+    // null-island coordinates. The Shibuya game shipped to two real
+    // customers with 5 of 8 steps at lat=0 lon=0 (Claude couldn't
+    // resolve some of the fictional venues from the Lucie Blackman case
+    // and the pipeline silently inserted zeros). Without this guard
+    // those players' radar pointed at the middle of the Atlantic.
+    //
+    // Special-case: the Royal Observatory in Greenwich is literally on
+    // the prime meridian, so lon == 0 with lat ≈ 51.477 is legitimate.
+    // The check stays narrow on purpose — anywhere else, lat=0 OR lon=0
+    // means the data is broken.
+    const lat = Number(step.latitude);
+    const lon = Number(step.longitude);
+    const isPrimeMeridianGreenwich =
+      lon === 0 && Number.isFinite(lat) && lat >= 51.45 && lat <= 51.5;
+    const coordsLookBroken =
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon) ||
+      (!isPrimeMeridianGreenwich && (lat === 0 || lon === 0));
+    if (coordsLookBroken) {
+      throw new Error(
+        `Step ${index + 1} ("${typeof step.title === "string" ? step.title : JSON.stringify(step.title)}") has invalid GPS coordinates lat=${step.latitude} lon=${step.longitude} — refusing to publish a game whose radar would point at the middle of the ocean. Re-prompt Claude with explicit GPS for every stop.`,
+      );
+    }
+
     // Keep up to 3 hints (Claude is asked for exactly 3). We used to
     // trim to 1 to match a previous max_hints_per_step=1 default, which
     // wasted the hints we'd already paid Claude to generate AND made
