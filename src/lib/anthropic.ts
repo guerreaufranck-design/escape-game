@@ -770,6 +770,148 @@ export interface AdaptedNarrative {
 
 
 /**
+ * Choix curé par Claude des N meilleurs landmarks parmi une liste de
+ * candidats RÉELS issus de Google Places. Inverse du flow Perplexity-
+ * first : au lieu d'inventer des noms et d'espérer les géocoder, on
+ * part de la liste exhaustive Google (toujours géocodée sub-10m), et
+ * on demande à Claude de SÉLECTIONNER les N qui collent le mieux au
+ * thème.
+ *
+ * Avantage : tous les choix sont GARANTIS géocodables. Impossible de
+ * publier un jeu avec moins de N stops si Google a au moins N candidats
+ * dans la zone (cas standard pour toute ville urbaine ou site
+ * archéologique référencé).
+ */
+export async function pickThematicLandmarksFromList(params: {
+  theme: string;
+  themeDescription: string;
+  narrative: string;
+  /** Candidats Google Places nearbysearch — tous géocodables, tous
+   *  dans la zone. Claude choisit les N meilleurs parmi cette liste. */
+  candidates: Array<{
+    name: string;
+    types: string[];
+    address?: string;
+    rating?: number;
+    distanceM: number;
+  }>;
+  /** Combien de stops à retourner (typiquement 8). */
+  needed: number;
+}): Promise<{
+  selectedIndices: number[];
+  rationale: string;
+}> {
+  const client = getAnthropicClient();
+
+  if (params.candidates.length === 0) {
+    return { selectedIndices: [], rationale: "no candidates provided" };
+  }
+
+  const candidatesBlock = params.candidates
+    .map((c, i) => {
+      const meta = [
+        `types=[${c.types.slice(0, 3).join(", ")}]`,
+        `${Math.round(c.distanceM)}m from start`,
+        c.rating ? `rating=${c.rating.toFixed(1)}` : null,
+        c.address ? `addr="${c.address}"` : null,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      return `[${i}] ${c.name} — ${meta}`;
+    })
+    .join("\n");
+
+  const prompt = `You are curating an outdoor escape game. ALL the landmarks below are REAL, GEOCODED Google Places within walking distance of a chosen starting point. Your job: pick the ${params.needed} that fit the theme best AND form a coherent walking parcours.
+
+LOCKED CONTEXT:
+- Theme: "${params.theme}"
+- Pitch: ${params.themeDescription}
+- Narrative (player intro):
+${params.narrative}
+
+CANDIDATES (all real, all in walking zone, indexed):
+${candidatesBlock}
+
+YOUR TASK:
+- Select EXACTLY ${params.needed} indices from the list, in any order — the pipeline will reorder by walking distance.
+- A landmark fits the theme if its NATURE/ERA/HISTORICAL ROLE can plausibly be threaded into the narrative. Be inclusive: a square, a church, a city hall in the right era are ALL valid even if their direct link to the theme is atmospheric.
+- Prefer well-rated landmarks (rating ≥ 4.0) when available — they're typically more memorable for players.
+- Avoid picking ${params.needed} sites of the same type (8 churches in a row would be boring). Mix church + monument + square + museum + landmark for variety.
+
+YOU MUST RETURN ${params.needed} INDICES. The candidates list has ${params.candidates.length} entries — you have plenty of choice. If you genuinely cannot find ${params.needed} that fit, return your best ${params.needed} anyway and explain why in the rationale; the pipeline will accept slightly off-theme picks rather than fail.
+
+OUTPUT — strict JSON, no markdown, no preamble:
+{
+  "selectedIndices": [0, 3, 5, 7, 12, 18, 22, 27],
+  "rationale": "1-2 sentence explanation of how the picks fit the theme and form a coherent parcours."
+}`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1500,
+    temperature: 0.3,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const responseText =
+    message.content[0].type === "text" ? message.content[0].text : "";
+
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.warn(
+      `[pickThematicLandmarksFromList] no JSON in response: ${responseText.substring(0, 200)} — falling back to top-${params.needed} by distance`,
+    );
+    return {
+      selectedIndices: Array.from(
+        { length: Math.min(params.needed, params.candidates.length) },
+        (_, i) => i,
+      ),
+      rationale: "fallback (LLM response unparseable)",
+    };
+  }
+
+  const parsed = JSON.parse(jsonMatch[0]) as {
+    selectedIndices?: number[];
+    rationale?: string;
+  };
+
+  const indices = Array.isArray(parsed.selectedIndices)
+    ? parsed.selectedIndices.filter(
+        (i) => Number.isInteger(i) && i >= 0 && i < params.candidates.length,
+      )
+    : [];
+
+  // Dédup
+  const seen = new Set<number>();
+  const unique: number[] = [];
+  for (const i of indices) {
+    if (!seen.has(i)) {
+      seen.add(i);
+      unique.push(i);
+    }
+  }
+
+  // Cap au needed
+  const capped = unique.slice(0, params.needed);
+
+  // Si Claude a renvoyé moins que needed, on complète avec les
+  // candidats par ordre de distance (les plus proches du startPoint).
+  if (capped.length < params.needed) {
+    for (let i = 0; i < params.candidates.length && capped.length < params.needed; i++) {
+      if (!seen.has(i)) {
+        seen.add(i);
+        capped.push(i);
+      }
+    }
+  }
+
+  return {
+    selectedIndices: capped,
+    rationale: parsed.rationale ?? "(no rationale)",
+  };
+}
+
+/**
  * Adapte le scénario quand des stops ont été remplacés par auto-discovery.
  *
  * Pourquoi ça existe : le pipeline GPS-first commence par géocoder les

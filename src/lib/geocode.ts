@@ -594,6 +594,154 @@ function isOutOfRange(
 
 
 /**
+ * Candidat issu de Google Places nearbysearch — un POI réel,
+ * géocodé sub-10m, dans la zone du parcours. C'est la SOURCE DE
+ * VÉRITÉ pour la liste des landmarks possibles : tous les éléments
+ * sont garantis géocodables (puisqu'ils viennent de Google), donc
+ * la pipeline ne peut JAMAIS rater leur position.
+ */
+export interface NearbyCandidate {
+  /** Nom Google ("Cathédrale Notre-Dame de Rouen"). */
+  name: string;
+  /** Coords sub-10m. */
+  lat: number;
+  lon: number;
+  /** place_id Google — pour dédup et fetch détails. */
+  placeId: string;
+  /** Types Google (`tourist_attraction`, `church`, `museum`…) — info
+   *  de fond utilisée par Claude pour juger la pertinence thématique. */
+  types: string[];
+  /** Adresse formatée si Google la fournit ("Rue Saint-Romain, Rouen"). */
+  address?: string;
+  /** Note Google (1-5) si dispo, signal de notoriété/qualité. */
+  rating?: number;
+  /** Nombre de reviews — autre signal de notoriété. */
+  userRatingsTotal?: number;
+  /** Distance au point de référence en mètres. */
+  distanceM: number;
+}
+
+/**
+ * Découvre TOUS les POIs patrimoniaux/touristiques dans un rayon
+ * autour d'un point. C'est la PHASE 1 du flow GPS-first : on récolte
+ * la liste exhaustive des landmarks RÉELS de la zone, puis on
+ * laisse Claude choisir les 8 qui collent le mieux au thème.
+ *
+ * Avantage majeur sur l'ancien flow Perplexity-first : tous les
+ * candidats sont GARANTIS géocodables (sub-10m, place_id Google),
+ * donc impossible de rater une étape pour cause de "nom obscur".
+ * On peut TOUJOURS publier 8 stops dans une zone urbaine normale
+ * (Rouen retourne typiquement 30-50 candidats dans 2 km).
+ *
+ * Multi-types parce que Google nearbysearch n'accepte qu'UN seul
+ * `type` par appel. On fait un appel par type, on fusionne +
+ * dédup par place_id. Types choisis pour pertinence escape game :
+ * monuments visibles depuis la rue, pas restaurants/cafés/stores
+ * qui sont trop nombreux et peu narrativement utiles.
+ */
+export async function discoverNearbyLandmarks(
+  refPoint: { lat: number; lon: number },
+  options: {
+    /** Rayon en mètres. Défaut 2 km. */
+    radiusM?: number;
+    /** Limite de candidats à retourner (après dédup). Défaut 50. */
+    limit?: number;
+    /** Types Google à inclure. Défaut : un mix tourisme + patrimoine. */
+    types?: string[];
+  } = {},
+): Promise<NearbyCandidate[]> {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    console.warn("[discoverNearbyLandmarks] GOOGLE_MAPS_API_KEY missing");
+    return [];
+  }
+
+  const radiusM = options.radiusM ?? 2_000;
+  const limit = options.limit ?? 50;
+  // Mix de types qui maximise la couverture sans bruit. On exclut
+  // restaurant/cafe/store/lodging (peu narrativement utiles).
+  const types = options.types ?? [
+    "tourist_attraction",
+    "museum",
+    "church",
+    "art_gallery",
+    "library",
+    "city_hall",
+    "park",
+    "place_of_worship",
+    "synagogue",
+    "mosque",
+    "hindu_temple",
+  ];
+
+  const seen = new Map<string, NearbyCandidate>();
+
+  for (const type of types) {
+    const url = new URL(
+      "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+    );
+    url.searchParams.set("location", `${refPoint.lat},${refPoint.lon}`);
+    url.searchParams.set("radius", String(radiusM));
+    url.searchParams.set("type", type);
+    url.searchParams.set("key", apiKey);
+
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+      const res = await fetch(url.toString(), { signal: ac.signal });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        status: string;
+        results?: Array<{
+          name: string;
+          place_id: string;
+          types?: string[];
+          rating?: number;
+          user_ratings_total?: number;
+          vicinity?: string;
+          geometry?: { location: { lat: number; lng: number } };
+        }>;
+        error_message?: string;
+      };
+      if (data.status !== "OK" && data.status !== "ZERO_RESULTS") {
+        console.warn(
+          `[discoverNearbyLandmarks] type=${type} status=${data.status}: ${data.error_message ?? ""}`,
+        );
+        continue;
+      }
+      for (const r of data.results ?? []) {
+        if (!r.place_id || !r.geometry?.location) continue;
+        if (seen.has(r.place_id)) continue;
+        const lat = r.geometry.location.lat;
+        const lon = r.geometry.location.lng;
+        const distanceM = haversineMeters({ lat, lon }, refPoint);
+        if (distanceM > radiusM) continue;
+        seen.set(r.place_id, {
+          name: r.name,
+          lat,
+          lon,
+          placeId: r.place_id,
+          types: r.types ?? [type],
+          address: r.vicinity,
+          rating: r.rating,
+          userRatingsTotal: r.user_ratings_total,
+          distanceM,
+        });
+      }
+    } catch (err) {
+      console.warn(
+        `[discoverNearbyLandmarks] type=${type} threw: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  // Tri par distance croissante, cap au limit
+  const ranked = [...seen.values()].sort((a, b) => a.distanceM - b.distanceM);
+  return ranked.slice(0, limit);
+}
+
+/**
  * Compte rapide des POIs touristiques/patrimoniaux dans un rayon
  * autour d'un point. Sert à valider la viabilité d'une zone AVANT
  * qu'oddballtrip publie une fiche produit : si 1.5 km autour du

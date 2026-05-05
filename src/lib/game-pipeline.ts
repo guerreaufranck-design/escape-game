@@ -368,9 +368,19 @@ export async function generateGameFromTemplate(
         answer: "AUTO",
         answerType: "name" as const,
         answerSource: "virtual_ar" as const,
-        source: s.source ?? "perplexity-discovered",
+        source: s.source ?? "google-curated",
         themeLink: s.description,
       }),
+    );
+
+    // Tableaux indexés par step pour propager le mode (radar/narrative)
+    // jusqu'au DB insert. ResearchedLocation n'a pas ces champs et on
+    // ne veut pas le polluer ; on les track en parallèle ici.
+    const stopModes: Array<"radar" | "narrative"> = discovery.landmarks.map(
+      (s) => s.stopMode,
+    );
+    const navigationHints: Array<string | undefined> = discovery.landmarks.map(
+      (s) => s.navigationHint,
     );
 
     // ============================================
@@ -526,6 +536,35 @@ export async function generateGameFromTemplate(
       }
     }
     const creationDurationMs = Date.now() - creationStart;
+
+    // ============================================
+    // STEP 5.5 : Override narratif pour les sub-POIs sans place_id
+    // ============================================
+    // Pour les stops en mode "narrative" (sub-monuments d'un site
+    // archéologique non-indexés Google), on ne peut pas utiliser le
+    // radar GPS strict (la coord est celle du site parent, pas du
+    // sub-monument). On compense :
+    //   - validation_radius_meters élargi à 80m (vs 30m radar) pour
+    //     que la validation passe quand le joueur arrive à proximité
+    //   - on prepend la phrase de navigation textuelle au riddle pour
+    //     guider le joueur depuis le stop précédent
+    // Mode radar (par défaut, POI Google indexé) : zéro changement,
+    // le joueur est tracké via radar normal.
+    for (let i = 0; i < steps.length; i++) {
+      if (stopModes[i] === "narrative") {
+        steps[i].validation_radius_meters = 80;
+        const hint = navigationHints[i];
+        if (
+          hint &&
+          !steps[i].riddle_text.toLowerCase().includes(hint.toLowerCase().slice(0, 30))
+        ) {
+          steps[i].riddle_text = `${hint}\n\n${steps[i].riddle_text}`;
+        }
+        console.log(
+          `[Pipeline] Step ${i + 1} ("${steps[i].title}") in NARRATIVE mode — radius 80m, hint prepended`,
+        );
+      }
+    }
 
     // ============================================
     // STEP 6 : Photos historiques + epilogue (en parallèle)

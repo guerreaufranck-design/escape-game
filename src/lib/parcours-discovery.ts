@@ -1,31 +1,49 @@
 /**
  * Découverte canonique d'un parcours d'escape game.
  *
- * SOURCE UNIQUE de landmarks : Perplexity (recherche web thématique) +
- * Google Places (géocodage sub-10m). Pas de fallback, pas de branche
- * conditionnelle sur les stops opérateur — l'entrée est l'INTENTION
- * (theme, narrative, startPoint), la sortie est un parcours marchable
- * de N landmarks documentés.
+ * Architecture GOOGLE-FIRST + CURATION CLAUDE :
+ *   1. Google Places nearbysearch retourne TOUS les POIs réels
+ *      (tourist_attraction, museum, church, monument, park, etc.)
+ *      dans 2 km autour du startPoint. Typiquement 30-100 candidats
+ *      pour une zone urbaine, tous géocodés sub-10m.
+ *   2. Claude reçoit la liste complète + le thème, et SÉLECTIONNE
+ *      les `stopCount` qui collent le mieux au thème ET forment un
+ *      parcours marchable cohérent.
+ *   3. NN reorder depuis startPoint.
+ *   4. Walkability filter (1 km max inter-stop).
  *
- * Pourquoi cette refonte : sur les 5 premiers tests de production,
- * 1 jeu sur 4 publiait avec un défaut critique parce que la pipeline
- * essayait de réparer des landmarks faiblement thématiques fournis par
- * un LLM amont. La cause racine n'est pas dans nos garde-fous (qui
- * fonctionnent) — c'est dans l'input. Avec Perplexity comme source
- * canonique testée (cf. Clervaux/Battle of the Bulge : Castle, BoB
- * Museum, GI Monument, Pak43, Hôtel Claravallis), le jeu publié est
- * thématiquement aligné par construction.
+ * Pourquoi cette architecture (vs ancienne Perplexity-first) :
+ *   ❌ Perplexity-first : Perplexity invente des noms ("Grosseteste
+ *      Tower"), certains hallucinés, certains formatés bizarrement,
+ *      certains obscurs. On essaie de géocoder en aval, on perd
+ *      30-50 % au passage. Résultat : 6/8 ou 4/8 stops, échecs
+ *      récurrents.
+ *   ✅ Google-first : la liste de départ EST déjà géocodée, donc
+ *      Claude choisit parmi des éléments tous valides. Garantie de
+ *      `stopCount` stops à chaque génération si Google a au moins
+ *      `stopCount` POIs dans la zone (cas standard).
+ *
+ * Backup Perplexity (optionnel, pour sub-POIs archéo) :
+ *   Si Google retourne < stopCount candidats (rare, sites isolés
+ *   type Éphèse), on enrichit avec Perplexity pour trouver des
+ *   sub-monuments connus mais non-indexés Google. Ces stops passent
+ *   en mode "narratif" : GPS approximatif (centre du site parent),
+ *   navigation par texte ("trouve la Bibliothèque de Celsus").
  *
  * Contrat de qualité :
- *   - Tous les landmarks sont des lieux RÉELS, géolocalisables
- *     précisément (Google Places sub-10m), avec source web documentée.
- *   - Tous les landmarks sont à ≤ 2 km du startPoint.
- *   - Aucun saut entre stops consécutifs ne dépasse 1 km après NN reorder.
- *   - Dédup par place_id pour éviter les doublons.
+ *   - Tous les landmarks sont des POIs RÉELS issus de Google.
+ *   - Tous sont à ≤ 2 km du startPoint.
+ *   - Aucun saut > 1 km entre stops consécutifs après NN reorder.
  */
 
 import { discoverThematicLandmarks } from "./perplexity";
-import { geocodeLocation, haversineMeters } from "./geocode";
+import { pickThematicLandmarksFromList } from "./anthropic";
+import {
+  discoverNearbyLandmarks,
+  geocodeLocation,
+  haversineMeters,
+  type NearbyCandidate,
+} from "./geocode";
 
 /** Rayon maximal autour du startPoint dans lequel les landmarks sont
  *  acceptés. 2 km = ~25 min de marche depuis le centre, donc le stop
@@ -45,12 +63,11 @@ const MAX_INTER_STOP_M = 1_000;
 const MIN_STOPS_TO_PUBLISH = 6;
 
 export interface DiscoveredStop {
-  /** Nom géocodable du landmark ("Hôtel Claravallis, Clervaux"). */
+  /** Nom géocodable du landmark ("Cathédrale Notre-Dame de Rouen"). */
   name: string;
-  /** Phrase d'une ligne expliquant le lien thématique documenté.
-   *  Servira de `whatToObserve` pour Claude #1 qui écrira l'énigme. */
+  /** Phrase d'une ligne expliquant le contexte thématique. */
   description: string;
-  /** URL source citée par Perplexity (Wikipedia, site patrimoine, etc.). */
+  /** URL source si dispo (Wikipedia / site patrimoine). */
   source?: string;
   /** Coordonnées GPS sub-10m issues de Google Places. */
   lat: number;
@@ -59,6 +76,25 @@ export interface DiscoveredStop {
   placeId?: string;
   /** Distance en mètres au startPoint, pour debug/logs. */
   distanceFromStartM: number;
+  /**
+   * Mode du stop pour le gameplay :
+   *   - "radar"     : POI Google indexé, GPS précis sub-10m, le
+   *                   joueur est tracké via radar (rayon validation 30m).
+   *   - "narrative" : sub-monument d'un site archéologique (ex. Bibliothèque
+   *                   de Celsus dans Éphèse) que Google n'indexe pas séparément.
+   *                   GPS = centre du site parent. Le riddle inclut une hint
+   *                   de navigation textuelle ("Remonte la Voie des Curètes
+   *                   jusqu'à..."). Validation rayon plus large (~80m).
+   */
+  stopMode: "radar" | "narrative";
+  /** Pour mode narrative : phrase qui guide le joueur depuis le stop
+   *  précédent jusqu'à ce sub-monument. `undefined` pour mode radar
+   *  (le radar guide tout seul). */
+  navigationHint?: string;
+  /** Types Google si dispo (info pour Claude lors de la génération). */
+  types?: string[];
+  /** Note Google si dispo (signal de notoriété). */
+  rating?: number;
 }
 
 export interface DiscoverParcoursParams {
@@ -92,12 +128,12 @@ export interface DiscoverParcoursResult {
  * `startPoint`, thématiquement alignés sur `theme` + `themeDescription`.
  *
  * Étapes :
- *   1. Perplexity propose stopCount + 4 candidats documentés
- *   2. Géocode chacun via Google Places (sub-10m, biased au startPoint)
- *   3. Drop les non-géocodables et les > 2 km du startPoint
- *   4. NN reorder depuis startPoint
- *   5. Tant qu'un saut > 1 km ET stops > 6, drop le plus excentré + re-NN
- *   6. Si stops finaux < 6, retourne errorCode
+ *   1. Google Places nearbysearch → 30-100 candidats RÉELS dans 2 km
+ *   2. Claude curate les `stopCount` meilleurs pour le thème
+ *   3. NN reorder depuis startPoint
+ *   4. Walkability filter (drop outliers > 1 km saut)
+ *   5. Si Google a < stopCount candidats → enrichissement Perplexity
+ *      (sub-monuments archéo non-indexés Google) en mode narrative
  */
 export async function discoverParcours(
   params: DiscoverParcoursParams,
@@ -106,153 +142,238 @@ export async function discoverParcours(
   const rejected: Array<{ name: string; reason: string }> = [];
 
   console.log(
-    `[discoverParcours] Starting discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount}`,
+    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount}`,
   );
 
-  // === PHASE 1 : Découverte Perplexity ===
-  let candidates: Awaited<ReturnType<typeof discoverThematicLandmarks>>;
+  // ============================================
+  // PHASE 1 : Google Places nearbysearch
+  // ============================================
+  // Source de vérité géographique. Tous les candidats retournés sont
+  // RÉELS, géocodés sub-10m, et dans le rayon. Multi-types pour
+  // maximiser la couverture (urban + heritage + religious + cultural).
+  let googleCandidates: NearbyCandidate[] = [];
   try {
-    candidates = await discoverThematicLandmarks({
-      city: params.city,
-      country: params.country,
-      theme: params.theme,
-      themeDescription: params.themeDescription,
-      // On passe la narration pour le ton — Perplexity est briefé pour
-      // ne PAS lier les landmarks à la fiction (cf. perplexity.ts), juste
-      // au sujet historique réel sous-jacent.
-      narrative: params.narrative,
-      // CRITIQUE : Perplexity reçoit le startPoint pour ancrer sa
-      // recherche AU BON ENDROIT. Sans ça, il choisit la zone la plus
-      // thématiquement riche (qui peut être à 10 km du startPoint réel)
-      // et tous ses candidats sont ensuite rejetés par le filtre 2 km
-      // (cf. test Greek/Themistocles : Perplexity choisit Piraeus,
-      // startPoint à Athens, 6 candidats sur 7 perdus).
-      startPoint: params.startPoint,
-      // On en demande quelques-uns en plus que stopCount pour absorber
-      // les drops au géocodage et au filtre walkability.
-      needed: params.stopCount,
-      excludeNames: [],
+    googleCandidates = await discoverNearbyLandmarks(params.startPoint, {
+      radiusM: RADIUS_AROUND_START_M,
+      limit: 60,
     });
   } catch (err) {
-    return {
-      success: false,
-      landmarks: [],
-      rejected,
-      errorCode: "DISCOVERY_FAILED",
-      error: `Perplexity discovery threw: ${err instanceof Error ? err.message : err}`,
-    };
-  }
-
-  if (candidates.length === 0) {
-    return {
-      success: false,
-      landmarks: [],
-      rejected,
-      errorCode: "DISCOVERY_FAILED",
-      error: `Perplexity returned 0 candidates for "${params.theme}" in ${params.city}. Check the theme description — it must point to a real-world subject (era, event, person, movement).`,
-    };
+    console.warn(
+      `[discoverParcours] Google nearbysearch threw: ${err instanceof Error ? err.message : err}`,
+    );
   }
 
   console.log(
-    `[discoverParcours] Perplexity returned ${candidates.length} candidate(s)`,
+    `[discoverParcours] Google nearbysearch returned ${googleCandidates.length} candidate(s) within ${RADIUS_AROUND_START_M}m`,
   );
 
-  // === PHASE 2 : Géocodage Google Places ===
-  // Pour chaque candidat, on appelle geocodeLocation EN DEUX PASSES :
-  //   Pass 1 : sans contrainte de distance (juste bias) → on récupère
-  //            les coords RÉELLES si Google les connaît, et on peut
-  //            les comparer au startPoint pour un diagnostic précis.
-  //   Pass 2 : avec contrainte de distance, pour décider si on garde.
-  // Le coût est marginal (les caches Google sont chauds après pass 1)
-  // et le bénéfice énorme : on sait POURQUOI un candidat est rejeté
-  // (pas trouvé / trop loin / nom mismatch) au lieu d'un message vague.
-  const geocoded: DiscoveredStop[] = [];
-  const seenPlaceIds = new Set<string>();
-
-  for (const cand of candidates) {
-    // Pass 1 : permissif, pour savoir si Google connaît le lieu.
-    const geoLoose = await geocodeLocation(
-      cand.name,
-      params.city,
-      params.country,
-      {
-        referencePoint: params.startPoint,
-        maxDistanceM: 50_000, // 50 km = on capte tout dans la région
-      },
-    );
-
-    if (!geoLoose) {
-      const reason = `Google + Nominatim n'ont pas trouvé "${cand.name}" dans ou autour de ${params.city} (probable hallucination Perplexity ou nom trop obscur)`;
-      console.log(`[discoverParcours] DROP "${cand.name}" — ${reason}`);
-      rejected.push({ name: cand.name, reason });
-      continue;
-    }
-
-    // Vérifier la distance au startPoint
-    const distanceFromStart = haversineMeters(params.startPoint, {
-      lat: geoLoose.lat,
-      lon: geoLoose.lon,
-    });
-
-    if (distanceFromStart > RADIUS_AROUND_START_M) {
-      const reason = `géocodé à ${geoLoose.lat.toFixed(4)},${geoLoose.lon.toFixed(4)} = ${Math.round(distanceFromStart)}m du startPoint (max ${RADIUS_AROUND_START_M}m). Soit homonyme parasite, soit landmark réel mais hors zone.`;
-      console.log(`[discoverParcours] DROP "${cand.name}" — ${reason}`);
-      rejected.push({ name: cand.name, reason });
-      continue;
-    }
-
-    // OK : Google a trouvé ET c'est dans la zone. On utilise ce résultat.
-    const geo = geoLoose;
-
-    // Dédup par place_id (Perplexity peut citer 2 fois le même lieu
-    // sous deux noms légèrement différents).
-    const placeId = geo.externalId ?? `geocoded:${cand.name}`;
-    if (seenPlaceIds.has(placeId)) {
-      console.log(
-        `[discoverParcours] DROP "${cand.name}" — duplicate place_id`,
-      );
-      rejected.push({
-        name: cand.name,
-        reason: "duplicate of another candidate",
+  // ============================================
+  // PHASE 2 : Curation thématique par Claude
+  // ============================================
+  // Claude reçoit la liste Google + le thème, et choisit les
+  // `stopCount` qui collent le mieux. Si Google a >= stopCount
+  // candidats, Claude pourra TOUJOURS retourner stopCount picks
+  // (la fonction complète avec les plus proches en cas de manque).
+  let claudePicks: DiscoveredStop[] = [];
+  if (googleCandidates.length >= params.stopCount) {
+    try {
+      const curation = await pickThematicLandmarksFromList({
+        theme: params.theme,
+        themeDescription: params.themeDescription,
+        narrative: params.narrative,
+        candidates: googleCandidates.map((c) => ({
+          name: c.name,
+          types: c.types,
+          address: c.address,
+          rating: c.rating,
+          distanceM: c.distanceM,
+        })),
+        needed: params.stopCount,
       });
-      continue;
+      console.log(
+        `[discoverParcours] Claude curation: ${curation.selectedIndices.length} picked. Rationale: ${curation.rationale}`,
+      );
+      // Mark non-selected as rejected for audit
+      const selectedSet = new Set(curation.selectedIndices);
+      for (let i = 0; i < googleCandidates.length; i++) {
+        if (!selectedSet.has(i)) {
+          rejected.push({
+            name: googleCandidates[i].name,
+            reason: "not picked by thematic curation",
+          });
+        }
+      }
+      claudePicks = curation.selectedIndices.map((i) => {
+        const c = googleCandidates[i];
+        return {
+          name: c.name,
+          description: `${c.types.slice(0, 2).join(", ")}, ${Math.round(c.distanceM)}m from start`,
+          source: c.placeId ? `https://www.google.com/maps/place/?q=place_id:${c.placeId}` : undefined,
+          lat: c.lat,
+          lon: c.lon,
+          placeId: c.placeId,
+          distanceFromStartM: c.distanceM,
+          stopMode: "radar",
+          types: c.types,
+          rating: c.rating,
+        };
+      });
+    } catch (err) {
+      console.warn(
+        `[discoverParcours] Claude curation failed: ${err instanceof Error ? err.message : err} — falling back to top-${params.stopCount} by distance`,
+      );
+      claudePicks = googleCandidates.slice(0, params.stopCount).map((c) => ({
+        name: c.name,
+        description: `${c.types.slice(0, 2).join(", ")}, ${Math.round(c.distanceM)}m from start`,
+        source: c.placeId ? `https://www.google.com/maps/place/?q=place_id:${c.placeId}` : undefined,
+        lat: c.lat,
+        lon: c.lon,
+        placeId: c.placeId,
+        distanceFromStartM: c.distanceM,
+        stopMode: "radar",
+        types: c.types,
+        rating: c.rating,
+      }));
     }
-    seenPlaceIds.add(placeId);
-
-    geocoded.push({
-      name: cand.name,
-      description: cand.description,
-      source: cand.source,
-      lat: geo.lat,
-      lon: geo.lon,
-      placeId,
-      distanceFromStartM: distanceFromStart,
-    });
-
-    console.log(
-      `[discoverParcours] KEEP "${cand.name}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (${Math.round(distanceFromStart)}m from start, src=${geo.source})`,
+  } else {
+    // Google a renvoyé < stopCount candidats. Cas rare (zone sparse,
+    // erreur API, site archéo isolé). On utilisera tous ceux qu'il y a
+    // et on essaiera l'enrichissement Perplexity en Phase 3.
+    console.warn(
+      `[discoverParcours] Google returned only ${googleCandidates.length} candidates (need ${params.stopCount}) — will try Perplexity enrichment`,
     );
+    claudePicks = googleCandidates.map((c) => ({
+      name: c.name,
+      description: `${c.types.slice(0, 2).join(", ")}, ${Math.round(c.distanceM)}m from start`,
+      source: c.placeId ? `https://www.google.com/maps/place/?q=place_id:${c.placeId}` : undefined,
+      lat: c.lat,
+      lon: c.lon,
+      placeId: c.placeId,
+      distanceFromStartM: c.distanceM,
+      stopMode: "radar",
+      types: c.types,
+      rating: c.rating,
+    }));
   }
 
-  if (geocoded.length < MIN_STOPS_TO_PUBLISH) {
+  // ============================================
+  // PHASE 3 : Enrichissement Perplexity (mode narrative)
+  // ============================================
+  // Si on n'a pas atteint stopCount avec Google seul, on demande à
+  // Perplexity des sub-monuments thématiques connus mais non-indexés
+  // Google séparément (cas typique : sites archéologiques type Éphèse
+  // où "Bibliothèque de Celsus" n'a pas son propre place_id).
+  // Ces stops passent en mode "narrative" : GPS = startPoint approximé,
+  // navigation par hint textuel.
+  if (claudePicks.length < params.stopCount) {
+    const stillNeeded = params.stopCount - claudePicks.length;
+    console.log(
+      `[discoverParcours] Need ${stillNeeded} more stops — querying Perplexity for sub-monuments`,
+    );
+    try {
+      const usedNames = new Set(claudePicks.map((p) => p.name.toLowerCase()));
+      const perplexityCandidates = await discoverThematicLandmarks({
+        city: params.city,
+        country: params.country,
+        theme: params.theme,
+        themeDescription: params.themeDescription,
+        narrative: params.narrative,
+        startPoint: params.startPoint,
+        needed: stillNeeded,
+        excludeNames: claudePicks.map((p) => p.name),
+      });
+
+      for (const cand of perplexityCandidates) {
+        if (claudePicks.length >= params.stopCount) break;
+        if (usedNames.has(cand.name.toLowerCase())) continue;
+
+        // Tentative de géocodage Google : si trouvé, mode radar normal.
+        // Sinon, mode narrative ancré sur le startPoint.
+        const geo = await geocodeLocation(
+          cand.name,
+          params.city,
+          params.country,
+          {
+            referencePoint: params.startPoint,
+            maxDistanceM: RADIUS_AROUND_START_M,
+          },
+        );
+
+        if (geo) {
+          // Trouvé : mode radar standard
+          const placeId = geo.externalId ?? `geocoded:${cand.name}`;
+          if (claudePicks.some((p) => p.placeId === placeId)) {
+            rejected.push({
+              name: cand.name,
+              reason: "duplicate place_id with existing pick",
+            });
+            continue;
+          }
+          claudePicks.push({
+            name: cand.name,
+            description: cand.description,
+            source: cand.source,
+            lat: geo.lat,
+            lon: geo.lon,
+            placeId,
+            distanceFromStartM: haversineMeters(params.startPoint, {
+              lat: geo.lat,
+              lon: geo.lon,
+            }),
+            stopMode: "radar",
+          });
+          console.log(
+            `[discoverParcours] Perplexity radar pick: "${cand.name}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)}`,
+          );
+        } else {
+          // Non géocodé : mode narrative ancré sur le startPoint avec
+          // hint de navigation. Le joueur recevra une indication
+          // textuelle "Find the Library of Celsus, then open AR".
+          claudePicks.push({
+            name: cand.name,
+            description: cand.description,
+            source: cand.source,
+            lat: params.startPoint.lat,
+            lon: params.startPoint.lon,
+            placeId: `narrative:${cand.name}`,
+            distanceFromStartM: 0,
+            stopMode: "narrative",
+            navigationHint: `Walk through the site until you reach the ${cand.name}. Once you stand before it, open the AR camera.`,
+          });
+          console.log(
+            `[discoverParcours] Perplexity NARRATIVE pick: "${cand.name}" (no Google place_id, anchored at startPoint)`,
+          );
+        }
+      }
+    } catch (err) {
+      console.warn(
+        `[discoverParcours] Perplexity enrichment threw: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  if (claudePicks.length < MIN_STOPS_TO_PUBLISH) {
     return {
       success: false,
       landmarks: [],
       rejected,
       errorCode: "TOO_FEW_LANDMARKS",
-      error: `Only ${geocoded.length} of ${candidates.length} Perplexity candidates could be geocoded within ${RADIUS_AROUND_START_M}m of startPoint. Minimum is ${MIN_STOPS_TO_PUBLISH}. Possibilities: theme too narrow, startPoint in low-density area, or candidate names too obscure for Google.`,
+      error: `Only ${claudePicks.length} landmarks could be assembled around startPoint (Google: ${googleCandidates.length}, after enrichment: ${claudePicks.length}). Minimum is ${MIN_STOPS_TO_PUBLISH}. Probable cause: zone too sparse (rural / suburban) or theme too narrow.`,
     };
   }
 
-  // === PHASE 3 : NN reorder depuis startPoint ===
-  // Greedy nearest-neighbor pour que le parcours soit physiquement cohérent
-  // (pas de zigzag) du point de vue du joueur qui démarre au startPoint.
-  let ordered = greedyNearestNeighborFromStart(geocoded, params.startPoint);
+  // ============================================
+  // PHASE 4 : NN reorder depuis startPoint
+  // ============================================
+  // Greedy nearest-neighbor pour un parcours physiquement cohérent.
+  let ordered = greedyNearestNeighborFromStart(claudePicks, params.startPoint);
 
-  // === PHASE 4 : Élagage walkability inter-stops ===
-  // Tant qu'un saut > 1 km existe ET qu'on peut se permettre de drop
-  // (stops > 6), on retire le stop avec le plus gros score d'éloignement
-  // (somme des distances aux voisins immédiats), puis on re-NN.
+  // ============================================
+  // PHASE 5 : Élagage walkability inter-stops
+  // ============================================
+  // Tant qu'un saut > 1 km existe ET qu'on a > MIN_STOPS_TO_PUBLISH,
+  // on retire le stop le plus excentré (somme des distances aux voisins
+  // immédiats), puis on re-NN.
   while (
     ordered.length > MIN_STOPS_TO_PUBLISH &&
     maxInterStopJump(ordered) > MAX_INTER_STOP_M
@@ -284,7 +405,7 @@ export async function discoverParcours(
       reason: `inter-stop jump > ${MAX_INTER_STOP_M}m, dropped during walkability pruning`,
     });
     console.warn(
-      `[discoverParcours] DROP "${dropped.name}" — too far from neighbors (jump > ${MAX_INTER_STOP_M}m), ${ordered.length} remaining`,
+      `[discoverParcours] DROP "${dropped.name}" — too far from neighbors, ${ordered.length} remaining`,
     );
     ordered = greedyNearestNeighborFromStart(ordered, params.startPoint);
   }
@@ -295,15 +416,13 @@ export async function discoverParcours(
       landmarks: [],
       rejected,
       errorCode: "PARCOURS_TOO_DISPERSED",
-      error: `After walkability pruning, max inter-stop jump still ${Math.round(maxInterStopJump(ordered))}m > ${MAX_INTER_STOP_M}m. Theme + startPoint produce landmarks too dispersed for a walking game. Try a tighter theme or a different startPoint.`,
+      error: `After walkability pruning, max inter-stop jump still ${Math.round(maxInterStopJump(ordered))}m > ${MAX_INTER_STOP_M}m. Try a different startPoint or theme.`,
     };
   }
 
-  // === PHASE 5 : Cap au stopCount demandé ===
-  // On peut avoir géocodé plus que stopCount (on demandait stopCount + 4
-  // à Perplexity). On garde les `stopCount` premiers du NN (= les plus
-  // proches du startPoint), pour un parcours qui démarre serré et
-  // rayonne légèrement.
+  // ============================================
+  // PHASE 6 : Cap au stopCount demandé
+  // ============================================
   if (ordered.length > params.stopCount) {
     const dropped = ordered.splice(params.stopCount);
     for (const d of dropped) {
@@ -315,8 +434,10 @@ export async function discoverParcours(
   }
 
   const durationMs = Date.now() - startTs;
+  const radarCount = ordered.filter((s) => s.stopMode === "radar").length;
+  const narrativeCount = ordered.filter((s) => s.stopMode === "narrative").length;
   console.log(
-    `[discoverParcours] DONE in ${Math.round(durationMs / 1000)}s — ${ordered.length} landmarks (${rejected.length} rejected)`,
+    `[discoverParcours] DONE in ${Math.round(durationMs / 1000)}s — ${ordered.length} landmarks (${radarCount} radar, ${narrativeCount} narrative, ${rejected.length} rejected)`,
   );
 
   return {
