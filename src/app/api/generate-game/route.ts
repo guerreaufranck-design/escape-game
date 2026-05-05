@@ -134,8 +134,19 @@ export async function POST(request: NextRequest) {
       difficulty: body.difficulty || 3,
       estimatedDurationMin: body.estimatedDuration || body.estimatedDurationMin || 90,
       coverImage: body.coverImage || null,
+      // body.stops est silencieusement ignoré par le pipeline intent-first
+      // (cf. game-pipeline.ts) — on le passe quand même au template pour
+      // que le log "ignored" se déclenche dans la pipeline et que oddballtrip
+      // voit qu'on a reçu mais pas utilisé.
       stops,
       startPoint,
+      // stopCount : combien de landmarks Perplexity doit produire. Si
+      // oddballtrip envoie body.stops[] legacy on prend sa longueur ;
+      // sinon body.stopCount ; sinon 8.
+      stopCount:
+        typeof body.stopCount === "number"
+          ? body.stopCount
+          : (stops?.length ?? 8),
     };
 
     // Idempotency: if a game with this slug already exists, return it
@@ -198,26 +209,30 @@ export async function POST(request: NextRequest) {
               gameId: result.gameId,
               slug: body.slug || template.slug,
               stepsCount: result.steps,
-              // Présent ssi un ou plusieurs stops ont été retirés du
-              // parcours. Le jeu publie quand même (>= 6 stops). Permet
-              // à oddballtrip d'afficher un warning à l'opérateur et,
-              // si nécessaire, de planifier une re-génération avec des
-              // landmarkName corrigés.
-              ...(result.droppedStops?.length
-                ? { droppedStops: result.droppedStops }
+              // CANONIQUE intent-first : la liste des landmarks réels
+              // qui ont été utilisés pour générer le jeu (issue de
+              // Perplexity + Google Places, sub-10m). oddballtrip DOIT
+              // s'en servir pour rafraîchir la fiche produit, sinon
+              // la page indexée diverge de l'expérience jouée.
+              ...(result.landmarks?.length
+                ? { landmarks: result.landmarks }
                 : {}),
-              // Présent ssi un ou plusieurs stops ont été auto-remplacés
-              // par un POI réel découvert via Google Places. La narration
-              // a été régénérée — oddballtrip DOIT mettre à jour la
-              // fiche produit avec `adaptedNarrative.themeDescription`
-              // et `adaptedNarrative.narrative`, sinon le client achète
-              // un scénario qui ne correspond plus à ce qu'il joue.
-              ...(result.replacedStops?.length
+              // Le scénario adapté aux landmarks réels (themeDescription
+              // + narrative + noms poétiques par stop). Toujours présent
+              // sauf si l'adaptation Claude a planté (graceful degrad).
+              // À utiliser pour rafraîchir la fiche produit côté
+              // commerce — sinon le client achète X et joue Y.
+              ...(result.adaptedNarrative
                 ? {
                     narrativeChanged: true,
-                    replacedStops: result.replacedStops,
                     adaptedNarrative: result.adaptedNarrative,
                   }
+                : {}),
+              // Audit non-actionnable : candidats Perplexity rejetés
+              // pour cause de géocodage ou walkability. Affichage
+              // optionnel pour l'opérateur, ne nécessite aucune action.
+              ...(result.droppedStops?.length
+                ? { droppedStops: result.droppedStops }
                 : {}),
             }),
           });

@@ -1,14 +1,22 @@
 /**
- * Game Generation Pipeline
- * Orchestrates: Perplexity (research) → Claude (creation) → Supabase (storage)
+ * Game Generation Pipeline — INTENT-FIRST CANONICAL FLOW
  *
- * Two modes:
- * 1. Predefined: Game designer provides stops from oddballtrip → Perplexity researches facts → Claude creates riddles
- * 2. Discovery: Only city/theme provided → Perplexity finds locations AND facts → Claude creates riddles
+ * Single-flow architecture (no branches sur les stops opérateur) :
+ *   discoverParcours (Perplexity + Google Places + walkability)
+ *     → adaptNarrative (Claude)
+ *     → generateGameSteps (Claude #1, énigmes)
+ *     → validateGeneratedSteps + regenerateStep si bloquant
+ *     → fetchPhotosForSteps (Wikipedia, parallèle)
+ *     → generateEpilogue (Claude, parallèle)
+ *     → insertGameIntoDatabase
+ *
+ * L'opérateur (oddballtrip) transmet UNIQUEMENT l'intention :
+ *   { city, country, theme, themeDescription, narrative, startPoint, stopCount }
+ *
+ * Le champ legacy `template.stops[]` est silencieusement ignoré.
  */
 
 import {
-  discoverThematicLandmarks,
   type PredefinedStop,
   type ResearchedLocation,
 } from "./perplexity";
@@ -18,19 +26,13 @@ import {
   validateGeneratedSteps,
   regenerateStep,
   adaptNarrativeForReplacedStops,
-  selectThematicallyRelevantLandmarks,
-  validateOperatorStopsThematically,
   type GeneratedEpilogue,
   type GeneratedStep,
 } from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
 import { fetchHistoricalPhoto, type HistoricalPhotoResult } from "./wikipedia";
-import {
-  discoverNearbyLandmarks,
-  geocodeLocation,
-  haversineMeters,
-  type DiscoveredLandmark,
-} from "./geocode";
+import { geocodeLocation, haversineMeters } from "./geocode";
+import { discoverParcours } from "./parcours-discovery";
 import { v4 as uuidv4 } from "uuid";
 
 export interface GameTemplate {
@@ -67,7 +69,15 @@ export interface GameTemplate {
    * villes où le parcours ne couvre qu'un quartier.
    */
   startPoint?: { lat: number; lon: number };
-  /** Predefined stops from oddballtrip — if provided, Perplexity only researches these */
+  /** Combien de stops au final dans le jeu (défaut 8). Dans le modèle
+   *  intent-first, c'est ce nombre que Perplexity essaie de produire,
+   *  filtré ensuite par géocodage et walkability. Plancher dur = 6 ;
+   *  en dessous le pipeline rejette. */
+  stopCount?: number;
+  /** [LEGACY] Stops fournis par oddballtrip. Dans le modèle intent-first
+   *  ce champ est SILENCIEUSEMENT IGNORÉ — Perplexity découvre les
+   *  landmarks à partir du theme + startPoint. Conservé dans le type
+   *  uniquement pour rétrocompat avec les anciens appels API. */
   stops?: PredefinedStop[];
   /**
    * GPS-FIRST MODE — operator clicks N pins on a satellite map and
@@ -107,6 +117,9 @@ export interface GameWaypoint {
  */
 export type PipelineErrorCode =
   | "GEOCODING_FAILED"
+  | "DISCOVERY_FAILED"
+  | "TOO_FEW_LANDMARKS"
+  | "PARCOURS_TOO_DISPERSED"
   | "GENERATION_FAILED"
   | "VALIDATION_FAILED"
   | "INTERNAL_ERROR";
@@ -150,27 +163,54 @@ export interface AdaptedNarrativePayload {
   stopNames: string[];
 }
 
+/**
+ * Item exposé dans la réponse `landmarks[]` du callback de succès. Permet
+ * à oddballtrip de rafraîchir sa fiche produit avec les vrais POIs
+ * découverts par le pipeline + leurs photos historiques.
+ */
+export interface PublishedLandmark {
+  /** Nom poétique côté joueur ("The Command Post"), réécrit par Claude. */
+  name: string;
+  /** Nom géocodable du POI réel ("Château de Clervaux, Clervaux"). */
+  landmarkName: string;
+  lat: number;
+  lon: number;
+  /** URL Wikipedia/heritage de la photo historique si trouvée. */
+  photoUrl?: string | null;
+  /** Lien thématique documenté (issu de Perplexity). */
+  themeLink?: string;
+  /** URL source citée par Perplexity (audit). */
+  source?: string;
+}
+
 export interface PipelineResult {
   success: boolean;
   gameId?: string;
   error?: string;
   /** Structured failure category for callers to switch on. */
   errorCode?: PipelineErrorCode;
-  /** When errorCode === "GEOCODING_FAILED": the operator-facing list
-   *  of stops the geocoder couldn't resolve. */
+  /** When errorCode === "GEOCODING_FAILED" / "DISCOVERY_FAILED": the
+   *  list of landmark names the pipeline could not use. Useful for
+   *  audit / debugging — not actionable by oddballtrip in the
+   *  intent-first model. */
   failedLandmarks?: FailedLandmark[];
-  /** Stops that failed to geocode but the game was still published
-   *  with the remaining ones (graceful degradation). Present on
-   *  successful runs when 1-2 stops were dropped. Operator can
-   *  later regenerate with corrected landmark names if they care. */
+  /** Liste canonique des landmarks publiés. Toujours présent sur
+   *  succès dans le modèle intent-first. oddballtrip s'en sert pour
+   *  rafraîchir sa fiche produit. */
+  landmarks?: PublishedLandmark[];
+  /** Candidats Perplexity rejetés au géocodage ou par le filtre
+   *  walkability. Loggés pour audit, non bloquants si on a réussi
+   *  à publier le jeu. */
   droppedStops?: FailedLandmark[];
-  /** Stops dont le landmarkName fourni était introuvable et qui ont
-   *  été remplacés par un POI réel découvert via Google Places.
-   *  Le jeu publie avec le compte de stops attendu. */
+  /** [LEGACY] Mapping ancien nom poétique → nouveau POI quand des
+   *  stops opérateur étaient remplacés. Dans le modèle intent-first
+   *  ce champ n'a plus d'utilité directe (TOUS les landmarks sont
+   *  découverts), mais reste exposé pour rétrocompat avec les
+   *  callers qui le consomment. */
   replacedStops?: ReplacedStop[];
-  /** Présent ssi `replacedStops.length > 0` : nouveau scénario généré
-   *  par Claude pour matcher les POIs auto-découverts. oddballtrip
-   *  doit l'utiliser pour rafraîchir la fiche produit côté commerce. */
+  /** Scénario réécrit par Claude pour coller aux landmarks finaux.
+   *  oddballtrip DOIT l'utiliser pour rafraîchir la fiche produit
+   *  côté commerce, sinon le client achète X et joue Y. */
   adaptedNarrative?: AdaptedNarrativePayload;
   durationMs?: number;
   steps?: number;
@@ -202,1022 +242,284 @@ const MAX_INTER_STOP_M = 1_000;
  * Generate a complete game from a template
  * This is the main pipeline entry point
  */
+/**
+ * Generate a complete game from a template — INTENT-FIRST CANONICAL PIPELINE.
+ *
+ * Modèle :
+ *   1. Resolve startPoint (template.startPoint, ou fallback city center).
+ *   2. Discovery : Perplexity propose, Google Places géocode, walkability filtre.
+ *   3. Adapt narrative : Claude réécrit themeDescription + narrative + noms
+ *      poétiques pour coller aux landmarks réels découverts.
+ *   4. Generate riddles : Claude écrit l'énigme + hints + AR pour chaque stop.
+ *   5. Validate : second-pass QA Claude, regen au besoin.
+ *   6. Photos historiques (Wikipedia) + epilogue.
+ *   7. Insert DB.
+ *
+ * Le champ legacy `template.stops[]` est silencieusement IGNORÉ — la
+ * découverte est intégralement déléguée à Perplexity. C'est le seul
+ * levier de qualité, donc le seul à monitorer / tuner.
+ */
 export async function generateGameFromTemplate(
   template: GameTemplate
 ): Promise<PipelineResult> {
   const startTime = Date.now();
 
+  if (template.stops?.length) {
+    console.warn(
+      `[Pipeline] body.stops[] (${template.stops.length} item(s)) is IGNORED in intent-first mode — Perplexity will discover landmarks from theme + startPoint`,
+    );
+  }
+
   try {
     console.log(
-      `[Pipeline] Starting game generation for ${template.city} - "${template.theme}"`
+      `[Pipeline] Starting intent-first generation: "${template.theme}" in ${template.city}`,
     );
-    if (template.stops?.length) {
-      console.log(
-        `[Pipeline] Mode: PREDEFINED (${template.stops.length} stops from oddballtrip)`
-      );
-    } else {
-      console.log("[Pipeline] Mode: DISCOVERY (finding locations from scratch)");
-    }
 
     // ============================================
-    // STEP 1: GPS-first geocoding of every operator-provided stop
+    // STEP 0 : Résoudre le point de départ
     // ============================================
-    // The legacy LLM-research-first flow (Perplexity + Claude) routinely
-    // produced coordinates that drifted by 50-2 800 m from the real
-    // landmark they described — a 34% / 32% / 34% split of OK / WARNING /
-    // CRITICAL across the existing 11 games. Validation radius is 25-50 m,
-    // so anything past that = player physically arrives but the app says
-    // "you're not there yet".
-    //
-    // The new contract: oddballtrip.com sends a `stops[]` array where each
-    // stop carries an OPTIONAL `landmarkName` field — the real, geocoder-
-    // friendly name ("Abbaye Saint-Philibert, Tournus"). We use that to
-    // fetch authoritative GPS via Google Places (sub-10 m on named
-    // landmarks), Nominatim as fallback. The coords we get are LOCKED:
-    // Claude is never allowed to paraphrase, round, or invent them.
-    //
-    // If a stop has no `landmarkName`, we fall back to its `name`. If
-    // both fail to geocode, the pipeline rejects the whole game with a
-    // clear error — better fail-loud than ship a broken radar to a
-    // paying customer.
-    if (!template.stops || template.stops.length === 0) {
-      throw new Error(
-        "GPS_FIRST_REQUIRED: pipeline now requires `stops[]` from oddballtrip. Discovery mode is deprecated — generation cannot proceed without operator-provided landmark names.",
+    let startPoint = template.startPoint;
+    if (!startPoint) {
+      console.warn(
+        `[Pipeline] ⚠ MISSING template.startPoint — falling back to city center geocode (less precise for big cities, oddballtrip should transmit startPoint)`,
       );
-    }
-
-    console.log(
-      `[Pipeline] Step 1: Geocoding ${template.stops.length} stops directly (GPS-first mode)...`,
-    );
-    const researchStart = Date.now();
-
-    // STEP 0 : géocoder la ville. Sert UNIQUEMENT de bias pour aider
-    // Google Places à désambiguïser les homonymes ("Pont Saint-Pierre"
-    // → celui de la bonne ville, pas celui de Genève à 800 km). Le
-    // centre-ville N'EST PAS la référence du parcours — un parcours
-    // peut tenir dans un quartier (Montmartre, Trastevere) à plusieurs
-    // km du centre. La vraie référence est calculée plus bas en STEP 0.5
-    // (startPoint operator OU centroïde des stops géocodés).
-    let cityRef: { lat: number; lon: number } | undefined;
-    try {
       const cityGeo = await geocodeLocation(
         `${template.city}, ${template.country}`,
         template.city,
         template.country,
       );
-      if (cityGeo) {
-        cityRef = { lat: cityGeo.lat, lon: cityGeo.lon };
-        console.log(
-          `[Pipeline] City bias for "${template.city}, ${template.country}" : ${cityRef.lat.toFixed(4)},${cityRef.lon.toFixed(4)} — used to disambiguate landmark names, NOT as the parcours reference`,
-        );
-      } else {
-        console.warn(
-          `[Pipeline] Could not geocode city center for "${template.city}" — landmark geocoding will run WITHOUT location bias (homonym risk)`,
-        );
-      }
-    } catch (err) {
-      console.warn(
-        `[Pipeline] City geocoding threw:`,
-        err instanceof Error ? err.message : err,
-      );
-    }
-
-    // Wrapper local : on a besoin de tracker le place_id et la nature
-    // (héritée vs auto-découverte) de chaque stop pour pouvoir (a)
-    // exclure les déjà-utilisés de la discovery, (b) réordonner par
-    // greedy NN, (c) briefer Claude lors de la régénération de
-    // narration. ResearchedLocation reste le format consommé par le
-    // reste du pipeline.
-    type PipelineStop = {
-      loc: ResearchedLocation;
-      isReplacement: boolean;
-      placeId?: string;
-      types?: string[];
-      address?: string;
-      /** Nom du stop original (poétique) si héritage. Sert à mapper
-       *  failed → replacement pour le callback. */
-      originalStopName?: string;
-    };
-
-    const stopsAfterGeocode: PipelineStop[] = [];
-    const geocodeFailures: Array<{ stopName: string; tried: string[] }> = [];
-
-    // PHASE A — géocodage permissif autour de la ville. À ce stade, on
-    // accepte un rayon LARGE (50 km) parce qu'on n'a pas encore le point
-    // de référence du parcours. Le bias `cityRef` reste serré pour
-    // disambiguïser les homonymes, mais on tolère des résultats à
-    // plusieurs km — c'est PHASE B (post-centroïde) qui appliquera le
-    // filtre 1.5 km final.
-    const PHASE_A_LOOSE_M = 50_000;
-    for (const stop of template.stops) {
-      const queryName = stop.landmarkName?.trim() || stop.name.trim();
-      const tried = [queryName];
-      let geo = await geocodeLocation(
-        queryName,
-        template.city,
-        template.country,
-        { referencePoint: cityRef, maxDistanceM: PHASE_A_LOOSE_M },
-      );
-      // If we used `landmarkName` and it failed, give the poetic `name`
-      // a single second chance — it might still happen to be a real
-      // place ("Iglesia del Carmen" works even without "landmarkName").
-      if (!geo && stop.landmarkName && stop.landmarkName.trim() !== stop.name.trim()) {
-        tried.push(stop.name.trim());
-        geo = await geocodeLocation(
-          stop.name,
-          template.city,
-          template.country,
-          { referencePoint: cityRef, maxDistanceM: PHASE_A_LOOSE_M },
-        );
-      }
-      if (!geo) {
-        geocodeFailures.push({ stopName: stop.name, tried });
-        continue;
-      }
-      console.log(
-        `[Pipeline] geocoded "${queryName}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (source=${geo.source}, confidence=${geo.confidence})`,
-      );
-      stopsAfterGeocode.push({
-        loc: {
-          name: stop.name,
-          landmarkName: stop.landmarkName?.trim() || queryName,
-          latitude: geo.lat,
-          longitude: geo.lon,
-          // Description from operator becomes the "what to observe"
-          // hint Claude uses to anchor the riddle. Fallback wording
-          // works for any virtual_ar step.
-          whatToObserve:
-            stop.description?.trim() ||
-            `Look around ${stop.name} — the AR camera will reveal the answer.`,
-          // "AUTO" = Claude must invent the AR answer (a year, a Latin
-          // word, a Roman numeral) at narrative time. Distinct from the
-          // legacy "UNVERIFIED" flag so we can tell the cases apart in
-          // logs / diagnostics.
-          answer: "AUTO",
-          answerType: "name",
-          answerSource: "virtual_ar",
-          source: "operator-provided",
-          themeLink: "",
-        },
-        isReplacement: false,
-        placeId: geo.externalId,
-        originalStopName: stop.name,
-      });
-    }
-
-    // ============================================
-    // STEP 0.5 : POINT DE DÉPART DU PARCOURS
-    // ============================================
-    // Trois sources possibles, dans l'ordre de priorité :
-    //   1. `template.startPoint` transmis explicitement par oddballtrip
-    //      — cas nominal, le client opérateur dit où le joueur démarre.
-    //   2. Coords du PREMIER stop opérateur géocodé (= le stop d'index 0
-    //      tel qu'il a été ordonné par oddballtrip). C'est le start
-    //      naturel du parcours quand pas de startPoint explicite — le
-    //      joueur arrive au stop 1 et marche vers les suivants.
-    //   3. Centre-ville (cityRef) en dernier recours si AUCUN stop n'a
-    //      pu être géocodé (= toute la liste est hallucinée). Permet à
-    //      l'auto-discovery de tourner quand même sur la zone.
-    //
-    // Note : on n'utilise PAS de centroïde. Le centre d'un parcours est
-    // mal défini (point géographique moyen ? mi-chemin du tracé ?) et
-    // sensible aux outliers. Le point de départ, lui, est sans
-    // ambiguïté : l'opérateur l'a choisi, le joueur y arrive.
-    //
-    // C'est cette référence — pas le centre-ville — qui servira au
-    // filtre 1.5 km, à l'auto-discovery Perplexity / Google, et au NN
-    // reorder. Cas d'usage : un parcours dans Montmartre est valide à
-    // Paris même si Montmartre est à 5 km du "centre" (Île de la Cité).
-    let parcoursRef: { lat: number; lon: number } | undefined;
-    if (template.startPoint) {
-      parcoursRef = template.startPoint;
-      console.log(
-        `[Pipeline] Parcours start: operator-provided startPoint at ${parcoursRef.lat.toFixed(4)},${parcoursRef.lon.toFixed(4)}`,
-      );
-    } else if (stopsAfterGeocode.length > 0) {
-      const first = stopsAfterGeocode[0];
-      parcoursRef = {
-        lat: first.loc.latitude,
-        lon: first.loc.longitude,
-      };
-      console.log(
-        `[Pipeline] Parcours start: first geocoded operator stop "${first.loc.name}" at ${parcoursRef.lat.toFixed(4)},${parcoursRef.lon.toFixed(4)} (no explicit startPoint from oddballtrip)`,
-      );
-    } else if (cityRef) {
-      parcoursRef = cityRef;
-      console.warn(
-        `[Pipeline] Parcours start: falling back to city center (no operator startPoint, no geocoded stops)`,
-      );
-    }
-
-    // ============================================
-    // PHASE B — filtre les stops opérateur à 1.5 km de parcoursRef
-    // ============================================
-    // Maintenant qu'on a la vraie référence du parcours, on retire les
-    // stops qui sont géocodés mais hors zone (= en dehors du parcours
-    // que l'opérateur a effectivement designé). C'est ici que "Saint-
-    // Joseph à 2,2 km du château de Clervaux" tombe enfin — référence
-    // = château + ses voisins, pas le centre administratif de la
-    // commune.
-    if (parcoursRef) {
-      const PHASE_B_TIGHT_M = 1_500;
-      const removeIdx: number[] = [];
-      for (let i = 0; i < stopsAfterGeocode.length; i++) {
-        const s = stopsAfterGeocode[i];
-        const d = haversineMeters(parcoursRef, {
-          lat: s.loc.latitude,
-          lon: s.loc.longitude,
-        });
-        if (d > PHASE_B_TIGHT_M) {
-          console.warn(
-            `[Pipeline] Stop "${s.loc.name}" geocoded ${Math.round(d)}m from parcours reference > ${PHASE_B_TIGHT_M}m — moving to auto-discovery`,
-          );
-          removeIdx.push(i);
-          geocodeFailures.push({
-            stopName: s.loc.name,
-            tried: [
-              `geocoded out of parcours zone: ${Math.round(d)}m from ref`,
-            ],
-          });
-        }
-      }
-      // Suppression de la fin vers le début pour préserver les indices
-      removeIdx.sort((a, b) => b - a);
-      for (const idx of removeIdx) stopsAfterGeocode.splice(idx, 1);
-      if (removeIdx.length > 0) {
-        console.log(
-          `[Pipeline] Phase B: ${removeIdx.length} stop(s) outside parcours zone, ${stopsAfterGeocode.length} kept`,
-        );
-      }
-    }
-
-    // ============================================
-    // STEP 1.4 : Validation thématique des stops opérateur
-    // ============================================
-    // Un stop géocodable n'est pas forcément thématiquement pertinent.
-    // Test #4 Clervaux a montré que oddballtrip envoyait "Family of Man"
-    // (musée photo, aucun lien BoB), "Kapel Maria" et "Chapelle Lorette"
-    // (chapelles génériques) dans un thème WWII Battle of the Bulge —
-    // tous géocodés OK, tous laissés passer, scénario hallucine ensuite
-    // des "Sister Augustine résistante" pour habiller le bruit.
-    //
-    // Stratégie : Claude juge chaque stop opérateur. Le seuil est BAS
-    // (atmosphérique = ok, lien partiel = ok). On marque "replace"
-    // uniquement quand l'écart est flagrant. Les "replace" sont déplacés
-    // vers `geocodeFailures` pour que l'auto-discovery Perplexity les
-    // remplace par de vrais sites mémoire.
-    //
-    // Skip si on n'a aucun stop géocodé (tous ont déjà échoué) — la
-    // validation thématique n'a rien à juger.
-    if (stopsAfterGeocode.length > 0) {
-      try {
-        const verdicts = await validateOperatorStopsThematically({
-          theme: template.theme,
-          themeDescription: template.themeDescription,
-          narrative: template.narrative,
-          stops: stopsAfterGeocode.map((s) => ({
-            landmarkName: s.loc.landmarkName ?? s.loc.name,
-            name: s.loc.name,
-            description: s.loc.whatToObserve,
-          })),
-        });
-
-        const toRemoveIdx: number[] = [];
-        for (const v of verdicts) {
-          if (v.decision === "replace") {
-            const stop = stopsAfterGeocode[v.index];
-            if (stop) {
-              console.warn(
-                `[Pipeline] Off-theme operator stop flagged for replacement: "${stop.loc.name}" (${stop.loc.landmarkName}) — ${v.rationale}`,
-              );
-              toRemoveIdx.push(v.index);
-              geocodeFailures.push({
-                stopName: stop.loc.name,
-                tried: [
-                  `off-theme: ${v.rationale}`,
-                ],
-              });
-            }
-          }
-        }
-        // Remove from end → start to preserve indices.
-        toRemoveIdx.sort((a, b) => b - a);
-        for (const idx of toRemoveIdx) {
-          stopsAfterGeocode.splice(idx, 1);
-        }
-        if (toRemoveIdx.length > 0) {
-          console.log(
-            `[Pipeline] Thematic validation: ${toRemoveIdx.length} operator stop(s) flagged off-theme, routed to auto-discovery. ${stopsAfterGeocode.length} kept.`,
-          );
-        } else {
-          console.log(
-            `[Pipeline] Thematic validation: all ${stopsAfterGeocode.length} operator stop(s) pass.`,
-          );
-        }
-      } catch (err) {
-        console.warn(
-          `[Pipeline] validateOperatorStopsThematically threw: ${err instanceof Error ? err.message : err} — skipping thematic gate (operator stops kept as-is)`,
-        );
-      }
-    }
-
-    // ============================================
-    // STEP 1.5: Auto-discovery des stops manquants
-    // ============================================
-    // Si certains landmarkName fournis par oddballtrip n'ont pas pu
-    // être géocodés (typiquement parce que le LLM amont a halluciné
-    // le nom — "Église Saint-Cunibert" qui n'existe pas à Clervaux,
-    // "Sentier de la Blees" alors que la rivière s'appelle Clerve),
-    // on tente de combler les trous avec des POIs réels découverts
-    // dans un rayon de 1,5 km autour du centre ville (cf. analyse
-    // post-mortem Clervaux : au-delà, le parcours devient injouable
-    // à pied même si le POI est techniquement "proche du centre").
-    //
-    // Pas de fallback à 10 km : si la densité POI dans 1,5 km est
-    // insuffisante, on droppe les stops manquants (graceful) plutôt
-    // que de gonfler la zone et publier un parcours non-marchable.
-    //
-    // Filtrage thématique : on ne sélectionne PAS sur le seul score
-    // patrimonial. Claude reçoit la narration originale + la liste
-    // candidate, et choisit les POIs qui peuvent s'inscrire SANS
-    // forcer la réécriture du scénario. C'est essentiel pour ne pas
-    // diluer le thème vendu (ex. ne pas glisser une mall moderne
-    // dans une histoire de résistance WWII).
-    //
-    // Quand au moins un remplacement réussit, on devra (a) réordonner
-    // tous les stops via greedy nearest-neighbor depuis le centre
-    // ville pour garder un parcours cohérent (pas de retour en
-    // arrière), (b) demander à Claude de régénérer la narration et
-    // les noms poétiques pour qu'ils collent aux nouveaux lieux —
-    // sinon le scénario continuerait de référencer les landmarks
-    // hallucinés.
-    const replacedStops: ReplacedStop[] = [];
-    if (geocodeFailures.length > 0 && parcoursRef) {
-      const usedPlaceIds = new Set<string>(
-        stopsAfterGeocode
-          .map((s) => s.placeId)
-          .filter((id): id is string => !!id),
-      );
-      const usedNames = stopsAfterGeocode.map(
-        (s) => s.loc.landmarkName ?? s.loc.name,
-      );
-      const needed = geocodeFailures.length;
-
-      // PRIMARY PATH : Perplexity découverte thématique. Demande à un
-      // LLM avec recherche web de proposer des landmarks RÉELS
-      // documentés comme liés au thème (vs Google nearbysearch qui
-      // ne renvoie que des POIs catégorisés `church`/`museum` sans
-      // notion de thème). Sur Clervaux/Battle of the Bulge, Perplexity
-      // sait que l'Hôtel Claravallis ou le Buste Fuller sont les
-      // bons sites mémoire — Google nearbysearch retombe sur des
-      // chapelles génériques (Lorette, Maria) sans rapport.
-      //
-      // Les noms retournés sont géocodés via Google Places (sub-10 m).
-      // Ceux que Google ne trouve pas sont droppés silencieusement —
-      // c'est OK, on accepte un parcours plus court mais propre.
-      const verifiedDiscovered: DiscoveredLandmark[] = [];
-      try {
-        const perplexityCandidates = await discoverThematicLandmarks({
-          city: template.city,
-          country: template.country,
-          theme: template.theme,
-          themeDescription: template.themeDescription,
-          narrative: template.narrative,
-          needed,
-          excludeNames: usedNames,
-        });
-
-        for (const cand of perplexityCandidates) {
-          if (verifiedDiscovered.length >= needed) break;
-          // Géocode chaque candidat avec le bias serré 1,5 km. Pas
-          // de fallback sur le `name` poétique : Perplexity nous a
-          // déjà donné le nom géocodable.
-          // Géocode chaque candidat Perplexity avec bias serré sur
-          // parcoursRef (pas cityRef) pour que Google nous donne le
-          // résultat dans la zone du parcours, pas celui d'une ville
-          // lointaine portant un nom similaire.
-          const geo = await geocodeLocation(
-            cand.name,
-            template.city,
-            template.country,
-            { referencePoint: parcoursRef },
-          );
-          if (!geo) {
-            console.log(
-              `[Pipeline] Perplexity candidate "${cand.name}" failed geocoding — dropping`,
-            );
-            continue;
-          }
-          // Dédup contre les place_id déjà utilisés (au cas où Perplexity
-          // proposerait le même lieu qu'un stop opérateur).
-          if (geo.externalId && usedPlaceIds.has(geo.externalId)) {
-            console.log(
-              `[Pipeline] Perplexity candidate "${cand.name}" duplicates an existing stop — dropping`,
-            );
-            continue;
-          }
-          if (geo.externalId) usedPlaceIds.add(geo.externalId);
-          verifiedDiscovered.push({
-            name: cand.name,
-            lat: geo.lat,
-            lon: geo.lon,
-            // Synthétise un id si Google n'a pas renvoyé de place_id
-            // (cas Nominatim) — sert juste à dé-dupliquer.
-            placeId: geo.externalId ?? `geocoded:${cand.name}`,
-            address: undefined,
-            types: [],
-            distanceM: haversineMeters(parcoursRef, { lat: geo.lat, lon: geo.lon }),
-          });
-          console.log(
-            `[Pipeline] Perplexity → geocoded "${cand.name}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (${geo.source})`,
-          );
-        }
-      } catch (err) {
-        console.warn(
-          `[Pipeline] discoverThematicLandmarks threw: ${err instanceof Error ? err.message : err}`,
-        );
-      }
-
-      // FALLBACK PATH : si Perplexity n'a pas suffi (rate-limit, JSON
-      // mal parsé, candidats tous non-géocodables), on retombe sur
-      // l'ancien combo Google nearbysearch + filtre Claude. Mieux que
-      // rien, et reste contraint au rayon 1,5 km + filtre thématique.
-      if (verifiedDiscovered.length < needed) {
-        const stillNeeded = needed - verifiedDiscovered.length;
-        console.log(
-          `[Pipeline] Perplexity gave ${verifiedDiscovered.length}/${needed} viable candidates — falling back to Google nearbysearch for ${stillNeeded} more`,
-        );
-
-        let googleCandidates: DiscoveredLandmark[] = [];
-        try {
-          googleCandidates = await discoverNearbyLandmarks(parcoursRef, {
-            radiusM: 1_500,
-            excludePlaceIds: usedPlaceIds,
-            limit: 30,
-          });
-        } catch (err) {
-          console.warn(
-            `[Pipeline] discoverNearbyLandmarks threw: ${err instanceof Error ? err.message : err}`,
-          );
-        }
-
-        if (googleCandidates.length > 0) {
-          try {
-            const filter = await selectThematicallyRelevantLandmarks({
-              theme: template.theme,
-              themeDescription: template.themeDescription,
-              narrative: template.narrative,
-              candidates: googleCandidates.map((c) => ({
-                name: c.name,
-                types: c.types,
-                address: c.address,
-                distanceM: c.distanceM,
-              })),
-              needed: stillNeeded,
-            });
-            const fallbackPicked = filter.selectedIndices.map(
-              (i) => googleCandidates[i],
-            );
-            console.log(
-              `[Pipeline] Fallback thematic filter: kept ${fallbackPicked.length}/${googleCandidates.length} Google candidate(s)${filter.rationale ? ` — ${filter.rationale}` : ""}`,
-            );
-            for (const c of fallbackPicked) {
-              if (verifiedDiscovered.length >= needed) break;
-              if (c.placeId && usedPlaceIds.has(c.placeId)) continue;
-              if (c.placeId) usedPlaceIds.add(c.placeId);
-              verifiedDiscovered.push(c);
-            }
-          } catch (err) {
-            console.warn(
-              `[Pipeline] selectThematicallyRelevantLandmarks threw: ${err instanceof Error ? err.message : err} — using Google top-${stillNeeded} by heritage rank`,
-            );
-            for (const c of googleCandidates.slice(0, stillNeeded)) {
-              if (verifiedDiscovered.length >= needed) break;
-              if (c.placeId && usedPlaceIds.has(c.placeId)) continue;
-              if (c.placeId) usedPlaceIds.add(c.placeId);
-              verifiedDiscovered.push(c);
-            }
-          }
-        }
-      }
-
-      const toFill = Math.min(verifiedDiscovered.length, needed);
-      console.log(
-        `[Pipeline] ${needed} stop(s) failed geocoding, ${verifiedDiscovered.length} viable candidate(s) (Perplexity + Google fallback), filling ${toFill}`,
-      );
-
-      for (let i = 0; i < toFill; i++) {
-        const c = verifiedDiscovered[i];
-        const failure = geocodeFailures[i];
-        stopsAfterGeocode.push({
-          loc: {
-            // Le `name` poétique sera réécrit par adaptNarrativeForReplacedStops.
-            // En attendant on met un placeholder lisible — il ne
-            // sera utilisé que si la regen narrative échoue (fallback
-            // dégradé mais publiable).
-            name: c.name,
-            landmarkName: c.name,
-            latitude: c.lat,
-            longitude: c.lon,
-            whatToObserve: `Look around ${c.name} — the AR camera will reveal the answer.`,
-            answer: "AUTO",
-            answerType: "name",
-            answerSource: "virtual_ar",
-            source: "auto-discovered",
-            themeLink: "",
-          },
-          isReplacement: true,
-          placeId: c.placeId,
-          types: c.types,
-          address: c.address,
-          originalStopName: failure.stopName,
-        });
-        replacedStops.push({
-          original: failure.stopName,
-          replacement: c.name,
-          replacementPlaceId: c.placeId,
-          lat: c.lat,
-          lon: c.lon,
-        });
-      }
-
-      // Les failures restantes (pas assez de candidats fittants pour
-      // combler) tomberont dans le `droppedStops` legacy via la
-      // condition de dégradation gracieuse plus bas.
-      geocodeFailures.splice(0, toFill);
-    } else if (geocodeFailures.length > 0 && !parcoursRef) {
-      console.warn(
-        `[Pipeline] ${geocodeFailures.length} stop(s) failed but no parcours reference — auto-discovery disabled, falling through to graceful drop`,
-      );
-    }
-
-    // Réordonnancement par nearest-neighbor depuis le point de départ
-    // du parcours dès qu'un remplacement a eu lieu : la liste résultante
-    // mélange des stops opérateur et des POIs auto-découverts dont les
-    // positions n'ont aucune raison de tracer un parcours cohérent
-    // dans l'ordre d'insertion. NN garantit qu'on ne « repasse pas
-    // au point A » entre deux étapes. Pour 8 stops c'est suffisant ;
-    // si on voulait optimiser globalement il faudrait un vrai TSP
-    // mais le gain serait marginal.
-    if (replacedStops.length > 0 && parcoursRef) {
-      const ordered = greedyNearestNeighborFromRef(stopsAfterGeocode, parcoursRef);
-      stopsAfterGeocode.splice(0, stopsAfterGeocode.length, ...ordered);
-    }
-
-    // ============================================
-    // STEP 1.6 : Garde-fou inter-stops
-    // ============================================
-    // Même quand chaque stop est dans le rayon 1,5 km du point de départ,
-    // deux stops diamétralement opposés peuvent être à 2-3 km l'un de l'autre.
-    // Le NN reorder atténue mais ne résout pas (le dernier stop d'une
-    // tournée NN peut toujours être à 2 km du précédent — c'est ce qui
-    // s'est passé sur Clervaux avec Saint-Joseph à 2,2 km).
-    //
-    // Stratégie : tant qu'il existe un saut > MAX_INTER_STOP_M ET qu'on
-    // a strictement plus que MIN_STOPS_TO_PUBLISH stops, on droppe le
-    // stop "le plus excentré" (somme des distances à ses voisins en
-    // chaîne) puis on relance le NN reorder. On s'arrête quand soit
-    // tous les sauts sont ≤ seuil, soit on a atteint le plancher de
-    // stops publiables.
-    const distanceDroppedStops: FailedLandmark[] = [];
-    if (parcoursRef && stopsAfterGeocode.length > MIN_STOPS_TO_PUBLISH) {
-      const maxJump = () => {
-        let m = 0;
-        for (let i = 1; i < stopsAfterGeocode.length; i++) {
-          const d = haversineMeters(
-            { lat: stopsAfterGeocode[i - 1].loc.latitude, lon: stopsAfterGeocode[i - 1].loc.longitude },
-            { lat: stopsAfterGeocode[i].loc.latitude, lon: stopsAfterGeocode[i].loc.longitude },
-          );
-          if (d > m) m = d;
-        }
-        return m;
-      };
-
-      let currentMax = maxJump();
-      while (
-        currentMax > MAX_INTER_STOP_M &&
-        stopsAfterGeocode.length > MIN_STOPS_TO_PUBLISH
-      ) {
-        // Trouve le stop avec le plus gros score d'éloignement (somme
-        // des distances à ses 1-2 voisins immédiats dans la chaîne).
-        let worstIdx = -1;
-        let worstScore = -1;
-        for (let i = 0; i < stopsAfterGeocode.length; i++) {
-          let score = 0;
-          if (i > 0) {
-            score += haversineMeters(
-              { lat: stopsAfterGeocode[i].loc.latitude, lon: stopsAfterGeocode[i].loc.longitude },
-              { lat: stopsAfterGeocode[i - 1].loc.latitude, lon: stopsAfterGeocode[i - 1].loc.longitude },
-            );
-          }
-          if (i < stopsAfterGeocode.length - 1) {
-            score += haversineMeters(
-              { lat: stopsAfterGeocode[i].loc.latitude, lon: stopsAfterGeocode[i].loc.longitude },
-              { lat: stopsAfterGeocode[i + 1].loc.latitude, lon: stopsAfterGeocode[i + 1].loc.longitude },
-            );
-          }
-          if (score > worstScore) {
-            worstScore = score;
-            worstIdx = i;
-          }
-        }
-        const [dropped] = stopsAfterGeocode.splice(worstIdx, 1);
-        distanceDroppedStops.push({
-          stopName: dropped.loc.name,
-          tried: [
-            `dropped: parcours non-marchable, jump > ${MAX_INTER_STOP_M}m (was ${Math.round(currentMax)}m)`,
-          ],
-        });
-        // Si c'était un remplacement auto, retirer aussi de replacedStops
-        // (on ne veut pas annoncer à oddballtrip un stop remplacé qu'on
-        // a finalement droppé).
-        if (dropped.isReplacement) {
-          const ridx = replacedStops.findIndex(
-            (r) => r.replacementPlaceId && r.replacementPlaceId === dropped.placeId,
-          );
-          if (ridx >= 0) replacedStops.splice(ridx, 1);
-        }
-        // Re-NN-reorder pour que la chaîne reste cohérente après drop.
-        const reordered = greedyNearestNeighborFromRef(stopsAfterGeocode, parcoursRef);
-        stopsAfterGeocode.splice(0, stopsAfterGeocode.length, ...reordered);
-        console.warn(
-          `[Pipeline] Dropped "${dropped.loc.name}" (jump=${Math.round(currentMax)}m > ${MAX_INTER_STOP_M}m), ${stopsAfterGeocode.length} stop(s) remaining`,
-        );
-        currentMax = maxJump();
-      }
-
-      if (currentMax > MAX_INTER_STOP_M) {
-        console.warn(
-          `[Pipeline] After drops, max inter-stop jump still ${Math.round(currentMax)}m > ${MAX_INTER_STOP_M}m. Floor MIN_STOPS_TO_PUBLISH=${MIN_STOPS_TO_PUBLISH} hit — pipeline will reject.`,
-        );
+      if (!cityGeo) {
         const err = new Error(
-          `GEOCODING_FAILED: parcours non-marchable. Max distance entre 2 stops consécutifs: ${Math.round(currentMax)}m (limite: ${MAX_INTER_STOP_M}m). Les landmarks fournis sont trop dispersés pour constituer un escape game à pied. Resserrez la zone (centre-ville plus compact) ou choisissez d'autres landmarks plus regroupés.`,
-        ) as Error & {
-          code?: PipelineErrorCode;
-          failedLandmarks?: FailedLandmark[];
-        };
-        err.code = "GEOCODING_FAILED";
-        err.failedLandmarks = [...geocodeFailures, ...distanceDroppedStops];
+          `INTERNAL_ERROR: cannot geocode city center as fallback startPoint for "${template.city}, ${template.country}"`,
+        ) as Error & { code?: PipelineErrorCode };
+        err.code = "INTERNAL_ERROR";
         throw err;
       }
+      startPoint = { lat: cityGeo.lat, lon: cityGeo.lon };
+      console.log(
+        `[Pipeline] Fallback startPoint = city center ${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)}`,
+      );
+    } else {
+      console.log(
+        `[Pipeline] startPoint from operator: ${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)}`,
+      );
     }
 
-    // Fusionner les drops "distance" dans la liste globale pour que
-    // l'opérateur reçoive l'info via l'email STOPS_DROPPED + callback.
-    geocodeFailures.push(...distanceDroppedStops);
-
-    // Graceful degradation : on tolère jusqu'à 2 stops droppés tant
-    // qu'il reste >= MIN_STOPS_TO_PUBLISH stops géocodés correctement.
-    // Au-dessous, le parcours devient trop court (jeu écourté), on
-    // rejette pour forcer une correction côté oddballtrip.
-    if (stopsAfterGeocode.length < MIN_STOPS_TO_PUBLISH) {
-      const failureSummary = geocodeFailures
-        .map(
-          (f) =>
-            `  - "${f.stopName}" (tried: ${f.tried.map((s) => `"${s}"`).join(", ")})`,
-        )
-        .join("\n");
+    const stopCount = template.stopCount ?? 8;
+    if (stopCount < 6) {
       const err = new Error(
-        `GEOCODING_FAILED: only ${stopsAfterGeocode.length} of ${template.stops.length} stop(s) could be geocoded or auto-substituted — minimum is ${MIN_STOPS_TO_PUBLISH}. Failed:\n${failureSummary}\n\nFix the landmarkName for these stops on oddballtrip, broaden the city, or accept fewer stops.`,
+        `INTERNAL_ERROR: stopCount=${stopCount} below floor of 6 — pipeline cannot publish a game shorter than 6 stops`,
+      ) as Error & { code?: PipelineErrorCode };
+      err.code = "INTERNAL_ERROR";
+      throw err;
+    }
+
+    // ============================================
+    // STEP 1 : Discovery (Perplexity → Google → walkability)
+    // ============================================
+    const researchStart = Date.now();
+    const discovery = await discoverParcours({
+      city: template.city,
+      country: template.country,
+      theme: template.theme,
+      themeDescription: template.themeDescription,
+      narrative: template.narrative,
+      startPoint,
+      stopCount,
+    });
+
+    if (!discovery.success) {
+      const err = new Error(
+        discovery.error || "Discovery failed (unknown reason)",
       ) as Error & {
         code?: PipelineErrorCode;
         failedLandmarks?: FailedLandmark[];
       };
-      err.code = "GEOCODING_FAILED";
-      err.failedLandmarks = geocodeFailures;
+      err.code = discovery.errorCode ?? "DISCOVERY_FAILED";
+      err.failedLandmarks = discovery.rejected.map((r) => ({
+        stopName: r.name,
+        tried: [r.reason],
+      }));
       throw err;
     }
 
-    // Stocker les stops droppés pour les remonter à l'opérateur. Le
-    // jeu publie quand même mais on log + email d'avertissement (pas
-    // d'erreur bloquante) avec la liste des landmarks corrigeables.
-    const droppedStops: FailedLandmark[] = geocodeFailures;
-    if (droppedStops.length > 0) {
-      const summary = droppedStops
-        .map((f) => `"${f.stopName}"`)
-        .join(", ");
-      console.warn(
-        `[Pipeline] ${droppedStops.length} stop(s) dropped, game published with ${stopsAfterGeocode.length} stops. Dropped: ${summary}`,
-      );
-    }
-    if (replacedStops.length > 0) {
-      console.warn(
-        `[Pipeline] ${replacedStops.length} stop(s) auto-replaced via Google Places nearbysearch: ${replacedStops.map((r) => `"${r.original}" → "${r.replacement}"`).join("; ")}`,
-      );
-    }
+    const researchDurationMs = Date.now() - researchStart;
+    console.log(
+      `[Pipeline] Discovery complete in ${Math.round(researchDurationMs / 1000)}s — ${discovery.landmarks.length} landmarks (${discovery.rejected.length} rejected)`,
+    );
 
-    // Adapter la narration aux stops finaux (Claude #0). On le fait
-    // AVANT la génération des énigmes pour que le brief de Claude #1
-    // soit cohérent. En cas d'échec on continue avec la narration
-    // originale — les énigmes n'utilisent pas directement les noms
-    // poétiques des stops, donc le jeu reste publiable.
+    // ============================================
+    // STEP 2 : Convert to ResearchedLocation[] for downstream helpers
+    // ============================================
+    // Les helpers existants (generateGameSteps, fetchPhotosForSteps,
+    // insertGameIntoDatabase) consomment des ResearchedLocation. On
+    // mappe DiscoveredStop → ResearchedLocation pour ne pas perturber
+    // ces helpers — ils restent inchangés.
+    const verifiedLocations: ResearchedLocation[] = discovery.landmarks.map(
+      (s) => ({
+        name: s.name,
+        landmarkName: s.name,
+        latitude: s.lat,
+        longitude: s.lon,
+        whatToObserve: s.description,
+        // "AUTO" = Claude doit inventer la réponse AR (un mot, une
+        // date, un nombre romain) au moment de la génération de
+        // l'énigme. Détecté plus bas par le garde-fou anti-leak.
+        answer: "AUTO",
+        answerType: "name" as const,
+        answerSource: "virtual_ar" as const,
+        source: s.source ?? "perplexity-discovered",
+        themeLink: s.description,
+      }),
+    );
+
+    // ============================================
+    // STEP 3 : Adapter la narration aux landmarks découverts
+    // ============================================
+    // Tous les landmarks viennent de Perplexity, donc tous sont des
+    // "remplacements" du point de vue de l'opérateur — on demande à
+    // Claude de réécrire themeDescription + narrative + noms poétiques
+    // pour qu'ils collent aux POIs réels finaux. C'est ce que oddballtrip
+    // doit utiliser pour rafraîchir la fiche produit (sinon la page
+    // vendue ne correspond plus à ce qui est joué).
     let adaptedNarrative: AdaptedNarrativePayload | undefined;
     let effectiveNarrative = template.narrative;
     let effectiveThemeDescription = template.themeDescription;
-    if (replacedStops.length > 0) {
-      try {
-        const adapted = await adaptNarrativeForReplacedStops({
-          city: template.city,
-          country: template.country,
-          theme: template.theme,
-          originalNarrative: template.narrative,
-          finalStops: stopsAfterGeocode.map((s) => ({
-            landmarkName: s.loc.landmarkName ?? s.loc.name,
-            types: s.types,
-            address: s.address,
-            keptPoeticName: s.isReplacement ? undefined : s.loc.name,
-            keptDescription: s.isReplacement ? undefined : s.loc.whatToObserve,
-            isReplacement: s.isReplacement,
-          })),
-        });
-        effectiveNarrative = adapted.narrative;
-        effectiveThemeDescription = adapted.themeDescription;
-        // Propager les nouveaux noms poétiques + descriptions vers
-        // les ResearchedLocation : Claude #1 va les voir dans le
-        // brief et écrire les énigmes en cohérence.
-        for (let i = 0; i < stopsAfterGeocode.length; i++) {
-          stopsAfterGeocode[i].loc.name = adapted.stops[i].name;
-          stopsAfterGeocode[i].loc.whatToObserve = adapted.stops[i].description;
-        }
-        adaptedNarrative = {
-          themeDescription: adapted.themeDescription,
-          narrative: adapted.narrative,
-          stopNames: adapted.stops.map((s) => s.name),
-        };
-        console.log(
-          `[Pipeline] Narrative adapted to ${replacedStops.length} replacement(s) — themeDescription/narrative/stop names refreshed`,
-        );
-      } catch (err) {
-        console.warn(
-          `[Pipeline] Narrative adaptation failed, keeping original: ${err instanceof Error ? err.message : err}`,
-        );
+    try {
+      const adapted = await adaptNarrativeForReplacedStops({
+        city: template.city,
+        country: template.country,
+        theme: template.theme,
+        originalNarrative: template.narrative,
+        finalStops: discovery.landmarks.map((s) => ({
+          landmarkName: s.name,
+          types: [],
+          address: undefined,
+          keptPoeticName: undefined,
+          keptDescription: s.description,
+          // En intent-first, TOUS les stops sont issus de la découverte
+          // Perplexity. Pas de notion d'opérateur "kept" stops.
+          isReplacement: true,
+        })),
+      });
+      effectiveNarrative = adapted.narrative;
+      effectiveThemeDescription = adapted.themeDescription;
+      // Propager les noms poétiques + descriptions adaptés vers
+      // verifiedLocations : Claude #1 lit ces champs pour écrire
+      // l'énigme avec les bons noms côté joueur.
+      for (let i = 0; i < verifiedLocations.length; i++) {
+        verifiedLocations[i].name = adapted.stops[i].name;
+        verifiedLocations[i].whatToObserve = adapted.stops[i].description;
       }
+      adaptedNarrative = {
+        themeDescription: adapted.themeDescription,
+        narrative: adapted.narrative,
+        stopNames: adapted.stops.map((s) => s.name),
+      };
+      console.log(
+        `[Pipeline] Narrative adapted to ${discovery.landmarks.length} discovered landmark(s) — themeDescription/narrative/stop names rewritten`,
+      );
+    } catch (err) {
+      console.warn(
+        `[Pipeline] Narrative adaptation failed, keeping original: ${err instanceof Error ? err.message : err}`,
+      );
     }
-    const verifiedLocations: ResearchedLocation[] = stopsAfterGeocode.map(
-      (s) => s.loc,
-    );
-
-    const researchDurationMs = Date.now() - researchStart;
-    console.log(
-      `[Pipeline] All ${verifiedLocations.length} stops geocoded in ${Math.round(researchDurationMs / 1000)}s — coords are LOCKED for the rest of the pipeline`,
-    );
-
-    const physicalCount = verifiedLocations.filter(
-      (l) => l.answerSource === "physical",
-    ).length;
-    const virtualCount = verifiedLocations.length - physicalCount;
-    console.log(
-      `[Pipeline] ${verifiedLocations.length} locations: ${physicalCount} physical, ${virtualCount} virtual_ar`,
-    );
 
     // ============================================
-    // STEP 2: Create riddles with Claude
+    // STEP 4 : Génération des énigmes (Claude #1)
     // ============================================
-    console.log("[Pipeline] Step 2: Creating riddles with Claude...");
     const creationStart = Date.now();
-
     let steps: GeneratedStep[] = await generateGameSteps(
       template.city,
       template.country,
       template.theme,
       effectiveNarrative,
       template.difficulty,
-      verifiedLocations
+      verifiedLocations,
     );
 
-    const creationDurationMs = Date.now() - creationStart;
-    console.log(
-      `[Pipeline] Generated ${steps.length} game steps in ${Math.round(creationDurationMs / 1000)}s`
-    );
-
-    // ============================================
-    // STEP 2.1: AUTO placeholder leak guard
-    // ============================================
-    // Claude is instructed to invent a thematic AR answer when the
-    // input answer field reads "AUTO" — but we just shipped a game
-    // (Clervaux, étape 5) where Claude copied the literal "AUTO"
-    // string into answer_text and ar_facade_text instead of inventing
-    // a word. Player would see "AUTO" on the AR overlay, which is
-    // gibberish. We catch the leak here, ask Claude to regenerate
-    // ONLY the offending step, and fail loudly if it persists.
-    const looksLikePlaceholder = (v: unknown): boolean => {
-      const s = typeof v === "string" ? v.trim().toUpperCase() : "";
-      return s === "AUTO" || s === "";
-    };
+    // Garde anti-AUTO leak : si Claude a renvoyé "AUTO" en réponse
+    // littérale (au lieu d'inventer un mot thématique), on régénère
+    // ce stop avec un brief plus strict.
     for (let i = 0; i < steps.length; i++) {
-      const st = steps[i];
-      if (
-        !looksLikePlaceholder(st.answer_text) &&
-        !looksLikePlaceholder(st.ar_facade_text)
-      ) {
-        continue;
-      }
-      const sourceLoc = verifiedLocations[i];
-      if (!sourceLoc) continue;
-      console.warn(
-        `[Pipeline] Step ${i + 1} leaked AUTO placeholder (answer_text="${st.answer_text}", ar_facade_text="${st.ar_facade_text}") — regenerating`,
-      );
-      try {
-        const fixed = await regenerateStep({
-          brokenStep: st,
+      if (steps[i].answer_text?.toUpperCase().trim() === "AUTO") {
+        console.warn(
+          `[Pipeline] AUTO placeholder leaked at step ${i + 1} ("${steps[i].title}") — regenerating`,
+        );
+        steps[i] = await regenerateStep({
+          brokenStep: steps[i],
           issue: {
             step_index: i,
-            severity: "blocking",
             problem:
-              "answer_text or ar_facade_text was left as the placeholder 'AUTO'. INVENT a real thematic answer for this step (year, Latin/local word, Roman numeral, 1-2 word phrase) and put it in BOTH fields. The literal 'AUTO' is FORBIDDEN as output.",
+              "answer_text was the literal placeholder 'AUTO' — must be a real thematic answer.",
+            severity: "blocking",
             suggestion:
-              "Pick a year tied to a real historical event about this landmark, OR a Latin word fitting the theme, OR a 1-2 word phrase in the local language. ALL CAPS for AR readability. Update answer_text + ar_facade_text consistently.",
+              "Invent a single evocative word, Latin term, year, or Roman numeral that fits the theme and ar_facade_text.",
           },
-          location: sourceLoc,
+          location: verifiedLocations[i],
           city: template.city,
           theme: template.theme,
           narrative: effectiveNarrative,
           stepNumber: i + 1,
           totalSteps: steps.length,
         });
-        steps[i] = fixed;
-      } catch (err) {
-        const msg = `Step ${i + 1} kept the AUTO placeholder after regen: ${err instanceof Error ? err.message : err}`;
-        const tagged = new Error(`GENERATION_FAILED: ${msg}`) as Error & {
-          code?: PipelineErrorCode;
-        };
-        tagged.code = "GENERATION_FAILED";
-        throw tagged;
-      }
-      // Re-check after regen — if Claude STILL leaked AUTO, fail loud.
-      const after = steps[i];
-      if (
-        looksLikePlaceholder(after.answer_text) ||
-        looksLikePlaceholder(after.ar_facade_text)
-      ) {
-        const tagged = new Error(
-          `GENERATION_FAILED: Step ${i + 1} still has AUTO placeholder after regen (answer_text="${after.answer_text}", ar_facade_text="${after.ar_facade_text}"). Aborting.`,
-        ) as Error & { code?: PipelineErrorCode };
-        tagged.code = "GENERATION_FAILED";
-        throw tagged;
       }
     }
 
     // ============================================
-    // STEP 2.5: Walking-route safety check (warn-only)
+    // STEP 5 : QA Claude #2 + regen ciblé
     // ============================================
-    // Verify the player won't have to cross a multi-lane road or take a
-    // long detour between consecutive stops. We don't block generation
-    // on this — surfacing it in logs is enough to flag manually until we
-    // wire automated reordering. Field-test feedback prompted this.
-    try {
-      const { checkWalkingRoute } = await import("./route-safety");
-      const route = await checkWalkingRoute(
-        steps.map((s) => ({ latitude: s.latitude, longitude: s.longitude })),
-      );
-      console.log(
-        `[Pipeline] Route safety: total straight ${route.totalStraightM}m, walking ${route.totalWalkingM ?? "n/a"}m, allOk=${route.allOk}`,
-      );
-      route.legs.forEach((leg, i) => {
-        if (!leg.ok) {
-          console.warn(
-            `[Pipeline] ⚠ Leg ${i + 1}→${i + 2}: straight=${leg.straightDistanceM}m walking=${leg.walkingDistanceM ?? "?"}m ratio=${leg.detourRatio ?? "?"} — ${leg.reasons.join("; ")}`,
-          );
-        }
-      });
-    } catch (err) {
-      console.warn(
-        `[Pipeline] Route safety check failed (non-blocking): ${err instanceof Error ? err.message : err}`,
-      );
-    }
-
-    // ============================================
-    // STEP 2bis: Validation + auto-correction (Claude #2)
-    // ============================================
-    // A second Claude call critiques the generated steps. If it flags real
-    // problems (too-easy answers, broken riddles, factual errors), we
-    // regenerate the offending step(s). Max 2 retries to bound the cost.
-    console.log("[Pipeline] Step 2bis: Validating with Claude reviewer...");
-    const validationStart = Date.now();
-
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      const validation = await validateGeneratedSteps({
-        steps,
-        city: template.city,
-        theme: template.theme,
-        narrative: effectiveNarrative,
-      });
-
-      if (validation.ok || validation.issues.length === 0) {
-        console.log(`[Pipeline] Validation OK on attempt ${attempt}`);
-        break;
-      }
-
-      // Only regenerate steps with major or blocking issues — minor are accepted
-      const blockingIssues = validation.issues.filter(
-        (i) => i.severity === "major" || i.severity === "blocking",
-      );
-
-      if (blockingIssues.length === 0) {
-        console.log(
-          `[Pipeline] Validation found ${validation.issues.length} minor issue(s), accepting as-is`,
-        );
-        break;
-      }
-
-      console.log(
-        `[Pipeline] Validation flagged ${blockingIssues.length} step(s) on attempt ${attempt}: ${blockingIssues
-          .map((i) => `step ${i.step_index + 1} (${i.severity})`)
-          .join(", ")}`,
-      );
-
-      if (attempt === 2) {
-        // After 2 attempts, ship as-is rather than block delivery
-        console.warn(
-          `[Pipeline] Validation still failing after 2 attempts — shipping as-is. Admin should review.`,
-        );
-        break;
-      }
-
-      // Regenerate each flagged step
-      for (const issue of blockingIssues) {
+    const validation = await validateGeneratedSteps({
+      steps,
+      city: template.city,
+      theme: template.theme,
+      narrative: effectiveNarrative,
+    });
+    if (validation.issues?.length) {
+      for (const issue of validation.issues) {
+        if (issue.severity !== "blocking") continue;
         const idx = issue.step_index;
         if (idx < 0 || idx >= steps.length) continue;
-        // Find the matching source location (same coordinates)
-        const stepLat = steps[idx].latitude;
-        const stepLon = steps[idx].longitude;
-        const sourceLoc =
-          verifiedLocations.find(
-            (l) =>
-              Math.abs(l.latitude - stepLat) < 0.0001 &&
-              Math.abs(l.longitude - stepLon) < 0.0001,
-          ) || verifiedLocations[idx];
-        if (!sourceLoc) continue;
-
-        try {
-          steps[idx] = await regenerateStep({
-            brokenStep: steps[idx],
-            issue,
-            location: sourceLoc,
-            city: template.city,
-            theme: template.theme,
-            narrative: effectiveNarrative,
-            stepNumber: idx + 1,
-            totalSteps: steps.length,
-          });
-          console.log(`[Pipeline]   ↳ regenerated step ${idx + 1}`);
-        } catch (err) {
-          console.warn(
-            `[Pipeline]   ↳ regeneration failed for step ${idx + 1}: ${err instanceof Error ? err.message : err}`,
-          );
-        }
+        console.warn(
+          `[Pipeline] QA blocked step ${idx + 1}: ${issue.problem} — regenerating (suggestion: ${issue.suggestion})`,
+        );
+        steps[idx] = await regenerateStep({
+          brokenStep: steps[idx],
+          issue,
+          location: verifiedLocations[idx],
+          city: template.city,
+          theme: template.theme,
+          narrative: effectiveNarrative,
+          stepNumber: idx + 1,
+          totalSteps: steps.length,
+        });
       }
     }
-
-    console.log(
-      `[Pipeline] Validation completed in ${Math.round((Date.now() - validationStart) / 1000)}s`,
-    );
+    const creationDurationMs = Date.now() - creationStart;
 
     // ============================================
-    // STEP 2b: Fetch Wikipedia historical photos for AR overlay
+    // STEP 6 : Photos historiques + epilogue (en parallèle)
     // ============================================
-    console.log("[Pipeline] Step 2b: Fetching historical photos from Wikipedia...");
-    const photoStart = Date.now();
-    const stepPhotos = await fetchPhotosForSteps(steps, verifiedLocations, template.city);
-    console.log(
-      `[Pipeline] Got ${stepPhotos.filter((p) => p !== null).length}/${steps.length} photos in ${Math.round((Date.now() - photoStart) / 1000)}s`
-    );
-
-    // ============================================
-    // STEP 2c: Generate narrative epilogue (Claude)
-    // ============================================
-    console.log("[Pipeline] Step 2c: Generating narrative epilogue...");
-    const epilogueStart = Date.now();
-    let epilogue: GeneratedEpilogue | null = null;
-    try {
-      epilogue = await generateEpilogue({
+    const [stepPhotos, epilogue] = await Promise.all([
+      fetchPhotosForSteps(steps, verifiedLocations, template.city),
+      generateEpilogue({
         city: template.city,
         country: template.country,
         theme: template.theme,
         narrative: effectiveNarrative,
         difficulty: template.difficulty,
         steps,
-      });
-      console.log(
-        `[Pipeline] Epilogue generated ("${epilogue.title}", ${epilogue.text.length} chars) in ${Math.round((Date.now() - epilogueStart) / 1000)}s`,
-      );
-    } catch (err) {
-      // Non-blocking: if epilogue generation fails, the game still ships.
-      // The results page will just show a fallback message.
-      console.warn(
-        `[Pipeline] Epilogue generation failed, continuing without it: ${err instanceof Error ? err.message : err}`,
-      );
-    }
+      }).catch((err) => {
+        console.warn(
+          `[Pipeline] Epilogue generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
+        );
+        return null;
+      }),
+    ]);
 
     // ============================================
-    // STEP 3: Insert into Supabase
+    // STEP 7 : Insert DB
     // ============================================
-    console.log("[Pipeline] Step 3: Inserting into Supabase...");
-    // On passe au stockage la version « effective » de la narration et
-    // de la description : si la regen narrative a réussi suite à un
-    // remplacement de stops, c'est cette version qui doit aller en DB
-    // (et être servie au joueur), PAS le contenu original qui parlait
-    // des landmarks hallucinés.
     const gameId = await insertGameIntoDatabase(
       {
         ...template,
@@ -1231,9 +533,28 @@ export async function generateGameFromTemplate(
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
+    // ============================================
+    // STEP 8 : Build canonical landmarks[] payload
+    // ============================================
+    // Cette liste est l'output principal pour oddballtrip — elle
+    // contient les landmarks RÉELS du jeu (avec leurs photos et
+    // sources Perplexity) qu'oddballtrip doit afficher sur la fiche
+    // produit pour qu'elle reflète l'expérience.
+    const landmarks: PublishedLandmark[] = discovery.landmarks.map(
+      (s, i) => ({
+        name: verifiedLocations[i].name, // nom poétique adapté par Claude
+        landmarkName: s.name, // nom géocodable réel
+        lat: s.lat,
+        lon: s.lon,
+        photoUrl: stepPhotos[i]?.url ?? null,
+        themeLink: s.description,
+        source: s.source,
+      }),
+    );
+
     const durationMs = Date.now() - startTime;
     console.log(
-      `[Pipeline] Complete in ${Math.round(durationMs / 1000)}s`
+      `[Pipeline] Complete in ${Math.round(durationMs / 1000)}s (${steps.length} steps published)`,
     );
 
     return {
@@ -1243,38 +564,34 @@ export async function generateGameFromTemplate(
       steps: steps.length,
       researchDurationMs,
       creationDurationMs,
-      // Présent ssi des stops ont été droppés mais le jeu a quand même
-      // été publié (>= MIN_STOPS_TO_PUBLISH). Permet à oddballtrip
-      // d'afficher un warning à l'opérateur ou de planifier une
-      // re-génération avec des landmarkName corrigés.
-      ...(droppedStops.length > 0 ? { droppedStops } : {}),
-      // Présent ssi le pipeline a auto-substitué un ou plusieurs
-      // stops via Google Places nearbysearch. oddballtrip s'en sert
-      // pour mettre à jour la fiche produit (la narration et les
-      // titres d'étapes ont changé).
-      ...(replacedStops.length > 0 ? { replacedStops } : {}),
-      ...(adaptedNarrative ? { adaptedNarrative } : {}),
+      landmarks,
+      adaptedNarrative,
+      // droppedStops exposé seulement si la discovery a rejeté des
+      // candidats (pour audit côté oddballtrip — non actionnable, juste
+      // informatif sur la qualité Perplexity).
+      ...(discovery.rejected.length > 0
+        ? {
+            droppedStops: discovery.rejected.map((r) => ({
+              stopName: r.name,
+              tried: [r.reason],
+            })),
+          }
+        : {}),
     };
   } catch (error) {
     const durationMs = Date.now() - startTime;
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     console.error(
-      `[Pipeline] Failed after ${Math.round(durationMs / 1000)}s: ${errorMessage}`
+      `[Pipeline] Failed after ${Math.round(durationMs / 1000)}s: ${errorMessage}`,
     );
 
-    // The geocoding stage tags its Errors with `.code` and
-    // `.failedLandmarks` so the caller can build a structured
-    // failure callback. Non-tagged errors fall back to a generic
-    // "INTERNAL_ERROR" code; the message still surfaces.
     const tagged = error as Error & {
       code?: PipelineErrorCode;
       failedLandmarks?: FailedLandmark[];
     };
     const errorCode: PipelineErrorCode =
-      tagged?.code ?? (errorMessage.startsWith("GEOCODING_FAILED")
-        ? "GEOCODING_FAILED"
-        : "INTERNAL_ERROR");
+      tagged?.code ?? "INTERNAL_ERROR";
 
     return {
       success: false,
@@ -1284,46 +601,6 @@ export async function generateGameFromTemplate(
       durationMs,
     };
   }
-}
-
-/**
- * Réordonne une liste de stops par voisin le plus proche, en partant
- * du point de référence (typiquement le centre ville géocodé).
- *
- * Utilisé après auto-discovery : la liste post-fill mélange les stops
- * opérateur conservés et les POIs auto-substitués dans un ordre qui
- * n'a aucune raison d'être un parcours marchable. Greedy NN garantit
- * que (a) le 1er stop est le plus proche du centre ville (entrée
- * naturelle dans le parcours), (b) chaque stop suivant est le plus
- * proche du précédent, donc pas de retour en arrière franc.
- *
- * Limitations connues : ce n'est pas un TSP optimal, le dernier stop
- * peut finir loin du début. Pour 6-8 points dans un rayon de 5 km
- * c'est suffisant ; un vrai TSP avec retour-au-départ ne gagnerait
- * que quelques centaines de mètres au mieux.
- */
-function greedyNearestNeighborFromRef<
-  T extends { loc: { latitude: number; longitude: number } },
->(stops: T[], start: { lat: number; lon: number }): T[] {
-  const remaining = [...stops];
-  const ordered: T[] = [];
-  let cursor = { lat: start.lat, lon: start.lon };
-  while (remaining.length > 0) {
-    let bestIdx = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < remaining.length; i++) {
-      const r = remaining[i].loc;
-      const d = haversineMeters(cursor, { lat: r.latitude, lon: r.longitude });
-      if (d < bestDist) {
-        bestDist = d;
-        bestIdx = i;
-      }
-    }
-    const [picked] = remaining.splice(bestIdx, 1);
-    ordered.push(picked);
-    cursor = { lat: picked.loc.latitude, lon: picked.loc.longitude };
-  }
-  return ordered;
 }
 
 /**
