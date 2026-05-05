@@ -81,21 +81,23 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
  * célèbre (ex: "Pont Saint-Pierre" à 800 km au lieu de la même rue
  * dans le village du jeu) et le joueur arrive à 100 km du parcours.
  *
- * 5 km est la valeur par défaut : un parcours de jeu fait au max
- * ~4 km cumulés à pied, donc accepter un landmark au-delà de 5 km
- * du centre ville garantit déjà un parcours injouable. Si on a besoin
- * d'aller au-delà (cas exceptionnel), le pipeline peut surcharger
- * via maxDistanceM.
+ * 1,5 km est la valeur par défaut : un parcours de jeu fait au max
+ * ~4 km cumulés à pied, donc tous les stops doivent tenir dans un
+ * disque d'≈ 1,5 km de rayon autour du centre ville. Au-delà, l'aller-
+ * retour vers le stop excentré explose le budget marche (Saint-Joseph
+ * à 2,2 km du centre de Clervaux a démontré le problème). Si un cas
+ * exceptionnel le justifie, le pipeline peut surcharger via maxDistanceM.
  */
-const DEFAULT_MAX_DISTANCE_M = 5_000;
+const DEFAULT_MAX_DISTANCE_M = 1_500;
 
 /**
  * Rayon préféré (mètres) pour le `locationbias` de Google Places /
- * Geocoding. Plus serré que MAX_DISTANCE pour pousser Google à
- * trouver dans le centre ville en priorité ; le filtre haversine
- * en aval rattrape les rares résultats hors zone.
+ * Geocoding. Aligné sur DEFAULT_MAX_DISTANCE_M : on biaise Google sur
+ * le même rayon qu'on accepte en sortie, pour que les rares résultats
+ * limites tombent en bordure du disque autorisé plutôt qu'à 1 km
+ * au-delà — le filtre haversine n'aura alors quasi rien à rattraper.
  */
-const PREFERRED_BIAS_RADIUS_M = 3_000;
+const PREFERRED_BIAS_RADIUS_M = 1_500;
 
 /**
  * Stopwords multilingues — articles, prépositions et particules qui
@@ -177,7 +179,7 @@ export interface GeocodeOptions {
    * de distance). Compat ascendante pour les anciens callers.
    */
   referencePoint?: { lat: number; lon: number };
-  /** Rayon max accepté en mètres (défaut DEFAULT_MAX_DISTANCE_M = 10 km). */
+  /** Rayon max accepté en mètres (défaut DEFAULT_MAX_DISTANCE_M = 1,5 km). */
   maxDistanceM?: number;
 }
 

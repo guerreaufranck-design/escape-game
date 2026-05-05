@@ -751,6 +751,148 @@ export interface AdaptedNarrative {
 }
 
 /**
+ * Filtre thématique : étant donné une liste de POIs candidats (issus de
+ * Google Places nearbysearch) et la narration ORIGINALE du jeu, demande à
+ * Claude de sélectionner les `needed` POIs qui collent le mieux au thème.
+ *
+ * Pourquoi ça existe : avant ce filtre, l'auto-discovery prenait les top
+ * candidats par score patrimonial pur (heritage type + Google rating),
+ * indépendamment du scénario. Résultat sur Clervaux : un thème "Shadow's
+ * Oath / WWII conspiracy" se retrouvait avec une "Église Saint-Joseph"
+ * substituée parce qu'elle avait un bon rating, mais sans aucun lien
+ * narratif — la narration était ensuite RÉ-écrite autour d'elle (donc
+ * le client achète X et joue Y). Avec ce filtre, on préserve la
+ * narration en sélectionnant les POIs qui PEUVENT s'y plier.
+ *
+ * Si Claude juge qu'AUCUN candidat ne peut s'inscrire dans la narration,
+ * il retourne un tableau vide → le pipeline droppe les stops concernés
+ * (graceful drop) au lieu de polluer le scénario.
+ *
+ * Retourne les indices dans `candidates` (pas les objets), pour que le
+ * caller mappe vers les `DiscoveredLandmark` complets (placeId, lat, lon).
+ */
+export async function selectThematicallyRelevantLandmarks(params: {
+  theme: string;
+  /** Description / pitch court — donne le ton à respecter. */
+  themeDescription: string;
+  /** Narration intégrale — la source de vérité à préserver. */
+  narrative: string;
+  /** POIs candidats issus de Google Places nearbysearch. */
+  candidates: Array<{
+    name: string;
+    types?: string[];
+    address?: string;
+    distanceM: number;
+  }>;
+  /** Nombre de stops à combler. Claude peut en retourner moins (jusqu'à 0). */
+  needed: number;
+}): Promise<{
+  selectedIndices: number[];
+  rationale?: string;
+}> {
+  const client = getAnthropicClient();
+
+  if (params.candidates.length === 0 || params.needed === 0) {
+    return { selectedIndices: [] };
+  }
+
+  const candidatesBlock = params.candidates
+    .map((c, i) => {
+      const meta = [
+        c.types?.length ? `types=[${c.types.slice(0, 3).join(", ")}]` : null,
+        c.address ? `address="${c.address}"` : null,
+        `${Math.round(c.distanceM)}m from center`,
+      ]
+        .filter(Boolean)
+        .join(", ");
+      return `[${i}] ${c.name} — ${meta}`;
+    })
+    .join("\n");
+
+  const prompt = `You are curating substitute stops for an outdoor escape game. Some of the original landmarks could not be found, so we have a list of REAL nearby POIs (within 1.5 km of the city center). Your job: pick the ${params.needed} POIs that BEST FIT the existing narrative — not the most famous, not the closest, the ones whose nature/era/atmosphere can plausibly be threaded into the story without rewriting it.
+
+LOCKED CONTEXT — the narrative the player paid for:
+
+Theme: "${params.theme}"
+Pitch: ${params.themeDescription}
+Narrative:
+${params.narrative}
+
+CANDIDATES (real POIs found around the city center):
+${candidatesBlock}
+
+YOUR JOB:
+- Select up to ${params.needed} indices from the list above whose nature can be woven into the existing narrative.
+- A church can play the role of a sanctuary, hideout, signal post. A park can be a meeting point, a memorial. A library can be a record-keeping site.
+- REJECT a POI if its nature would force a major rewrite of the narrative (e.g. a "Disney Store" inside a WWII resistance plot, a modern shopping mall inside a medieval mystery).
+- It is BETTER to return fewer indices (or even zero) than to force-fit a POI that breaks immersion. The pipeline will drop unfilled slots rather than ship a broken story.
+- Order matters less than fit — the pipeline reorders by walking distance afterwards.
+
+OUTPUT — strict JSON, no markdown:
+{
+  "selectedIndices": [0, 3, 5],
+  "rationale": "1-2 sentence explanation of how the picks fit the narrative (logged for debugging, never shown to player)."
+}
+
+If nothing fits, output: {"selectedIndices": [], "rationale": "…"}`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 800,
+    temperature: 0.3,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const responseText =
+    message.content[0].type === "text" ? message.content[0].text : "";
+
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    console.warn(
+      `[selectThematicallyRelevantLandmarks] no JSON in response: ${responseText.substring(0, 200)} — falling back to top-${params.needed} by heritage rank`,
+    );
+    // Fallback : si Claude répond du texte libre, on retombe sur les
+    // `needed` premiers candidats (déjà triés par poiNarrativeScore).
+    return {
+      selectedIndices: Array.from(
+        { length: Math.min(params.needed, params.candidates.length) },
+        (_, i) => i,
+      ),
+      rationale: "fallback (LLM response unparseable)",
+    };
+  }
+
+  const parsed = JSON.parse(jsonMatch[0]) as {
+    selectedIndices?: number[];
+    rationale?: string;
+  };
+
+  const indices = Array.isArray(parsed.selectedIndices)
+    ? parsed.selectedIndices.filter(
+        (i) => Number.isInteger(i) && i >= 0 && i < params.candidates.length,
+      )
+    : [];
+
+  // Dé-dup au cas où Claude renvoie le même indice deux fois.
+  const seen = new Set<number>();
+  const unique: number[] = [];
+  for (const i of indices) {
+    if (!seen.has(i)) {
+      seen.add(i);
+      unique.push(i);
+    }
+  }
+
+  // Cap au needed pour éviter qu'on ajoute plus de stops que prévu.
+  const capped = unique.slice(0, params.needed);
+
+  return {
+    selectedIndices: capped,
+    rationale: parsed.rationale,
+  };
+}
+
+/**
  * Adapte le scénario quand des stops ont été remplacés par auto-discovery.
  *
  * Pourquoi ça existe : le pipeline GPS-first commence par géocoder les

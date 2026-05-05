@@ -17,6 +17,7 @@ import {
   validateGeneratedSteps,
   regenerateStep,
   adaptNarrativeForReplacedStops,
+  selectThematicallyRelevantLandmarks,
   type GeneratedEpilogue,
   type GeneratedStep,
 } from "./anthropic";
@@ -160,6 +161,18 @@ export interface PipelineResult {
 const MIN_STOPS_TO_PUBLISH = 6;
 
 /**
+ * Distance maximale autorisée entre deux stops consécutifs après le greedy
+ * nearest-neighbor reorder, en mètres. Au-delà, le parcours impose une
+ * marche absurde au joueur (ex. Saint-Joseph Clervaux à 2 200 m du stop
+ * précédent — invalidé par cette règle).
+ *
+ * Pourquoi 1 000 m : un escape game cumule typiquement 4 km de marche
+ * sur 8 stops, soit ~500 m moyens entre stops. Le double (1 km) est
+ * tolérable comme cas limite, au-delà la régularité du parcours casse.
+ */
+const MAX_INTER_STOP_M = 1_000;
+
+/**
  * Generate a complete game from a template
  * This is the main pipeline entry point
  */
@@ -229,7 +242,7 @@ export async function generateGameFromTemplate(
       if (cityGeo) {
         cityRef = { lat: cityGeo.lat, lon: cityGeo.lon };
         console.log(
-          `[Pipeline] City reference for "${template.city}, ${template.country}" : ${cityRef.lat.toFixed(4)},${cityRef.lon.toFixed(4)} — landmark geocoding will be biased to a 5 km radius`,
+          `[Pipeline] City reference for "${template.city}, ${template.country}" : ${cityRef.lat.toFixed(4)},${cityRef.lon.toFixed(4)} — landmark geocoding will be biased to a 1.5 km radius`,
         );
       } else {
         console.warn(
@@ -327,8 +340,20 @@ export async function generateGameFromTemplate(
     // le nom — "Église Saint-Cunibert" qui n'existe pas à Clervaux,
     // "Sentier de la Blees" alors que la rivière s'appelle Clerve),
     // on tente de combler les trous avec des POIs réels découverts
-    // dans un rayon de 5 km autour du centre ville. Si la densité
-    // est insuffisante (village isolé), on élargit à 10 km.
+    // dans un rayon de 1,5 km autour du centre ville (cf. analyse
+    // post-mortem Clervaux : au-delà, le parcours devient injouable
+    // à pied même si le POI est techniquement "proche du centre").
+    //
+    // Pas de fallback à 10 km : si la densité POI dans 1,5 km est
+    // insuffisante, on droppe les stops manquants (graceful) plutôt
+    // que de gonfler la zone et publier un parcours non-marchable.
+    //
+    // Filtrage thématique : on ne sélectionne PAS sur le seul score
+    // patrimonial. Claude reçoit la narration originale + la liste
+    // candidate, et choisit les POIs qui peuvent s'inscrire SANS
+    // forcer la réécriture du scénario. C'est essentiel pour ne pas
+    // diluer le thème vendu (ex. ne pas glisser une mall moderne
+    // dans une histoire de résistance WWII).
     //
     // Quand au moins un remplacement réussit, on devra (a) réordonner
     // tous les stops via greedy nearest-neighbor depuis le centre
@@ -349,33 +374,54 @@ export async function generateGameFromTemplate(
       let candidates: DiscoveredLandmark[] = [];
       try {
         candidates = await discoverNearbyLandmarks(cityRef, {
-          radiusM: 5_000,
+          radiusM: 1_500,
           excludePlaceIds: usedPlaceIds,
           limit: 30,
         });
-        if (candidates.length < needed) {
-          console.log(
-            `[Pipeline] Only ${candidates.length} candidates within 5 km — widening to 10 km`,
-          );
-          candidates = await discoverNearbyLandmarks(cityRef, {
-            radiusM: 10_000,
-            excludePlaceIds: usedPlaceIds,
-            limit: 30,
-          });
-        }
       } catch (err) {
         console.warn(
           `[Pipeline] discoverNearbyLandmarks threw: ${err instanceof Error ? err.message : err}`,
         );
       }
 
-      const toFill = Math.min(candidates.length, needed);
+      // Filtrage thématique par Claude : préserve la narration au lieu
+      // de la rejouer autour de POIs au hasard. Si Claude juge qu'aucun
+      // POI ne peut s'inscrire dans le thème, on retombe sur 0 → on
+      // droppe les stops via la dégradation gracieuse plus bas.
+      let selectedCandidates: DiscoveredLandmark[] = [];
+      if (candidates.length > 0) {
+        try {
+          const filter = await selectThematicallyRelevantLandmarks({
+            theme: template.theme,
+            themeDescription: template.themeDescription,
+            narrative: template.narrative,
+            candidates: candidates.map((c) => ({
+              name: c.name,
+              types: c.types,
+              address: c.address,
+              distanceM: c.distanceM,
+            })),
+            needed,
+          });
+          selectedCandidates = filter.selectedIndices.map((i) => candidates[i]);
+          console.log(
+            `[Pipeline] Thematic filter: kept ${selectedCandidates.length}/${candidates.length} candidate(s)${filter.rationale ? ` — ${filter.rationale}` : ""}`,
+          );
+        } catch (err) {
+          console.warn(
+            `[Pipeline] selectThematicallyRelevantLandmarks threw: ${err instanceof Error ? err.message : err} — falling back to top-${needed} by heritage rank`,
+          );
+          selectedCandidates = candidates.slice(0, needed);
+        }
+      }
+
+      const toFill = Math.min(selectedCandidates.length, needed);
       console.log(
-        `[Pipeline] ${needed} stop(s) failed geocoding, ${candidates.length} POI candidate(s) found, filling ${toFill}`,
+        `[Pipeline] ${needed} stop(s) failed geocoding, ${candidates.length} candidate(s) found, ${selectedCandidates.length} thematically-fit, filling ${toFill}`,
       );
 
       for (let i = 0; i < toFill; i++) {
-        const c = candidates[i];
+        const c = selectedCandidates[i];
         const failure = geocodeFailures[i];
         stopsAfterGeocode.push({
           loc: {
@@ -409,9 +455,9 @@ export async function generateGameFromTemplate(
         });
       }
 
-      // Les failures restantes (pas assez de candidats pour combler)
-      // tomberont dans le `droppedStops` legacy via la condition de
-      // dégradation gracieuse plus bas.
+      // Les failures restantes (pas assez de candidats fittants pour
+      // combler) tomberont dans le `droppedStops` legacy via la
+      // condition de dégradation gracieuse plus bas.
       geocodeFailures.splice(0, toFill);
     } else if (geocodeFailures.length > 0 && !cityRef) {
       console.warn(
@@ -431,6 +477,108 @@ export async function generateGameFromTemplate(
       const ordered = greedyNearestNeighborFromRef(stopsAfterGeocode, cityRef);
       stopsAfterGeocode.splice(0, stopsAfterGeocode.length, ...ordered);
     }
+
+    // ============================================
+    // STEP 1.6 : Garde-fou inter-stops
+    // ============================================
+    // Même quand chaque stop est dans le rayon 1,5 km du centre, deux
+    // stops diamétralement opposés peuvent être à 2-3 km l'un de l'autre.
+    // Le NN reorder atténue mais ne résout pas (le dernier stop d'une
+    // tournée NN peut toujours être à 2 km du précédent — c'est ce qui
+    // s'est passé sur Clervaux avec Saint-Joseph à 2,2 km).
+    //
+    // Stratégie : tant qu'il existe un saut > MAX_INTER_STOP_M ET qu'on
+    // a strictement plus que MIN_STOPS_TO_PUBLISH stops, on droppe le
+    // stop "le plus excentré" (somme des distances à ses voisins en
+    // chaîne) puis on relance le NN reorder. On s'arrête quand soit
+    // tous les sauts sont ≤ seuil, soit on a atteint le plancher de
+    // stops publiables.
+    const distanceDroppedStops: FailedLandmark[] = [];
+    if (cityRef && stopsAfterGeocode.length > MIN_STOPS_TO_PUBLISH) {
+      const maxJump = () => {
+        let m = 0;
+        for (let i = 1; i < stopsAfterGeocode.length; i++) {
+          const d = haversineMeters(
+            { lat: stopsAfterGeocode[i - 1].loc.latitude, lon: stopsAfterGeocode[i - 1].loc.longitude },
+            { lat: stopsAfterGeocode[i].loc.latitude, lon: stopsAfterGeocode[i].loc.longitude },
+          );
+          if (d > m) m = d;
+        }
+        return m;
+      };
+
+      let currentMax = maxJump();
+      while (
+        currentMax > MAX_INTER_STOP_M &&
+        stopsAfterGeocode.length > MIN_STOPS_TO_PUBLISH
+      ) {
+        // Trouve le stop avec le plus gros score d'éloignement (somme
+        // des distances à ses 1-2 voisins immédiats dans la chaîne).
+        let worstIdx = -1;
+        let worstScore = -1;
+        for (let i = 0; i < stopsAfterGeocode.length; i++) {
+          let score = 0;
+          if (i > 0) {
+            score += haversineMeters(
+              { lat: stopsAfterGeocode[i].loc.latitude, lon: stopsAfterGeocode[i].loc.longitude },
+              { lat: stopsAfterGeocode[i - 1].loc.latitude, lon: stopsAfterGeocode[i - 1].loc.longitude },
+            );
+          }
+          if (i < stopsAfterGeocode.length - 1) {
+            score += haversineMeters(
+              { lat: stopsAfterGeocode[i].loc.latitude, lon: stopsAfterGeocode[i].loc.longitude },
+              { lat: stopsAfterGeocode[i + 1].loc.latitude, lon: stopsAfterGeocode[i + 1].loc.longitude },
+            );
+          }
+          if (score > worstScore) {
+            worstScore = score;
+            worstIdx = i;
+          }
+        }
+        const [dropped] = stopsAfterGeocode.splice(worstIdx, 1);
+        distanceDroppedStops.push({
+          stopName: dropped.loc.name,
+          tried: [
+            `dropped: parcours non-marchable, jump > ${MAX_INTER_STOP_M}m (was ${Math.round(currentMax)}m)`,
+          ],
+        });
+        // Si c'était un remplacement auto, retirer aussi de replacedStops
+        // (on ne veut pas annoncer à oddballtrip un stop remplacé qu'on
+        // a finalement droppé).
+        if (dropped.isReplacement) {
+          const ridx = replacedStops.findIndex(
+            (r) => r.replacementPlaceId && r.replacementPlaceId === dropped.placeId,
+          );
+          if (ridx >= 0) replacedStops.splice(ridx, 1);
+        }
+        // Re-NN-reorder pour que la chaîne reste cohérente après drop.
+        const reordered = greedyNearestNeighborFromRef(stopsAfterGeocode, cityRef);
+        stopsAfterGeocode.splice(0, stopsAfterGeocode.length, ...reordered);
+        console.warn(
+          `[Pipeline] Dropped "${dropped.loc.name}" (jump=${Math.round(currentMax)}m > ${MAX_INTER_STOP_M}m), ${stopsAfterGeocode.length} stop(s) remaining`,
+        );
+        currentMax = maxJump();
+      }
+
+      if (currentMax > MAX_INTER_STOP_M) {
+        console.warn(
+          `[Pipeline] After drops, max inter-stop jump still ${Math.round(currentMax)}m > ${MAX_INTER_STOP_M}m. Floor MIN_STOPS_TO_PUBLISH=${MIN_STOPS_TO_PUBLISH} hit — pipeline will reject.`,
+        );
+        const err = new Error(
+          `GEOCODING_FAILED: parcours non-marchable. Max distance entre 2 stops consécutifs: ${Math.round(currentMax)}m (limite: ${MAX_INTER_STOP_M}m). Les landmarks fournis sont trop dispersés pour constituer un escape game à pied. Resserrez la zone (centre-ville plus compact) ou choisissez d'autres landmarks plus regroupés.`,
+        ) as Error & {
+          code?: PipelineErrorCode;
+          failedLandmarks?: FailedLandmark[];
+        };
+        err.code = "GEOCODING_FAILED";
+        err.failedLandmarks = [...geocodeFailures, ...distanceDroppedStops];
+        throw err;
+      }
+    }
+
+    // Fusionner les drops "distance" dans la liste globale pour que
+    // l'opérateur reçoive l'info via l'email STOPS_DROPPED + callback.
+    geocodeFailures.push(...distanceDroppedStops);
 
     // Graceful degradation : on tolère jusqu'à 2 stops droppés tant
     // qu'il reste >= MIN_STOPS_TO_PUBLISH stops géocodés correctement.
