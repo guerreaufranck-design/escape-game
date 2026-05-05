@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   validateApiKey,
@@ -136,55 +136,83 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generate the activation code using the city prefix
-    const code = generateActivationCode(game.city);
+    // ─── IDEMPOTENCY by orderId ──────────────────────────────────────
+    // Si oddballtrip retry (timeout HTTP, webhook Stripe re-envoyé) avec
+    // le même orderId pour le même jeu, on RENVOIE LE CODE EXISTANT au
+    // lieu d'en créer un nouveau. Évite les codes orphelins en DB.
+    //
+    // L'idempotence n'est appliquée QUE si orderId est fourni — sans
+    // orderId, comportement legacy (nouveau code à chaque appel).
+    let finalCode: string | null = null;
+    let isIdempotentReturn = false;
+    if (orderId && typeof orderId === "string" && orderId.trim()) {
+      const { data: existing } = await supabase
+        .from("activation_codes")
+        .select("code")
+        .eq("game_id", gameId)
+        .eq("order_id", orderId)
+        .limit(1)
+        .maybeSingle();
+      if (existing?.code) {
+        finalCode = existing.code;
+        isIdempotentReturn = true;
+        console.log(
+          `[external/generate-code] IDEMPOTENT return code=${finalCode} for orderId=${orderId} (already exists)`,
+        );
+      }
+    }
 
-    // Insert the code into activation_codes (with buyer_email for traceability)
-    const { error: insertError } = await supabase
-      .from("activation_codes")
-      .insert({
-        code,
-        game_id: gameId,
-        is_single_use: true,
-        max_uses: 1,
-        current_uses: 0,
-        team_name: buyerName || null,
-        buyer_email: buyerEmail,
-        // expires_at stays null — set to now+8h upon activation
-      });
-
-    let finalCode = code;
-
-    if (insertError) {
-      // Code collision (extremely unlikely) — retry once
-      const retryCode = generateActivationCode(game.city);
-      const { error: retryError } = await supabase
+    // Generate + insert only si on n'a pas trouvé de code existant.
+    if (!finalCode) {
+      const code = generateActivationCode(game.city);
+      const { error: insertError } = await supabase
         .from("activation_codes")
         .insert({
-          code: retryCode,
+          code,
           game_id: gameId,
           is_single_use: true,
           max_uses: 1,
           current_uses: 0,
           team_name: buyerName || null,
           buyer_email: buyerEmail,
+          order_id: orderId || null,
+          // expires_at stays null — set to now+8h upon activation
         });
 
-      if (retryError) {
-        console.error("Erreur insertion code:", retryError);
-        await sendCodeGenerationFailureAlert({
-          gameId,
-          gameCity: game.city,
-          buyerEmail,
-          error: retryError.message,
-          orderId,
-        });
-        return NextResponse.json(
-          { error: "Impossible de créer le code d'activation" },
-          { status: 500, headers: corsHeaders }
-        );
+      finalCode = code;
+
+      if (insertError) {
+        // Code collision (extremely unlikely) — retry once
+        const retryCode = generateActivationCode(game.city);
+        const { error: retryError } = await supabase
+          .from("activation_codes")
+          .insert({
+            code: retryCode,
+            game_id: gameId,
+            is_single_use: true,
+            max_uses: 1,
+            current_uses: 0,
+            team_name: buyerName || null,
+            buyer_email: buyerEmail,
+            order_id: orderId || null,
+          });
+
+        if (retryError) {
+          console.error("Erreur insertion code:", retryError);
+          await sendCodeGenerationFailureAlert({
+            gameId,
+            gameCity: game.city,
+            buyerEmail,
+            error: retryError.message,
+            orderId,
+          });
+          return NextResponse.json(
+            { error: "Impossible de créer le code d'activation" },
+            { status: 500, headers: corsHeaders }
+          );
+        }
+        finalCode = retryCode;
       }
-      finalCode = retryCode;
     }
 
     // Log buyer info for traceability. On expose AUSSI la valeur brute
@@ -192,46 +220,53 @@ export async function POST(request: NextRequest) {
     // envoie un format non-standard (BCP-47 "fr-FR", "fra", "english"...)
     // qu'on ne capture pas et qui fait skipper prepareGamePackage.
     console.log(
-      `[external/generate-code] code=${finalCode} game=${game.city} email=${buyerEmail} order=${orderId || "N/A"} lang=${language || "—"} raw="${body.language ?? ""}"`
+      `[external/generate-code] code=${finalCode} game=${game.city} email=${buyerEmail} order=${orderId || "N/A"} lang=${language || "—"} raw="${body.language ?? ""}" idempotent=${isIdempotentReturn}`
     );
 
-    // ─── Pre-generation: text translation + ElevenLabs audio ─────────
-    // Synchronous: caller (Stripe webhook) must await so they email the
-    // customer only after everything is ready. ~30-60s on first sale of
-    // (game × language); near-instant on subsequent sales (cache hit).
-    let audioReport: PackageStatsForResponse | undefined;
+    // ─── Pre-generation EN ARRIÈRE-PLAN ──────────────────────────────
+    // AVANT : on awaitait prepareGamePackage avant de répondre. Ça
+    // prenait 30-60 sec → oddballtrip timeout (HTTP fetch < 30s) →
+    // retry → nouveau code créé → on s'est retrouvé avec 5 codes
+    // orphelins par achat sur Rouen.
+    //
+    // MAINTENANT : on lance prepareGamePackage en BACKGROUND (Next.js
+    // `after()` qui exécute après la réponse HTTP renvoyée). La
+    // réponse part en ~1-2 sec → oddballtrip ne timeout plus → 1 seul
+    // code par achat. Audios prêts ~30-60 sec après l'envoi de
+    // l'email au client (qui met de toute façon plus longtemps que
+    // ça avant de cliquer le lien).
+    //
+    // Si l'idempotence kick (code déjà existant), on relance quand
+    // même prepareGamePackage en background — il sera idempotent
+    // côté audio_cache (skip ce qui existe déjà) donc no-op si déjà
+    // prêt, ou rattrape si la première tentative avait foiré.
     if (language) {
-      try {
-        const result = await prepareGamePackage(gameId, language);
-        audioReport = {
-          prepared: result.success,
-          generated: result.audioGenerated,
-          skipped: result.audioSkipped,
-          failed: result.audioFailed,
-          durationMs: result.durationMs,
-        };
-        if (result.errors.length > 0) {
-          console.error(
-            `[external/generate-code] package errors for ${gameId}/${language}:`,
-            result.errors,
-          );
-        }
-      } catch (err) {
-        // Audio prep failure must NOT block code delivery — the player
-        // can still play with Web Speech fallback. Log + continue.
-        console.error(
-          `[external/generate-code] package prep crashed for ${gameId}/${language}:`,
-          err,
-        );
-        audioReport = {
-          prepared: false,
-          generated: 0,
-          skipped: 0,
-          failed: 0,
-          durationMs: 0,
-        };
-      }
+      after(
+        prepareGamePackage(gameId, language)
+          .then((result) => {
+            if (result.errors.length > 0) {
+              console.error(
+                `[external/generate-code] background package errors for ${gameId}/${language}:`,
+                result.errors,
+              );
+            } else {
+              console.log(
+                `[external/generate-code] background package done for ${gameId}/${language} — gen=${result.audioGenerated}, skip=${result.audioSkipped}, fail=${result.audioFailed}, ${Math.round(result.durationMs / 1000)}s`,
+              );
+            }
+          })
+          .catch((err) => {
+            console.error(
+              `[external/generate-code] background package crashed for ${gameId}/${language}:`,
+              err,
+            );
+          }),
+      );
     }
+    // audioReport n'est plus disponible en sortie (background) — on
+    // signale l'état via `audioPrepStatus` côté response.
+    const audioPrepStatus: "queued" | "skipped" =
+      language ? "queued" : "skipped";
 
     // Activation URL pre-fills the language so the player lands directly
     // in the right locale (no language picker step on first visit).
@@ -246,7 +281,16 @@ export async function POST(request: NextRequest) {
         gameTitle: extractTitle(game.title),
         gameCity: game.city,
         activationUrl,
-        ...(audioReport && { audio: audioReport }),
+        // Indique au caller (oddballtrip) si la prep audio est en
+        // background (queued) ou skipped (pas de language fourni).
+        // L'ancien `audio` (avec stats détaillées) n'est plus dispo
+        // car le calcul se fait après la réponse — on aurait pu
+        // exposer un endpoint /audio-status mais YAGNI tant que
+        // oddballtrip n'en a pas besoin.
+        audioPrepStatus,
+        // Idempotency flag : true si le code retourné existait déjà
+        // pour ce orderId (réponse à un retry du caller).
+        idempotent: isIdempotentReturn,
       },
       { headers: corsHeaders }
     );
@@ -259,10 +303,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-interface PackageStatsForResponse {
-  prepared: boolean;
-  generated: number;
-  skipped: number;
-  failed: number;
-  durationMs: number;
-}
