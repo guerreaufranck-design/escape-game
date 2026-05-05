@@ -19,7 +19,7 @@
  * Contrat de qualité :
  *   - Tous les landmarks sont des lieux RÉELS, géolocalisables
  *     précisément (Google Places sub-10m), avec source web documentée.
- *   - Tous les landmarks sont à ≤ 1.5 km du startPoint.
+ *   - Tous les landmarks sont à ≤ 2 km du startPoint.
  *   - Aucun saut entre stops consécutifs ne dépasse 1 km après NN reorder.
  *   - Dédup par place_id pour éviter les doublons.
  */
@@ -28,12 +28,16 @@ import { discoverThematicLandmarks } from "./perplexity";
 import { geocodeLocation, haversineMeters } from "./geocode";
 
 /** Rayon maximal autour du startPoint dans lequel les landmarks sont
- *  acceptés. Au-delà, le parcours n'est plus marchable depuis le point
- *  de départ choisi par l'opérateur. */
-const RADIUS_AROUND_START_M = 1_500;
+ *  acceptés. 2 km = ~25 min de marche depuis le centre, donc le stop
+ *  le plus excentré reste à portée pour un escape game qui dure 1h30-2h.
+ *  Au-delà, le parcours n'est plus marchable depuis le point de départ
+ *  choisi par l'opérateur. */
+const RADIUS_AROUND_START_M = 2_000;
 
 /** Distance maximale autorisée entre deux stops consécutifs après le
- *  NN reorder. Au-delà, le parcours impose une marche absurde. */
+ *  NN reorder. Au-delà, le parcours impose une marche absurde
+ *  (>12 min entre deux énigmes — joueur qui se demande s'il s'est
+ *  perdu, casse le rythme du jeu). */
 const MAX_INTER_STOP_M = 1_000;
 
 /** Plancher en dessous duquel on rejette le jeu : un parcours < 6
@@ -90,7 +94,7 @@ export interface DiscoverParcoursResult {
  * Étapes :
  *   1. Perplexity propose stopCount + 4 candidats documentés
  *   2. Géocode chacun via Google Places (sub-10m, biased au startPoint)
- *   3. Drop les non-géocodables et les > 1.5 km du startPoint
+ *   3. Drop les non-géocodables et les > 2 km du startPoint
  *   4. NN reorder depuis startPoint
  *   5. Tant qu'un saut > 1 km ET stops > 6, drop le plus excentré + re-NN
  *   6. Si stops finaux < 6, retourne errorCode
@@ -120,7 +124,7 @@ export async function discoverParcours(
       // CRITIQUE : Perplexity reçoit le startPoint pour ancrer sa
       // recherche AU BON ENDROIT. Sans ça, il choisit la zone la plus
       // thématiquement riche (qui peut être à 10 km du startPoint réel)
-      // et tous ses candidats sont ensuite rejetés par le filtre 1,5 km
+      // et tous ses candidats sont ensuite rejetés par le filtre 2 km
       // (cf. test Greek/Themistocles : Perplexity choisit Piraeus,
       // startPoint à Athens, 6 candidats sur 7 perdus).
       startPoint: params.startPoint,

@@ -81,23 +81,21 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
  * célèbre (ex: "Pont Saint-Pierre" à 800 km au lieu de la même rue
  * dans le village du jeu) et le joueur arrive à 100 km du parcours.
  *
- * 1,5 km est la valeur par défaut : un parcours de jeu fait au max
- * ~4 km cumulés à pied, donc tous les stops doivent tenir dans un
- * disque d'≈ 1,5 km de rayon autour du centre ville. Au-delà, l'aller-
- * retour vers le stop excentré explose le budget marche (Saint-Joseph
- * à 2,2 km du centre de Clervaux a démontré le problème). Si un cas
+ * 2 km est la valeur par défaut : un parcours fait ~4-5 km cumulés
+ * à pied, donc tous les stops doivent tenir dans un disque d'≈ 2 km
+ * de rayon autour du startPoint. À ~25 min de marche depuis le centre,
+ * le stop le plus excentré reste atteignable pour un jeu de 1h30-2h.
+ * Au-delà, l'aller-retour explose le budget marche. Si un cas
  * exceptionnel le justifie, le pipeline peut surcharger via maxDistanceM.
  */
-const DEFAULT_MAX_DISTANCE_M = 1_500;
+const DEFAULT_MAX_DISTANCE_M = 2_000;
 
 /**
  * Rayon préféré (mètres) pour le `locationbias` de Google Places /
  * Geocoding. Aligné sur DEFAULT_MAX_DISTANCE_M : on biaise Google sur
- * le même rayon qu'on accepte en sortie, pour que les rares résultats
- * limites tombent en bordure du disque autorisé plutôt qu'à 1 km
- * au-delà — le filtre haversine n'aura alors quasi rien à rattraper.
+ * le même rayon qu'on accepte en sortie.
  */
-const PREFERRED_BIAS_RADIUS_M = 1_500;
+const PREFERRED_BIAS_RADIUS_M = 2_000;
 
 /**
  * Stopwords multilingues — articles, prépositions et particules qui
@@ -554,6 +552,78 @@ function isOutOfRange(
   return false;
 }
 
+
+/**
+ * Compte rapide des POIs touristiques/patrimoniaux dans un rayon
+ * autour d'un point. Sert à valider la viabilité d'une zone AVANT
+ * qu'oddballtrip publie une fiche produit : si 1.5 km autour du
+ * startPoint contient < 8 monuments, le jeu n'a aucune chance de
+ * publier — autant prévenir l'opérateur tout de suite.
+ *
+ * Utilise Google Places nearbysearch (un appel par type, fusion +
+ * dédup côté client). Ne retourne pas les détails — juste un total.
+ */
+export async function countNearbyMonuments(
+  refPoint: { lat: number; lon: number },
+  radiusM: number,
+): Promise<{ total: number; byType: Record<string, number> }> {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) {
+    console.warn("[countNearbyMonuments] GOOGLE_MAPS_API_KEY missing");
+    return { total: 0, byType: {} };
+  }
+
+  // Types Google qui correspondent aux landmarks "jouables" pour un
+  // escape game outdoor. On exclut restaurant/cafe/store/lodging
+  // (trop nombreux, peu narrativement utiles).
+  const types = [
+    "tourist_attraction",
+    "church",
+    "museum",
+    "art_gallery",
+    "library",
+    "city_hall",
+    "park",
+  ];
+
+  const seen = new Set<string>();
+  const byType: Record<string, number> = {};
+
+  for (const type of types) {
+    const url = new URL(
+      "https://maps.googleapis.com/maps/api/place/nearbysearch/json",
+    );
+    url.searchParams.set("location", `${refPoint.lat},${refPoint.lon}`);
+    url.searchParams.set("radius", String(radiusM));
+    url.searchParams.set("type", type);
+    url.searchParams.set("key", apiKey);
+
+    try {
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
+      const res = await fetch(url.toString(), { signal: ac.signal });
+      clearTimeout(timer);
+      if (!res.ok) continue;
+      const data = (await res.json()) as {
+        status: string;
+        results?: Array<{ place_id: string }>;
+      };
+      if (data.status !== "OK" && data.status !== "ZERO_RESULTS") continue;
+
+      const before = seen.size;
+      for (const r of data.results ?? []) {
+        if (r.place_id) seen.add(r.place_id);
+      }
+      byType[type] = seen.size - before;
+    } catch (err) {
+      console.warn(
+        `[countNearbyMonuments] type=${type} threw: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
+  return { total: seen.size, byType };
+}
 
 /**
  * Distance in metres between two coords using the haversine formula.

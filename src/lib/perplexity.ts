@@ -392,7 +392,7 @@ export async function discoverThematicLandmarks(params: {
    *  startPoint réel (Athens). Résultat : 6 candidats sur 7 rejetés.
    *
    *  En passant les coords explicitement dans le prompt, on aligne le
-   *  scope de découverte Perplexity avec celui du filtre 1.5 km. */
+   *  scope de découverte Perplexity avec celui du filtre 2 km. */
   startPoint: { lat: number; lon: number };
   /** Combien de candidats max à demander. On en demande TOUJOURS plus
    *  que `needed` (typiquement +50%) pour absorber le taux de drop au
@@ -435,26 +435,26 @@ export async function discoverThematicLandmarks(params: {
 GEOGRAPHIC ANCHOR — search ONLY around this exact point:
 - Starting point GPS: ${startLat}, ${startLon}
 - City: ${params.city}, ${params.country}
-- Search radius: 1.5 km maximum from the GPS point above (NOT from "the city centre" — use the exact coordinates).
+- Search radius: 2 km maximum from the GPS point above (NOT from "the city centre" — use the exact coordinates).
 
 REAL-WORLD SUBJECT (extracted from the tour's theme — this is what to anchor on):
 - Theme: "${params.theme}"
 - Pitch: ${params.themeDescription}
 
-TASK: list UP TO ${requested} REAL landmarks within 1.5 km walking distance of the GPS starting point given above, that resonate with the subject. Returning fewer is FINE — quality over quantity. Use web search to confirm each landmark (a) exists, (b) is geographically within ~1.5 km of ${startLat},${startLon}, and (c) has a verifiable real-world link to the subject (era, event, movement, person, architectural style…). It is acceptable to include landmarks where the link is partial or atmospheric (a square central to the era's life, a building from the right century) as long as the era / topic matches.${exclusionBlock}
+TASK: list UP TO ${requested} REAL landmarks within 2 km walking distance of the GPS starting point given above, that resonate with the subject. Returning fewer is FINE — quality over quantity. Use web search to confirm each landmark (a) exists, (b) is geographically within ~2 km of ${startLat},${startLon}, and (c) has a verifiable real-world link to the subject (era, event, movement, person, architectural style…). It is acceptable to include landmarks where the link is partial or atmospheric (a square central to the era's life, a building from the right century) as long as the era / topic matches.${exclusionBlock}
 
 CRITICAL — IF THE STARTING POINT'S NEIGHBORHOOD HAS LITTLE TO DO WITH THE THEME:
-The operator may have chosen a starting point in a neighborhood that doesn't perfectly match the theme. DO NOT compensate by proposing landmarks in another neighborhood far away. STICK to the 1.5 km radius around the GPS point. If you cannot find ${requested} good landmarks in that radius, return fewer — even returning 0 is fine. The pipeline downstream will surface the issue rather than ship a non-walkable tour. Returning landmarks 5+ km away from the GPS point is a HARD FAIL — they will be rejected by the geocoding filter and the tour will fail to publish.
+The operator may have chosen a starting point in a neighborhood that doesn't perfectly match the theme. DO NOT compensate by proposing landmarks in another neighborhood far away. STICK to the 2 km radius around the GPS point. If you cannot find ${requested} good landmarks in that radius, return fewer — even returning 0 is fine. The pipeline downstream will surface the issue rather than ship a non-walkable tour. Returning landmarks 5+ km away from the GPS point is a HARD FAIL — they will be rejected by the geocoding filter and the tour will fail to publish.
 
 INTERPRETING THE SUBJECT:
-- If the theme references a war/battle, list memorials, command posts, museums, monuments, plaques, key buildings — within the 1.5 km radius.
-- If the theme references an art movement or era, list museums, galleries, statues, period buildings, artist residences — within the 1.5 km radius.
-- If the theme is broader ("medieval mystery", "Renaissance secrets"), list landmarks from that era — within the 1.5 km radius.
+- If the theme references a war/battle, list memorials, command posts, museums, monuments, plaques, key buildings — within the 2 km radius.
+- If the theme references an art movement or era, list museums, galleries, statues, period buildings, artist residences — within the 2 km radius.
+- If the theme is broader ("medieval mystery", "Renaissance secrets"), list landmarks from that era — within the 2 km radius.
 - The link must be DOCUMENTED in heritage/tourism/Wikipedia sources, not invented.
 
 CRITERIA:
 - Each landmark must EXIST today and be findable on Google Maps or via a Wikipedia / heritage / tourism URL.
-- Within 1.5 km of GPS ${startLat},${startLon}, walkable.
+- Within 2 km of GPS ${startLat},${startLon}, walkable.
 - Prefer well-named landmarks (geocoding will fail on overly obscure names like "the third house on the left").
 - A mix of types is welcome (building, monument, street, square, bridge, plaque, café with historical plaque).
 
