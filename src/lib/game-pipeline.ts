@@ -293,6 +293,74 @@ export async function generateGameFromTemplate(
     );
 
     // ============================================
+    // STEP 2.1: AUTO placeholder leak guard
+    // ============================================
+    // Claude is instructed to invent a thematic AR answer when the
+    // input answer field reads "AUTO" — but we just shipped a game
+    // (Clervaux, étape 5) where Claude copied the literal "AUTO"
+    // string into answer_text and ar_facade_text instead of inventing
+    // a word. Player would see "AUTO" on the AR overlay, which is
+    // gibberish. We catch the leak here, ask Claude to regenerate
+    // ONLY the offending step, and fail loudly if it persists.
+    const looksLikePlaceholder = (v: unknown): boolean => {
+      const s = typeof v === "string" ? v.trim().toUpperCase() : "";
+      return s === "AUTO" || s === "";
+    };
+    for (let i = 0; i < steps.length; i++) {
+      const st = steps[i];
+      if (
+        !looksLikePlaceholder(st.answer_text) &&
+        !looksLikePlaceholder(st.ar_facade_text)
+      ) {
+        continue;
+      }
+      const sourceLoc = verifiedLocations[i];
+      if (!sourceLoc) continue;
+      console.warn(
+        `[Pipeline] Step ${i + 1} leaked AUTO placeholder (answer_text="${st.answer_text}", ar_facade_text="${st.ar_facade_text}") — regenerating`,
+      );
+      try {
+        const fixed = await regenerateStep({
+          brokenStep: st,
+          issue: {
+            step_index: i,
+            severity: "blocking",
+            problem:
+              "answer_text or ar_facade_text was left as the placeholder 'AUTO'. INVENT a real thematic answer for this step (year, Latin/local word, Roman numeral, 1-2 word phrase) and put it in BOTH fields. The literal 'AUTO' is FORBIDDEN as output.",
+            suggestion:
+              "Pick a year tied to a real historical event about this landmark, OR a Latin word fitting the theme, OR a 1-2 word phrase in the local language. ALL CAPS for AR readability. Update answer_text + ar_facade_text consistently.",
+          },
+          location: sourceLoc,
+          city: template.city,
+          theme: template.theme,
+          narrative: template.narrative,
+          stepNumber: i + 1,
+          totalSteps: steps.length,
+        });
+        steps[i] = fixed;
+      } catch (err) {
+        const msg = `Step ${i + 1} kept the AUTO placeholder after regen: ${err instanceof Error ? err.message : err}`;
+        const tagged = new Error(`GENERATION_FAILED: ${msg}`) as Error & {
+          code?: PipelineErrorCode;
+        };
+        tagged.code = "GENERATION_FAILED";
+        throw tagged;
+      }
+      // Re-check after regen — if Claude STILL leaked AUTO, fail loud.
+      const after = steps[i];
+      if (
+        looksLikePlaceholder(after.answer_text) ||
+        looksLikePlaceholder(after.ar_facade_text)
+      ) {
+        const tagged = new Error(
+          `GENERATION_FAILED: Step ${i + 1} still has AUTO placeholder after regen (answer_text="${after.answer_text}", ar_facade_text="${after.ar_facade_text}"). Aborting.`,
+        ) as Error & { code?: PipelineErrorCode };
+        tagged.code = "GENERATION_FAILED";
+        throw tagged;
+      }
+    }
+
+    // ============================================
     // STEP 2.5: Walking-route safety check (warn-only)
     // ============================================
     // Verify the player won't have to cross a multi-lane road or take a

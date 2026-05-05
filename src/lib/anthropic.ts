@@ -201,13 +201,18 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
        the discovery moment is the player's reward, not a checkbox.
 
 5. "answer_text": ONLY the short evocative answer. A year, a roman
-   numeral, ONE word. NEVER a sentence.
-   - If the location data provides an answer (anything other than
-     "AUTO" or empty), copy it EXACTLY.
-   - If the answer is "AUTO" or empty, INVENT a thematic AR answer
-     yourself: a year (preferably tied to a real historical event
-     about this landmark), a Latin / local-language word, a Roman
-     numeral, or a 1-2-word phrase. Must be ALL CAPS or
+   numeral, ONE word. NEVER a sentence. NEVER the literal string
+   "AUTO" — that's a placeholder telling YOU to invent something,
+   it's NOT a valid answer to ship to the player.
+   - If the location data provides a concrete answer (a year, a
+     specific word — anything that is NOT "AUTO" and NOT empty),
+     copy it EXACTLY.
+   - If the answer field reads "AUTO" or is empty, you MUST INVENT
+     a thematic AR answer right now: a year (preferably tied to a
+     real historical event about this landmark — e.g. 1944 for a
+     WW2 memorial, 1066 for a Norman site), a Latin / local-language
+     word that fits the theme, a Roman numeral, or a 1-2-word phrase.
+     The string "AUTO" is FORBIDDEN as an output. Must be ALL CAPS or
      Title Case for readability when it materialises on the AR
      facade. Max 25 characters total.
 
