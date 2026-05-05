@@ -444,6 +444,16 @@ OUTPUT FORMAT — strict JSON array, no markdown, no commentary, no preamble:
 
 The "name" field MUST be in a form Google Maps can geocode (real name + city). The "description" stays under 200 chars and explains the link concretely (date, person, event, style), not poetically.`;
 
+  // sonar-pro : équilibre vitesse / qualité. Testé sur Clervaux/WWII
+  // avec un retour de 8 candidats thématiquement pertinents (Castle,
+  // Battle of the Bulge Museum, G.I. Monument, Pak43 Cannon, Sts
+  // Cosmas-Damian, Klöppelkrieg Monument…). sonar-deep-research a été
+  // testé mais retourne un RAPPORT en Markdown long de 50k chars avec
+  // un `<think>…</think>` au début — pas du JSON, et sa nature
+  // research-report résiste aux instructions de structuration. On
+  // resterait sur du sonar-pro tant que la qualité des candidats
+  // reste bonne ; passer à un 2-stage Perplexity research → Claude
+  // JSON extraction (comme `researchPredefinedStops`) si nécessaire.
   let raw: string;
   try {
     raw = await callPerplexity(
@@ -459,12 +469,15 @@ The "name" field MUST be in a form Google Maps can geocode (real name + city). T
 
   // Parse JSON robustly: Perplexity sometimes wraps in ```json``` blocks,
   // adds a preamble, or peppers the prose with citation-style "[1]"
-  // brackets that confuse a naïve `\[...\]` regex. Strategy:
-  //   1. Strip code-block fences if present.
-  //   2. Find the FIRST '[' followed by '{' (start of object array).
-  //   3. Walk forward counting bracket depth to find the matching ']'.
-  let work = raw;
-  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  // brackets that confuse a naïve `\[...\]` regex. sonar-deep-research
+  // adds `<think>...</think>` reasoning blocks that must be stripped
+  // first or the regex catches the [ inside the thinking. Strategy:
+  //   1. Strip <think>...</think> blocks (deep-research reasoning).
+  //   2. Strip code-block fences if present.
+  //   3. Find the FIRST '[' followed by '{' (start of object array).
+  //   4. Walk forward counting bracket depth to find the matching ']'.
+  let work = raw.replace(/<think>[\s\S]*?<\/think>/g, "");
+  const codeBlockMatch = work.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (codeBlockMatch) work = codeBlockMatch[1];
 
   let jsonStr = "";
