@@ -94,11 +94,24 @@ export interface PipelineResult {
   /** When errorCode === "GEOCODING_FAILED": the operator-facing list
    *  of stops the geocoder couldn't resolve. */
   failedLandmarks?: FailedLandmark[];
+  /** Stops that failed to geocode but the game was still published
+   *  with the remaining ones (graceful degradation). Present on
+   *  successful runs when 1-2 stops were dropped. Operator can
+   *  later regenerate with corrected landmark names if they care. */
+  droppedStops?: FailedLandmark[];
   durationMs?: number;
   steps?: number;
   researchDurationMs?: number;
   creationDurationMs?: number;
 }
+
+/**
+ * Minimum number of geocoded stops required to publish a game. Below
+ * this threshold, the parcours is too short to deliver the promised
+ * experience and the pipeline rejects rather than ship a stunted
+ * game. 6 chosen as the floor: 8 expected − up to 2 drops tolerated.
+ */
+const MIN_STOPS_TO_PUBLISH = 6;
 
 /**
  * Generate a complete game from a template
@@ -238,18 +251,19 @@ export async function generateGameFromTemplate(
       });
     }
 
-    if (geocodeFailures.length > 0) {
+    // Graceful degradation : on tolère jusqu'à 2 stops droppés tant
+    // qu'il reste >= MIN_STOPS_TO_PUBLISH stops géocodés correctement.
+    // Au-dessous, le parcours devient trop court (jeu écourté), on
+    // rejette pour forcer une correction côté oddballtrip.
+    if (verifiedLocations.length < MIN_STOPS_TO_PUBLISH) {
       const failureSummary = geocodeFailures
         .map(
           (f) =>
             `  - "${f.stopName}" (tried: ${f.tried.map((s) => `"${s}"`).join(", ")})`,
         )
         .join("\n");
-      // Throwing a tagged Error so `catch` in the caller can read
-      // both the human message AND the structured failure list to
-      // build the failure-callback payload sent back to oddballtrip.
       const err = new Error(
-        `GEOCODING_FAILED: ${geocodeFailures.length} stop(s) could not be geocoded via Google Places nor Nominatim:\n${failureSummary}\n\nFix the landmarkName for these stops on oddballtrip and regenerate.`,
+        `GEOCODING_FAILED: only ${verifiedLocations.length} of ${template.stops.length} stop(s) could be geocoded — minimum is ${MIN_STOPS_TO_PUBLISH}. Failed:\n${failureSummary}\n\nFix the landmarkName for these stops on oddballtrip and regenerate.`,
       ) as Error & {
         code?: PipelineErrorCode;
         failedLandmarks?: FailedLandmark[];
@@ -257,6 +271,19 @@ export async function generateGameFromTemplate(
       err.code = "GEOCODING_FAILED";
       err.failedLandmarks = geocodeFailures;
       throw err;
+    }
+
+    // Stocker les stops droppés pour les remonter à l'opérateur. Le
+    // jeu publie quand même mais on log + email d'avertissement (pas
+    // d'erreur bloquante) avec la liste des landmarks corrigeables.
+    const droppedStops: FailedLandmark[] = geocodeFailures;
+    if (droppedStops.length > 0) {
+      const summary = droppedStops
+        .map((f) => `"${f.stopName}"`)
+        .join(", ");
+      console.warn(
+        `[Pipeline] ${droppedStops.length} stop(s) dropped, game published with ${verifiedLocations.length} stops. Dropped: ${summary}`,
+      );
     }
 
     const researchDurationMs = Date.now() - researchStart;
@@ -530,6 +557,11 @@ export async function generateGameFromTemplate(
       steps: steps.length,
       researchDurationMs,
       creationDurationMs,
+      // Présent ssi des stops ont été droppés mais le jeu a quand même
+      // été publié (>= MIN_STOPS_TO_PUBLISH). Permet à oddballtrip
+      // d'afficher un warning à l'opérateur ou de planifier une
+      // re-génération avec des landmarkName corrigés.
+      ...(droppedStops.length > 0 ? { droppedStops } : {}),
     };
   } catch (error) {
     const durationMs = Date.now() - startTime;
