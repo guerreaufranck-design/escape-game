@@ -74,14 +74,38 @@ const MAX_INTER_STOP_M = 1_500;
  *   stopCount = 5 (Espagne, France court) → plancher 3 (tolère 2 drops)
  *   stopCount = 4 → plancher 3 (tolère 1 drop)
  *   stopCount = 3 → plancher 3 (aucun drop)
- *
- * Pour un jeu de 5 stops vendu, on ne peut pas en publier que 3 — sinon
- * le client achète 5 et joue 3, expérience cassée. Mais on tolère 1-2
- * drops s'ils sont liés à des problèmes de géocodage (mieux qu'un
- * échec total).
  */
 function minStopsForPublish(stopCount: number): number {
   return Math.max(3, stopCount - 2);
+}
+
+/**
+ * Distance MINIMALE adaptative entre deux stops consécutifs après NN
+ * reorder. UNIVERSELLE pour tous les jeux. Évite les "twin stops"
+ * (deux POIs adjacents qui font le même endroit physique) — typique
+ * de Los Cristianos où Bibliothèque + Centro Cultural à 16m étaient
+ * comptés comme 2 stops distincts → joueur visite 3 vrais lieux pour
+ * 5 vendus.
+ *
+ * Logique : on veut couvrir LA VILLE (vrai tour de quartier), pas
+ * tasser tous les stops dans un mouchoir de poche. Plus le stopCount
+ * est bas, plus on espace pour que le parcours reste consistant en
+ * couverture spatiale.
+ *
+ *   stopCount = 3  →  MIN 800m  (parcours ≥ 2.4 km cumulés)
+ *   stopCount = 4  →  MIN 600m  (parcours ≥ 2.4 km)
+ *   stopCount = 5  →  MIN 500m  (parcours ≥ 2.5 km)
+ *   stopCount = 6  →  MIN 400m  (parcours ≥ 2.4 km)
+ *   stopCount = 7  →  MIN 350m  (parcours ≥ 2.4 km)
+ *   stopCount = 8+ →  MIN 300m  (parcours ≥ 2.4 km)
+ */
+function minInterStopFor(stopCount: number): number {
+  if (stopCount <= 3) return 800;
+  if (stopCount === 4) return 600;
+  if (stopCount === 5) return 500;
+  if (stopCount === 6) return 400;
+  if (stopCount === 7) return 350;
+  return 300; // stopCount >= 8
 }
 
 export interface DiscoveredStop {
@@ -222,6 +246,10 @@ export async function discoverParcours(
         // qu'il choisisse un cluster cohérent dès le départ — au
         // lieu qu'on filtre après et perde des stops.
         maxInterStopM: MAX_INTER_STOP_M,
+        // Distance MIN entre stops — évite les "twins" type Bibliothèque
+        // + Centro Cultural à 16m sur Los Cristianos qui faisaient
+        // doublon dans les 5 stops vendus.
+        minInterStopM: minInterStopFor(params.stopCount),
       });
       console.log(
         `[discoverParcours] Claude curation: ${curation.selectedIndices.length} picked from ${googleCandidates.length} Google candidates. Rationale: ${curation.rationale}`,
@@ -397,6 +425,46 @@ export async function discoverParcours(
   // ============================================
   // Greedy nearest-neighbor pour un parcours physiquement cohérent.
   let ordered = greedyNearestNeighborFromStart(claudePicks, params.startPoint);
+
+  // ============================================
+  // PHASE 4.5 : Dedup "twin stops" (distance MIN)
+  // ============================================
+  // Si Claude a quand même retenu deux stops trop proches (cas Los
+  // Cristianos : Biblioteca + Centro Cultural à 16m), on supprime le
+  // moins essentiel. On garde le 1er rencontré dans l'ordre NN (=
+  // celui le plus proche du startPoint a priori).
+  //
+  // Universel pour tous les jeux. minInterStopM dérivé du stopCount :
+  // plus le jeu est court, plus l'écart minimum est grand (sinon un
+  // jeu de 5 stops dans 300m = nul).
+  const minInter = minInterStopFor(params.stopCount);
+  const dedupedOrder: DiscoveredStop[] = [];
+  for (const stop of ordered) {
+    const tooClose = dedupedOrder.find(
+      (kept) =>
+        haversineMeters(
+          { lat: stop.lat, lon: stop.lon },
+          { lat: kept.lat, lon: kept.lon },
+        ) < minInter,
+    );
+    if (tooClose) {
+      console.warn(
+        `[discoverParcours] DROP twin "${stop.name}" — too close to "${tooClose.name}" (< ${minInter}m). Universal min-spacing rule for stopCount=${params.stopCount}.`,
+      );
+      rejected.push({
+        name: stop.name,
+        reason: `twin stop, < ${minInter}m from "${tooClose.name}" (min-spacing rule for ${params.stopCount}-stop game)`,
+      });
+    } else {
+      dedupedOrder.push(stop);
+    }
+  }
+  if (dedupedOrder.length < ordered.length) {
+    console.log(
+      `[discoverParcours] Dedup: ${ordered.length - dedupedOrder.length} twin stops removed, ${dedupedOrder.length} kept`,
+    );
+    ordered = dedupedOrder;
+  }
 
   // ============================================
   // PHASE 5 : Élagage walkability inter-stops

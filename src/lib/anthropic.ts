@@ -155,6 +155,27 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 4. "riddle_text": 5-7 sentences. STRUCTURE en 3 mouvements brefs —
    POETIC d'abord, FACTUEL ensuite, ACTION-CALL succinct.
 
+   AUTO-CALIBRATION DU TON — pour CHAQUE stop, juge d'abord :
+   Le bâtiment a-t-il un lien DIRECT avec le thème du jeu ?
+     • OUI (ex. château WWII pour un thème Battle of the Bulge,
+       cathédrale 12e pour un thème médiéval) → mode GROUNDED :
+       narration ancrée sur faits historiques DOCUMENTÉS du lieu
+       (date, événement, personnage réel).
+     • NON (bâtiment moderne dans un thème antique, bibliothèque
+       contemporaine dans un thème pré-conquête, immeuble 1990s
+       dans un thème médiéval) → mode SPÉCULATIF (ghost mode) :
+       narration assumée comme IMAGINAIRE — le bâtiment moderne
+       devient un PORTAIL vers le passé, pas un site historique
+       lui-même. Exemples :
+         "Aujourd'hui c'est une bibliothèque vitrée. Mais imagine :
+          il y a 600 ans, ici se dressait le centre du village
+          guanche d'Achimencey. Ferme les yeux. Sens le sable,
+          écoute les chants tribaux qui montaient du feu sacré."
+         "Cette plaza moderne pavée recouvre ce qui fut autrefois
+          le marché aux poissons. Les pierres ne se souviennent
+          de rien — mais l'âme du lieu, peut-être."
+       Anachronisme ASSUMÉ et POÉTIQUE, pas inventé sans nuance.
+
    (a) NARRATIVE STORY (2-3 sentences) — Vivid micro-story tied to
        the place AND the game theme. Past tense, in-character,
        sensory detail. Vary the rhythm between steps : some open
@@ -162,6 +183,11 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
        a sensory detail ("The smell of incense still clung to..."),
        some on a question ("Why did the abbot leave that night ?").
        AVOID the same "X stood here, did Y" template at every step.
+
+       En mode SPÉCULATIF (bâtiment ne match pas le thème), commence
+       par "Imagine...", "Ferme les yeux et vois...", "Laisse ces
+       murs modernes s'effacer..." — le joueur sait qu'on l'invite
+       à voyager dans le temps, pas qu'on lui sert du faux historique.
 
    (b) THEN vs NOW BRIDGE (1-2 sentences) — Anchor le passé au
        présent. Comment ce lieu a évolué, ce que le joueur peut
@@ -805,6 +831,11 @@ export async function pickThematicLandmarksFromList(params: {
    *  cette contrainte EXPLICITEMENT dans le prompt et l'utilise pour
    *  filtrer ses choix AVANT que la pipeline en aval ne le fasse. */
   maxInterStopM: number;
+  /** Distance MIN entre 2 stops (universel, tous jeux) — évite les
+   *  "twin stops" type bibliothèque + centre culturel à 16m qui font
+   *  doublon dans les yeux du joueur. Adaptatif au stopCount :
+   *  jeu court = écart MIN plus grand pour vraie couverture. */
+  minInterStopM: number;
 }): Promise<{
   selectedIndices: number[];
   rationale: string;
@@ -842,37 +873,47 @@ CANDIDATES (all real, all in walking zone, indexed) — chaque ligne contient la
 ${candidatesBlock}
 
 ═══════════════════════════════════════════════════════════════════
-CONTRAINTE WALKABILITY (NON-NÉGOCIABLE)
+CONTRAINTES SPATIALES (NON-NÉGOCIABLES)
 ═══════════════════════════════════════════════════════════════════
 
-Le joueur doit pouvoir aller à pied du stop 1 → 2 → 3 → ... → 8 SANS
-qu'il y ait deux stops consécutifs distants de plus de ${params.maxInterStopM}m.
+Le joueur doit pouvoir aller à pied du stop 1 → 2 → 3 → ... SANS :
+  • MAX : qu'il y ait deux stops consécutifs distants de plus de ${params.maxInterStopM}m.
+  • MIN : que deux stops soient distants de MOINS de ${params.minInterStopM}m
+    (sinon ils sont sur le MÊME bâtiment ou dans le MÊME mouchoir
+    de poche — le joueur a l'impression de tourner en rond et de
+    payer pour des doublons).
 
 Pour estimer la distance entre 2 candidats à partir de lat/lon (degrés
 décimaux) :
   Δlat = lat2 - lat1     (1° lat ≈ 111 km partout)
   Δlon = lon2 - lon1     (1° lon ≈ 111 km × cos(lat) — pour 49°N
                           c'est ~73 km, pour 38°N ~88 km)
-  distance ≈ √((Δlat × 111000)² + (Δlon × 73000)²)  pour Europe centrale
+  distance ≈ √((Δlat × 111000)² + (Δlon × 73000)²)
 
   Exemple : (49.367, 10.183) → (49.370, 10.180)
-    Δlat = 0.003 → 333 m
-    Δlon = 0.003 → 220 m
-    distance ≈ √(333² + 220²) ≈ 400 m  ← OK, < 1500m
+    Δlat = 0.003 → 333 m, Δlon = 0.003 → 220 m
+    distance ≈ √(333² + 220²) ≈ 400 m  ← OK, dans [${params.minInterStopM}m, ${params.maxInterStopM}m]
 
 PROCÉDURE OBLIGATOIRE — applique-la mentalement :
-1. Trie tes candidats potentiels par proximité géographique
-   (regroupe ceux qui partagent à peu près la même lat ET lon).
-2. Choisis un CLUSTER géographique cohérent — tous tes ${params.needed}
-   picks doivent être groupés dans une zone de ~1.5 km de diamètre
-   (un quartier compact, pas l'étalement complet de la zone Google).
+1. Identifie les CLUSTERS géographiques de candidats (groupes serrés
+   < ${params.minInterStopM}m entre eux). Chaque cluster compte pour
+   UN SEUL stop potentiel — choisis le meilleur du cluster, élimine
+   les autres.
+2. Choisis un ENSEMBLE THÉMATIQUEMENT COHÉRENT de ${params.needed}
+   clusters distincts (un par stop) — tous dans une zone marchable
+   d'environ ${params.maxInterStopM * 2}m de diamètre.
 3. Si un candidat thématiquement génial est ISOLÉ (>${params.maxInterStopM}m
-   du cluster principal), SACRIFIE-LE. Mieux vaut ${params.needed}
-   stops moyens-thématiques mais walkables que ${params.needed-1} excellents
-   stops + 1 isolé qui force le rejet en aval.
+   du reste), SACRIFIE-LE.
 4. Vérifie : pour chaque paire de tes picks, la distance estimée
-   doit être < ${params.maxInterStopM}m. Si une paire dépasse, retire
-   le moins essentiel et remplace-le par un autre candidat plus proche.
+   doit être DANS [${params.minInterStopM}m, ${params.maxInterStopM}m].
+
+EXEMPLE CONCRET — DOUBLONS À ÉVITER :
+   • Bibliothèque municipale + Centre culturel à 16m → 1 SEUL stop
+     (même bâtiment de fait, peu importe leurs Google place_id distincts)
+   • Église + Plaza devant l'église à 20m → 1 SEUL stop (l'église
+     OU la plaza, pas les deux)
+   • 3 boutiques sur la même place à 30m → 1 SEUL stop
+   La règle d'or : un joueur qui marche 20m entre 2 stops = arnaque.
 
 YOUR TASK:
 - Select EXACTLY ${params.needed} indices from the list.
