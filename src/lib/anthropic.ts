@@ -735,3 +735,148 @@ Return ONLY this JSON object. No commentary, no markdown wrapping.`;
 
   return parsed;
 }
+
+export interface AdaptedNarrative {
+  /** Pitch court réutilisé sur la fiche produit (~120-180 chars). */
+  themeDescription: string;
+  /** Narration intégrale (~600-900 chars), le contexte que le joueur lit avant de démarrer. */
+  narrative: string;
+  /** Un titre poétique par stop, dans l'ordre du nouveau parcours. */
+  stops: Array<{
+    /** Nom poétique côté joueur ("Le Sanctuaire des Cloches"). */
+    name: string;
+    /** Phrase courte qui aide Claude #1 ensuite à écrire l'énigme — anecdote / chose à observer. */
+    description: string;
+  }>;
+}
+
+/**
+ * Adapte le scénario quand des stops ont été remplacés par auto-discovery.
+ *
+ * Pourquoi ça existe : le pipeline GPS-first commence par géocoder les
+ * landmarkName fournis par oddballtrip. Quand certains sont introuvables
+ * (LLM amont qui invente "Église Saint-Cunibert" alors qu'elle n'existe
+ * pas, ou un sentier nommé d'après la mauvaise rivière), on les remplace
+ * par des POIs réels découverts via Google Places nearbysearch. La
+ * narration originale était écrite autour des landmarks invalides — on
+ * la régénère pour qu'elle fasse sens autour des nouveaux lieux.
+ *
+ * Le THÈME et le TITRE ne changent pas (c'est ce que le client a acheté).
+ * Seuls la description / le scénario / les noms poétiques sont réécrits.
+ */
+export async function adaptNarrativeForReplacedStops(params: {
+  city: string;
+  country: string;
+  theme: string;
+  /** Narration originale, sert d'inspiration tonale. Peut être ignorée
+   *  si trop éloignée des nouveaux stops. */
+  originalNarrative: string;
+  /** Stops dans l'ordre final du parcours (1 → N). */
+  finalStops: Array<{
+    /** Nom réel du POI ("Église Saints-Cosme-et-Damien"). */
+    landmarkName: string;
+    /** Types Google ou catégorie ("church", "tourist_attraction"…). */
+    types?: string[];
+    /** Adresse / quartier si dispo, aide Claude à situer. */
+    address?: string;
+    /** Si stop hérité (non remplacé), le nom poétique original. Sert
+     *  d'ancre pour ne pas tout réécrire inutilement. */
+    keptPoeticName?: string;
+    /** Description originale du stop (operator-provided), si conservée. */
+    keptDescription?: string;
+    /** True ssi ce stop a été ajouté par auto-discovery. */
+    isReplacement: boolean;
+  }>;
+}): Promise<AdaptedNarrative> {
+  const client = getAnthropicClient();
+
+  const stopsBlock = params.finalStops
+    .map((s, i) => {
+      const flag = s.isReplacement ? "(NEW — replacement)" : "(kept from original)";
+      const hints = [
+        s.types?.length ? `types: ${s.types.slice(0, 4).join(", ")}` : null,
+        s.address ? `address: ${s.address}` : null,
+        s.keptPoeticName ? `original poetic name: "${s.keptPoeticName}"` : null,
+        s.keptDescription ? `original description: ${s.keptDescription}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n     ");
+      return `${i + 1}. ${s.landmarkName} ${flag}${hints ? `\n     ${hints}` : ""}`;
+    })
+    .join("\n\n");
+
+  const prompt = `You are rewriting the SCENARIO of an existing outdoor escape game whose original landmark list had to be partially substituted because some venues did not actually exist.
+
+LOCKED (do NOT change these):
+- City: ${params.city}, ${params.country}
+- Theme: "${params.theme}"
+
+REFERENCE — original narrative (kept ONLY for tone / atmosphere; many of its plot points reference the replaced venues and must be discarded):
+${params.originalNarrative}
+
+THE NEW DEFINITIVE STOP LIST (in walking order, do NOT reorder):
+${stopsBlock}
+
+YOUR JOB:
+1. Rewrite \`themeDescription\` — 1 to 2 sentences (120-180 chars), same tone as the original, that pitch the game on the product page. Mention the city, hint at the theme.
+2. Rewrite \`narrative\` — 600-900 chars, the intro the player reads before starting. It must thread the EXACT new stops in order, give a coherent cause/quest/secret-to-uncover, and respect the locked theme. Reference the real venues by their generic noun ("the church", "the bridge over the Clerve", "the war memorial") — players don't see the Google name.
+3. For each stop, output:
+   - \`name\` — a poetic, evocative title in English (3-7 words) for the UI card. NEW for replacements; for kept stops, you may reuse \`keptPoeticName\` or polish it slightly to fit the new flow.
+   - \`description\` — 1-2 sentences telling the next-stage Claude what to anchor the riddle on for that stop (era, observable architectural detail, theme link). For kept stops you can recycle \`keptDescription\` if useful.
+
+CONSTRAINTS:
+- The number of items in \`stops\` MUST equal the number above (${params.finalStops.length}).
+- Do not invent landmarks not on the list.
+- Stay grounded in real history of these specific venues — do not fabricate plot points the riddle stage cannot honor.
+- Tone: cinematic, mystery-genre, second-person ("tu") in French when later translated, but write in English here.
+
+OUTPUT FORMAT — strict JSON, no markdown:
+
+{
+  "themeDescription": "…",
+  "narrative": "…",
+  "stops": [
+    { "name": "…", "description": "…" }
+    ${"// one entry per stop, in the same order as above"}
+  ]
+}`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 3000,
+    temperature: 0.7,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const responseText =
+    message.content[0].type === "text" ? message.content[0].text : "";
+
+  const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) {
+    throw new Error(
+      `adaptNarrativeForReplacedStops: no JSON in Claude response: ${responseText.substring(0, 200)}`,
+    );
+  }
+
+  const parsed = JSON.parse(jsonMatch[0]) as AdaptedNarrative;
+
+  if (!parsed.themeDescription || !parsed.narrative || !Array.isArray(parsed.stops)) {
+    throw new Error(
+      `adaptNarrativeForReplacedStops: parsed JSON missing fields: ${JSON.stringify(parsed).substring(0, 200)}`,
+    );
+  }
+  if (parsed.stops.length !== params.finalStops.length) {
+    throw new Error(
+      `adaptNarrativeForReplacedStops: expected ${params.finalStops.length} stops, got ${parsed.stops.length}`,
+    );
+  }
+  for (const s of parsed.stops) {
+    if (!s.name?.trim() || !s.description?.trim()) {
+      throw new Error(
+        `adaptNarrativeForReplacedStops: stop with empty name/description: ${JSON.stringify(s)}`,
+      );
+    }
+  }
+
+  return parsed;
+}

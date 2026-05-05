@@ -38,6 +38,15 @@ export async function sendPipelineFailureAlert(params: {
   error: string;
   errorCode?: string;
   failedLandmarks?: Array<{ stopName: string; tried: string[] }>;
+  /** Stops auto-substitués par auto-discovery. Quand fourni, l'email
+   *  inclut une section dédiée listant `original → remplacement` pour
+   *  que l'opérateur sache que la fiche produit doit être ajustée. */
+  replacedStops?: Array<{ original: string; replacement: string }>;
+  /** Snippet de la nouvelle narration générée par Claude après
+   *  remplacement. Permet à l'équipe oddballtrip de copier-coller
+   *  la nouvelle accroche sur la page de vente sans aller chercher
+   *  dans la DB. */
+  adaptedNarrative?: { themeDescription: string; narrative: string };
   durationSeconds?: number;
   buyerEmail?: string;
   orderId?: string;
@@ -53,6 +62,8 @@ export async function sendPipelineFailureAlert(params: {
     error,
     errorCode,
     failedLandmarks,
+    replacedStops,
+    adaptedNarrative,
     durationSeconds,
     buyerEmail,
     orderId,
@@ -88,13 +99,29 @@ export async function sendPipelineFailureAlert(params: {
   })();
 
   try {
+    // Subject + bandeau dépendent du code : STOPS_REPLACED n'est pas
+    // un échec (le jeu est publié), c'est une notification opérationnelle.
+    const isReplacement = errorCode === "STOPS_REPLACED";
+    const isDropped = errorCode === "STOPS_DROPPED";
+    const subjectPrefix = isReplacement
+      ? "🔄 Pipeline OK avec substitution"
+      : isDropped
+        ? "⚠️ Pipeline OK avec stops droppés"
+        : "⚠️ Pipeline échec";
+    const headlineColor = isReplacement || isDropped ? "#1e3a8a" : "#dc2626";
+    const headlineText = isReplacement
+      ? "🔄 Jeu publié avec stops remplacés (fiche produit à mettre à jour)"
+      : isDropped
+        ? "⚠️ Jeu publié avec stops droppés"
+        : "🚨 Échec de génération de jeu";
+
     await client.emails.send({
       from: FROM_EMAIL,
       to,
-      subject: `⚠️ Pipeline échec — ${city} "${theme}"${errorCode ? ` (${errorCode})` : ""}`,
+      subject: `${subjectPrefix} — ${city} "${theme}"${errorCode ? ` (${errorCode})` : ""}`,
       html: `
         <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto;">
-          <h2 style="color: #dc2626;">🚨 Échec de génération de jeu</h2>
+          <h2 style="color: ${headlineColor};">${headlineText}</h2>
 
           <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
             <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Ville</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${city}, ${country}</td></tr>
@@ -109,11 +136,48 @@ export async function sendPipelineFailureAlert(params: {
 
           ${failureDetailHtml}
 
+          ${
+            replacedStops?.length
+              ? `
+          <div style="background: #dbeafe; border: 1px solid #2563eb; border-radius: 8px; padding: 12px; margin: 16px 0;">
+            <strong>🔄 Stops auto-substitués (action côté oddballtrip requise) :</strong>
+            <p style="margin: 8px 0; color: #1e3a8a;">Les landmarks ci-dessous étaient introuvables et ont été remplacés par des POIs réels découverts via Google Places dans un rayon de 5–10 km du centre ville. <strong>La narration et le titre des étapes ont été régénérés par Claude</strong> pour matcher les nouveaux lieux — la fiche produit oddballtrip doit être mise à jour.</p>
+            <table style="width: 100%; margin-top: 8px; border-collapse: collapse;">
+              <thead><tr><th style="text-align: left; padding: 4px 8px; border-bottom: 2px solid #2563eb;">Original</th><th style="text-align: left; padding: 4px 8px; border-bottom: 2px solid #2563eb;">Remplacement (Google Places)</th></tr></thead>
+              <tbody>${replacedStops
+                .map(
+                  (r) =>
+                    `<tr><td style="padding: 4px 8px; border-bottom: 1px solid #bfdbfe; color: #7f1d1d;">${r.original}</td><td style="padding: 4px 8px; border-bottom: 1px solid #bfdbfe; color: #1e3a8a;">${r.replacement}</td></tr>`,
+                )
+                .join("")}</tbody>
+            </table>
+            ${
+              adaptedNarrative
+                ? `
+            <details style="margin-top: 12px;">
+              <summary style="cursor: pointer; color: #1e3a8a; font-weight: 600;">📝 Nouvelle narration générée (à copier-coller sur la fiche produit)</summary>
+              <div style="background: #fff; border: 1px solid #bfdbfe; border-radius: 6px; padding: 10px; margin-top: 8px;">
+                <p style="margin: 0 0 8px; font-size: 13px; color: #475569;"><strong>themeDescription :</strong></p>
+                <p style="margin: 0 0 12px; padding: 8px; background: #f1f5f9; border-radius: 4px;">${adaptedNarrative.themeDescription}</p>
+                <p style="margin: 0 0 8px; font-size: 13px; color: #475569;"><strong>narrative :</strong></p>
+                <p style="margin: 0; padding: 8px; background: #f1f5f9; border-radius: 4px; white-space: pre-wrap;">${adaptedNarrative.narrative}</p>
+              </div>
+            </details>
+            `
+                : ""
+            }
+          </div>
+          `
+              : ""
+          }
+
           <div style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: 8px; padding: 12px; margin: 16px 0;">
             <strong>⚡ Action requise :</strong> ${
               errorCode === "GEOCODING_FAILED"
                 ? "Corriger les <code>landmarkName</code> ci-dessus côté oddballtrip puis relancer la génération."
-                : `Relancer la génération manuellement depuis l'admin OddballTrip${buyerEmail ? `, puis envoyer le code d'activation à <strong>${buyerEmail}</strong>` : ""}.`
+                : errorCode === "STOPS_REPLACED"
+                  ? "Mettre à jour la fiche produit oddballtrip avec la nouvelle <code>themeDescription</code> et le nouveau scénario (le contenu acheté ne correspond plus à 100% à ce qui sera joué)."
+                  : `Relancer la génération manuellement depuis l'admin OddballTrip${buyerEmail ? `, puis envoyer le code d'activation à <strong>${buyerEmail}</strong>` : ""}.`
             }
           </div>
 

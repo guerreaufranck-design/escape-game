@@ -16,12 +16,18 @@ import {
   generateEpilogue,
   validateGeneratedSteps,
   regenerateStep,
+  adaptNarrativeForReplacedStops,
   type GeneratedEpilogue,
   type GeneratedStep,
 } from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
 import { fetchHistoricalPhoto, type HistoricalPhotoResult } from "./wikipedia";
-import { geocodeLocation } from "./geocode";
+import {
+  discoverNearbyLandmarks,
+  geocodeLocation,
+  haversineMeters,
+  type DiscoveredLandmark,
+} from "./geocode";
 import { v4 as uuidv4 } from "uuid";
 
 export interface GameTemplate {
@@ -85,6 +91,38 @@ export interface FailedLandmark {
   tried: string[];
 }
 
+/**
+ * Description d'un stop remplacé par auto-discovery. Permet à oddballtrip
+ * (et à l'opérateur via le mail d'alerte) de savoir que la fiche produit
+ * doit être ajustée : la narration a été régénérée pour matcher les
+ * nouveaux POIs, donc le pitch / le titre des étapes affichés sur la
+ * page de vente ne correspondent plus aux ressources fournies au départ.
+ */
+export interface ReplacedStop {
+  /** Nom du stop tel qu'envoyé par oddballtrip (le poétique). */
+  original: string;
+  /** Nom Google du POI auto-découvert qui le remplace. */
+  replacement: string;
+  /** place_id Google — utile si oddballtrip veut afficher une fiche POI. */
+  replacementPlaceId?: string;
+  /** Coordonnées définitives du nouveau stop. */
+  lat: number;
+  lon: number;
+}
+
+/**
+ * Bloc renvoyé à oddballtrip quand la narration a été régénérée par
+ * Claude après des remplacements de stops. La fiche produit doit être
+ * mise à jour pour refléter ce nouveau contenu (sinon le client
+ * achète X et joue Y).
+ */
+export interface AdaptedNarrativePayload {
+  themeDescription: string;
+  narrative: string;
+  /** Nom poétique des stops dans l'ordre du parcours final. */
+  stopNames: string[];
+}
+
 export interface PipelineResult {
   success: boolean;
   gameId?: string;
@@ -99,6 +137,14 @@ export interface PipelineResult {
    *  successful runs when 1-2 stops were dropped. Operator can
    *  later regenerate with corrected landmark names if they care. */
   droppedStops?: FailedLandmark[];
+  /** Stops dont le landmarkName fourni était introuvable et qui ont
+   *  été remplacés par un POI réel découvert via Google Places.
+   *  Le jeu publie avec le compte de stops attendu. */
+  replacedStops?: ReplacedStop[];
+  /** Présent ssi `replacedStops.length > 0` : nouveau scénario généré
+   *  par Claude pour matcher les POIs auto-découverts. oddballtrip
+   *  doit l'utiliser pour rafraîchir la fiche produit côté commerce. */
+  adaptedNarrative?: AdaptedNarrativePayload;
   durationMs?: number;
   steps?: number;
   researchDurationMs?: number;
@@ -197,7 +243,24 @@ export async function generateGameFromTemplate(
       );
     }
 
-    const verifiedLocations: ResearchedLocation[] = [];
+    // Wrapper local : on a besoin de tracker le place_id et la nature
+    // (héritée vs auto-découverte) de chaque stop pour pouvoir (a)
+    // exclure les déjà-utilisés de la discovery, (b) réordonner par
+    // greedy NN, (c) briefer Claude lors de la régénération de
+    // narration. ResearchedLocation reste le format consommé par le
+    // reste du pipeline.
+    type PipelineStop = {
+      loc: ResearchedLocation;
+      isReplacement: boolean;
+      placeId?: string;
+      types?: string[];
+      address?: string;
+      /** Nom du stop original (poétique) si héritage. Sert à mapper
+       *  failed → replacement pour le callback. */
+      originalStopName?: string;
+    };
+
+    const stopsAfterGeocode: PipelineStop[] = [];
     const geocodeFailures: Array<{ stopName: string; tried: string[] }> = [];
 
     for (const stop of template.stops) {
@@ -228,34 +291,152 @@ export async function generateGameFromTemplate(
       console.log(
         `[Pipeline] geocoded "${queryName}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (source=${geo.source}, confidence=${geo.confidence})`,
       );
-      verifiedLocations.push({
-        name: stop.name,
-        landmarkName: stop.landmarkName?.trim() || queryName,
-        latitude: geo.lat,
-        longitude: geo.lon,
-        // Description from operator becomes the "what to observe"
-        // hint Claude uses to anchor the riddle. Fallback wording
-        // works for any virtual_ar step.
-        whatToObserve:
-          stop.description?.trim() ||
-          `Look around ${stop.name} — the AR camera will reveal the answer.`,
-        // "AUTO" = Claude must invent the AR answer (a year, a Latin
-        // word, a Roman numeral) at narrative time. Distinct from the
-        // legacy "UNVERIFIED" flag so we can tell the cases apart in
-        // logs / diagnostics.
-        answer: "AUTO",
-        answerType: "name",
-        answerSource: "virtual_ar",
-        source: "operator-provided",
-        themeLink: "",
+      stopsAfterGeocode.push({
+        loc: {
+          name: stop.name,
+          landmarkName: stop.landmarkName?.trim() || queryName,
+          latitude: geo.lat,
+          longitude: geo.lon,
+          // Description from operator becomes the "what to observe"
+          // hint Claude uses to anchor the riddle. Fallback wording
+          // works for any virtual_ar step.
+          whatToObserve:
+            stop.description?.trim() ||
+            `Look around ${stop.name} — the AR camera will reveal the answer.`,
+          // "AUTO" = Claude must invent the AR answer (a year, a Latin
+          // word, a Roman numeral) at narrative time. Distinct from the
+          // legacy "UNVERIFIED" flag so we can tell the cases apart in
+          // logs / diagnostics.
+          answer: "AUTO",
+          answerType: "name",
+          answerSource: "virtual_ar",
+          source: "operator-provided",
+          themeLink: "",
+        },
+        isReplacement: false,
+        placeId: geo.externalId,
+        originalStopName: stop.name,
       });
+    }
+
+    // ============================================
+    // STEP 1.5: Auto-discovery des stops manquants
+    // ============================================
+    // Si certains landmarkName fournis par oddballtrip n'ont pas pu
+    // être géocodés (typiquement parce que le LLM amont a halluciné
+    // le nom — "Église Saint-Cunibert" qui n'existe pas à Clervaux,
+    // "Sentier de la Blees" alors que la rivière s'appelle Clerve),
+    // on tente de combler les trous avec des POIs réels découverts
+    // dans un rayon de 5 km autour du centre ville. Si la densité
+    // est insuffisante (village isolé), on élargit à 10 km.
+    //
+    // Quand au moins un remplacement réussit, on devra (a) réordonner
+    // tous les stops via greedy nearest-neighbor depuis le centre
+    // ville pour garder un parcours cohérent (pas de retour en
+    // arrière), (b) demander à Claude de régénérer la narration et
+    // les noms poétiques pour qu'ils collent aux nouveaux lieux —
+    // sinon le scénario continuerait de référencer les landmarks
+    // hallucinés.
+    const replacedStops: ReplacedStop[] = [];
+    if (geocodeFailures.length > 0 && cityRef) {
+      const usedPlaceIds = new Set<string>(
+        stopsAfterGeocode
+          .map((s) => s.placeId)
+          .filter((id): id is string => !!id),
+      );
+      const needed = geocodeFailures.length;
+
+      let candidates: DiscoveredLandmark[] = [];
+      try {
+        candidates = await discoverNearbyLandmarks(cityRef, {
+          radiusM: 5_000,
+          excludePlaceIds: usedPlaceIds,
+          limit: 30,
+        });
+        if (candidates.length < needed) {
+          console.log(
+            `[Pipeline] Only ${candidates.length} candidates within 5 km — widening to 10 km`,
+          );
+          candidates = await discoverNearbyLandmarks(cityRef, {
+            radiusM: 10_000,
+            excludePlaceIds: usedPlaceIds,
+            limit: 30,
+          });
+        }
+      } catch (err) {
+        console.warn(
+          `[Pipeline] discoverNearbyLandmarks threw: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+
+      const toFill = Math.min(candidates.length, needed);
+      console.log(
+        `[Pipeline] ${needed} stop(s) failed geocoding, ${candidates.length} POI candidate(s) found, filling ${toFill}`,
+      );
+
+      for (let i = 0; i < toFill; i++) {
+        const c = candidates[i];
+        const failure = geocodeFailures[i];
+        stopsAfterGeocode.push({
+          loc: {
+            // Le `name` poétique sera réécrit par adaptNarrativeForReplacedStops.
+            // En attendant on met un placeholder lisible — il ne
+            // sera utilisé que si la regen narrative échoue (fallback
+            // dégradé mais publiable).
+            name: c.name,
+            landmarkName: c.name,
+            latitude: c.lat,
+            longitude: c.lon,
+            whatToObserve: `Look around ${c.name} — the AR camera will reveal the answer.`,
+            answer: "AUTO",
+            answerType: "name",
+            answerSource: "virtual_ar",
+            source: "auto-discovered",
+            themeLink: "",
+          },
+          isReplacement: true,
+          placeId: c.placeId,
+          types: c.types,
+          address: c.address,
+          originalStopName: failure.stopName,
+        });
+        replacedStops.push({
+          original: failure.stopName,
+          replacement: c.name,
+          replacementPlaceId: c.placeId,
+          lat: c.lat,
+          lon: c.lon,
+        });
+      }
+
+      // Les failures restantes (pas assez de candidats pour combler)
+      // tomberont dans le `droppedStops` legacy via la condition de
+      // dégradation gracieuse plus bas.
+      geocodeFailures.splice(0, toFill);
+    } else if (geocodeFailures.length > 0 && !cityRef) {
+      console.warn(
+        `[Pipeline] ${geocodeFailures.length} stop(s) failed but no city reference — auto-discovery disabled, falling through to graceful drop`,
+      );
+    }
+
+    // Réordonnancement par nearest-neighbor depuis le centre ville
+    // dès qu'un remplacement a eu lieu : la liste résultante mélange
+    // des stops opérateur et des POIs auto-découverts dont les
+    // positions n'ont aucune raison de tracer un parcours cohérent
+    // dans l'ordre d'insertion. NN garantit qu'on ne « repasse pas
+    // au point A » entre deux étapes. Pour 8 stops c'est suffisant ;
+    // si on voulait optimiser globalement il faudrait un vrai TSP
+    // mais le gain serait marginal.
+    if (replacedStops.length > 0 && cityRef) {
+      const ordered = greedyNearestNeighborFromRef(stopsAfterGeocode, cityRef);
+      stopsAfterGeocode.splice(0, stopsAfterGeocode.length, ...ordered);
     }
 
     // Graceful degradation : on tolère jusqu'à 2 stops droppés tant
     // qu'il reste >= MIN_STOPS_TO_PUBLISH stops géocodés correctement.
     // Au-dessous, le parcours devient trop court (jeu écourté), on
     // rejette pour forcer une correction côté oddballtrip.
-    if (verifiedLocations.length < MIN_STOPS_TO_PUBLISH) {
+    if (stopsAfterGeocode.length < MIN_STOPS_TO_PUBLISH) {
       const failureSummary = geocodeFailures
         .map(
           (f) =>
@@ -263,7 +444,7 @@ export async function generateGameFromTemplate(
         )
         .join("\n");
       const err = new Error(
-        `GEOCODING_FAILED: only ${verifiedLocations.length} of ${template.stops.length} stop(s) could be geocoded — minimum is ${MIN_STOPS_TO_PUBLISH}. Failed:\n${failureSummary}\n\nFix the landmarkName for these stops on oddballtrip and regenerate.`,
+        `GEOCODING_FAILED: only ${stopsAfterGeocode.length} of ${template.stops.length} stop(s) could be geocoded or auto-substituted — minimum is ${MIN_STOPS_TO_PUBLISH}. Failed:\n${failureSummary}\n\nFix the landmarkName for these stops on oddballtrip, broaden the city, or accept fewer stops.`,
       ) as Error & {
         code?: PipelineErrorCode;
         failedLandmarks?: FailedLandmark[];
@@ -282,9 +463,65 @@ export async function generateGameFromTemplate(
         .map((f) => `"${f.stopName}"`)
         .join(", ");
       console.warn(
-        `[Pipeline] ${droppedStops.length} stop(s) dropped, game published with ${verifiedLocations.length} stops. Dropped: ${summary}`,
+        `[Pipeline] ${droppedStops.length} stop(s) dropped, game published with ${stopsAfterGeocode.length} stops. Dropped: ${summary}`,
       );
     }
+    if (replacedStops.length > 0) {
+      console.warn(
+        `[Pipeline] ${replacedStops.length} stop(s) auto-replaced via Google Places nearbysearch: ${replacedStops.map((r) => `"${r.original}" → "${r.replacement}"`).join("; ")}`,
+      );
+    }
+
+    // Adapter la narration aux stops finaux (Claude #0). On le fait
+    // AVANT la génération des énigmes pour que le brief de Claude #1
+    // soit cohérent. En cas d'échec on continue avec la narration
+    // originale — les énigmes n'utilisent pas directement les noms
+    // poétiques des stops, donc le jeu reste publiable.
+    let adaptedNarrative: AdaptedNarrativePayload | undefined;
+    let effectiveNarrative = template.narrative;
+    let effectiveThemeDescription = template.themeDescription;
+    if (replacedStops.length > 0) {
+      try {
+        const adapted = await adaptNarrativeForReplacedStops({
+          city: template.city,
+          country: template.country,
+          theme: template.theme,
+          originalNarrative: template.narrative,
+          finalStops: stopsAfterGeocode.map((s) => ({
+            landmarkName: s.loc.landmarkName ?? s.loc.name,
+            types: s.types,
+            address: s.address,
+            keptPoeticName: s.isReplacement ? undefined : s.loc.name,
+            keptDescription: s.isReplacement ? undefined : s.loc.whatToObserve,
+            isReplacement: s.isReplacement,
+          })),
+        });
+        effectiveNarrative = adapted.narrative;
+        effectiveThemeDescription = adapted.themeDescription;
+        // Propager les nouveaux noms poétiques + descriptions vers
+        // les ResearchedLocation : Claude #1 va les voir dans le
+        // brief et écrire les énigmes en cohérence.
+        for (let i = 0; i < stopsAfterGeocode.length; i++) {
+          stopsAfterGeocode[i].loc.name = adapted.stops[i].name;
+          stopsAfterGeocode[i].loc.whatToObserve = adapted.stops[i].description;
+        }
+        adaptedNarrative = {
+          themeDescription: adapted.themeDescription,
+          narrative: adapted.narrative,
+          stopNames: adapted.stops.map((s) => s.name),
+        };
+        console.log(
+          `[Pipeline] Narrative adapted to ${replacedStops.length} replacement(s) — themeDescription/narrative/stop names refreshed`,
+        );
+      } catch (err) {
+        console.warn(
+          `[Pipeline] Narrative adaptation failed, keeping original: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+    const verifiedLocations: ResearchedLocation[] = stopsAfterGeocode.map(
+      (s) => s.loc,
+    );
 
     const researchDurationMs = Date.now() - researchStart;
     console.log(
@@ -309,7 +546,7 @@ export async function generateGameFromTemplate(
       template.city,
       template.country,
       template.theme,
-      template.narrative,
+      effectiveNarrative,
       template.difficulty,
       verifiedLocations
     );
@@ -360,7 +597,7 @@ export async function generateGameFromTemplate(
           location: sourceLoc,
           city: template.city,
           theme: template.theme,
-          narrative: template.narrative,
+          narrative: effectiveNarrative,
           stepNumber: i + 1,
           totalSteps: steps.length,
         });
@@ -429,7 +666,7 @@ export async function generateGameFromTemplate(
         steps,
         city: template.city,
         theme: template.theme,
-        narrative: template.narrative,
+        narrative: effectiveNarrative,
       });
 
       if (validation.ok || validation.issues.length === 0) {
@@ -485,7 +722,7 @@ export async function generateGameFromTemplate(
             location: sourceLoc,
             city: template.city,
             theme: template.theme,
-            narrative: template.narrative,
+            narrative: effectiveNarrative,
             stepNumber: idx + 1,
             totalSteps: steps.length,
           });
@@ -523,7 +760,7 @@ export async function generateGameFromTemplate(
         city: template.city,
         country: template.country,
         theme: template.theme,
-        narrative: template.narrative,
+        narrative: effectiveNarrative,
         difficulty: template.difficulty,
         steps,
       });
@@ -542,7 +779,22 @@ export async function generateGameFromTemplate(
     // STEP 3: Insert into Supabase
     // ============================================
     console.log("[Pipeline] Step 3: Inserting into Supabase...");
-    const gameId = await insertGameIntoDatabase(template, steps, stepPhotos, epilogue, verifiedLocations);
+    // On passe au stockage la version « effective » de la narration et
+    // de la description : si la regen narrative a réussi suite à un
+    // remplacement de stops, c'est cette version qui doit aller en DB
+    // (et être servie au joueur), PAS le contenu original qui parlait
+    // des landmarks hallucinés.
+    const gameId = await insertGameIntoDatabase(
+      {
+        ...template,
+        narrative: effectiveNarrative,
+        themeDescription: effectiveThemeDescription,
+      },
+      steps,
+      stepPhotos,
+      epilogue,
+      verifiedLocations,
+    );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
     const durationMs = Date.now() - startTime;
@@ -562,6 +814,12 @@ export async function generateGameFromTemplate(
       // d'afficher un warning à l'opérateur ou de planifier une
       // re-génération avec des landmarkName corrigés.
       ...(droppedStops.length > 0 ? { droppedStops } : {}),
+      // Présent ssi le pipeline a auto-substitué un ou plusieurs
+      // stops via Google Places nearbysearch. oddballtrip s'en sert
+      // pour mettre à jour la fiche produit (la narration et les
+      // titres d'étapes ont changé).
+      ...(replacedStops.length > 0 ? { replacedStops } : {}),
+      ...(adaptedNarrative ? { adaptedNarrative } : {}),
     };
   } catch (error) {
     const durationMs = Date.now() - startTime;
@@ -592,6 +850,46 @@ export async function generateGameFromTemplate(
       durationMs,
     };
   }
+}
+
+/**
+ * Réordonne une liste de stops par voisin le plus proche, en partant
+ * du point de référence (typiquement le centre ville géocodé).
+ *
+ * Utilisé après auto-discovery : la liste post-fill mélange les stops
+ * opérateur conservés et les POIs auto-substitués dans un ordre qui
+ * n'a aucune raison d'être un parcours marchable. Greedy NN garantit
+ * que (a) le 1er stop est le plus proche du centre ville (entrée
+ * naturelle dans le parcours), (b) chaque stop suivant est le plus
+ * proche du précédent, donc pas de retour en arrière franc.
+ *
+ * Limitations connues : ce n'est pas un TSP optimal, le dernier stop
+ * peut finir loin du début. Pour 6-8 points dans un rayon de 5 km
+ * c'est suffisant ; un vrai TSP avec retour-au-départ ne gagnerait
+ * que quelques centaines de mètres au mieux.
+ */
+function greedyNearestNeighborFromRef<
+  T extends { loc: { latitude: number; longitude: number } },
+>(stops: T[], start: { lat: number; lon: number }): T[] {
+  const remaining = [...stops];
+  const ordered: T[] = [];
+  let cursor = { lat: start.lat, lon: start.lon };
+  while (remaining.length > 0) {
+    let bestIdx = 0;
+    let bestDist = Infinity;
+    for (let i = 0; i < remaining.length; i++) {
+      const r = remaining[i].loc;
+      const d = haversineMeters(cursor, { lat: r.latitude, lon: r.longitude });
+      if (d < bestDist) {
+        bestDist = d;
+        bestIdx = i;
+      }
+    }
+    const [picked] = remaining.splice(bestIdx, 1);
+    ordered.push(picked);
+    cursor = { lat: picked.loc.latitude, lon: picked.loc.longitude };
+  }
+  return ordered;
 }
 
 /**

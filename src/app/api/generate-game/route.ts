@@ -177,6 +177,19 @@ export async function POST(request: NextRequest) {
               ...(result.droppedStops?.length
                 ? { droppedStops: result.droppedStops }
                 : {}),
+              // Présent ssi un ou plusieurs stops ont été auto-remplacés
+              // par un POI réel découvert via Google Places. La narration
+              // a été régénérée — oddballtrip DOIT mettre à jour la
+              // fiche produit avec `adaptedNarrative.themeDescription`
+              // et `adaptedNarrative.narrative`, sinon le client achète
+              // un scénario qui ne correspond plus à ce qu'il joue.
+              ...(result.replacedStops?.length
+                ? {
+                    narrativeChanged: true,
+                    replacedStops: result.replacedStops,
+                    adaptedNarrative: result.adaptedNarrative,
+                  }
+                : {}),
             }),
           });
           console.log(`[GenerateGame] Callback response: ${cbRes.status} ${cbRes.statusText}`);
@@ -211,6 +224,35 @@ export async function POST(request: NextRequest) {
         }
       }
 
+      // If stops were auto-replaced, fire a notification email so the
+      // sales team knows the product page must be updated to match the
+      // regenerated narrative. The game IS published — this is not a
+      // failure, just an operational handover.
+      if (result.replacedStops?.length) {
+        try {
+          await sendPipelineFailureAlert({
+            city,
+            country,
+            theme,
+            slug: template.slug,
+            error: `${result.replacedStops.length} stop(s) auto-replaced via Google Places — narrative regenerated, product page must be refreshed.`,
+            errorCode: "STOPS_REPLACED",
+            replacedStops: result.replacedStops.map((r) => ({
+              original: r.original,
+              replacement: r.replacement,
+            })),
+            adaptedNarrative: result.adaptedNarrative,
+            durationSeconds: Math.round((result.durationMs || 0) / 1000),
+            buyerEmail: body.buyerEmail,
+            orderId: body.orderId,
+          });
+        } catch (alertErr) {
+          console.error(
+            `[GenerateGame] Replaced-stops alert failed: ${alertErr instanceof Error ? alertErr.message : alertErr}`,
+          );
+        }
+      }
+
       return NextResponse.json(
         {
           success: true,
@@ -222,6 +264,13 @@ export async function POST(request: NextRequest) {
           message: `Game "${theme}" in ${city} created successfully`,
           ...(result.droppedStops?.length
             ? { droppedStops: result.droppedStops }
+            : {}),
+          ...(result.replacedStops?.length
+            ? {
+                narrativeChanged: true,
+                replacedStops: result.replacedStops,
+                adaptedNarrative: result.adaptedNarrative,
+              }
             : {}),
         },
         { status: 201 }
