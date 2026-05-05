@@ -190,19 +190,27 @@ export async function POST(request: NextRequest) {
     } else {
       console.error("[GenerateGame] Pipeline failed:", result.error);
 
-      // Send failure alert email to admin
+      // Send failure alert email to admin (CC: oddballtrip ops if
+      // ODDBALLTRIP_ALERT_EMAIL is set). Threads through the
+      // structured errorCode + failedLandmarks so the email body
+      // shows the operator the exact list of names to fix.
       await sendPipelineFailureAlert({
         city,
         country,
         theme,
         slug: template.slug,
         error: result.error || "Unknown pipeline error",
+        errorCode: result.errorCode,
+        failedLandmarks: result.failedLandmarks,
         durationSeconds: Math.round((result.durationMs || 0) / 1000),
         buyerEmail: body.buyerEmail,
         orderId: body.orderId,
       });
 
-      // Send failure callback to OddballTrip so it can handle the client
+      // Send failure callback to OddballTrip so it can handle the
+      // client. Structured payload so oddballtrip can switch on the
+      // errorCode (notably GEOCODING_FAILED → show the operator the
+      // failedLandmarks to fix and resubmit).
       if (body.callbackUrl) {
         try {
           await fetch(body.callbackUrl, {
@@ -213,8 +221,12 @@ export async function POST(request: NextRequest) {
             },
             body: JSON.stringify({
               success: false,
-              error: result.error,
               slug: template.slug,
+              errorCode: result.errorCode ?? "INTERNAL_ERROR",
+              error: result.error,
+              ...(result.failedLandmarks?.length
+                ? { failedLandmarks: result.failedLandmarks }
+                : {}),
             }),
           });
         } catch (cbErr) {
@@ -225,7 +237,11 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         {
           success: false,
+          errorCode: result.errorCode ?? "INTERNAL_ERROR",
           error: result.error,
+          ...(result.failedLandmarks?.length
+            ? { failedLandmarks: result.failedLandmarks }
+            : {}),
           durationSeconds: Math.round((result.durationMs || 0) / 1000),
         },
         { status: 500 }

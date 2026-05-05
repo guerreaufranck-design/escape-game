@@ -66,10 +66,34 @@ export interface GameWaypoint {
   context?: string;
 }
 
+/**
+ * Machine-parseable error code attached to a PipelineResult when
+ * `success === false`. Lets the caller (oddballtrip) react in a
+ * structured way — surface a precise message to the operator,
+ * highlight which stops to fix, route to a recovery flow.
+ */
+export type PipelineErrorCode =
+  | "GEOCODING_FAILED"
+  | "GENERATION_FAILED"
+  | "VALIDATION_FAILED"
+  | "INTERNAL_ERROR";
+
+export interface FailedLandmark {
+  stopName: string;
+  /** All names the geocoder was tried with. Usually 1 (landmarkName)
+   *  or 2 (landmarkName then name as fallback). */
+  tried: string[];
+}
+
 export interface PipelineResult {
   success: boolean;
   gameId?: string;
   error?: string;
+  /** Structured failure category for callers to switch on. */
+  errorCode?: PipelineErrorCode;
+  /** When errorCode === "GEOCODING_FAILED": the operator-facing list
+   *  of stops the geocoder couldn't resolve. */
+  failedLandmarks?: FailedLandmark[];
   durationMs?: number;
   steps?: number;
   researchDurationMs?: number;
@@ -188,9 +212,18 @@ export async function generateGameFromTemplate(
             `  - "${f.stopName}" (tried: ${f.tried.map((s) => `"${s}"`).join(", ")})`,
         )
         .join("\n");
-      throw new Error(
+      // Throwing a tagged Error so `catch` in the caller can read
+      // both the human message AND the structured failure list to
+      // build the failure-callback payload sent back to oddballtrip.
+      const err = new Error(
         `GEOCODING_FAILED: ${geocodeFailures.length} stop(s) could not be geocoded via Google Places nor Nominatim:\n${failureSummary}\n\nFix the landmarkName for these stops on oddballtrip and regenerate.`,
-      );
+      ) as Error & {
+        code?: PipelineErrorCode;
+        failedLandmarks?: FailedLandmark[];
+      };
+      err.code = "GEOCODING_FAILED";
+      err.failedLandmarks = geocodeFailures;
+      throw err;
     }
 
     const researchDurationMs = Date.now() - researchStart;
@@ -405,9 +438,24 @@ export async function generateGameFromTemplate(
       `[Pipeline] Failed after ${Math.round(durationMs / 1000)}s: ${errorMessage}`
     );
 
+    // The geocoding stage tags its Errors with `.code` and
+    // `.failedLandmarks` so the caller can build a structured
+    // failure callback. Non-tagged errors fall back to a generic
+    // "INTERNAL_ERROR" code; the message still surfaces.
+    const tagged = error as Error & {
+      code?: PipelineErrorCode;
+      failedLandmarks?: FailedLandmark[];
+    };
+    const errorCode: PipelineErrorCode =
+      tagged?.code ?? (errorMessage.startsWith("GEOCODING_FAILED")
+        ? "GEOCODING_FAILED"
+        : "INTERNAL_ERROR");
+
     return {
       success: false,
       error: errorMessage,
+      errorCode,
+      failedLandmarks: tagged?.failedLandmarks,
       durationMs,
     };
   }

@@ -89,7 +89,10 @@ export async function geocodeLocation(
   // Primary: Google when a key is present. Places "findplacefromtext"
   // targets named landmarks and is consistently sub-10 m on famous
   // locations; Geocoding is the fallback when Places returns nothing
-  // (street addresses, plazas without their own POI).
+  // (street addresses, plazas without their own POI). We tolerate
+  // confidence "high" or "medium" — APPROXIMATE / "low" results are
+  // worse than 100 m off and would defeat the purpose of GPS-first;
+  // we drop down to Nominatim instead and keep its result if better.
   if (process.env.GOOGLE_MAPS_API_KEY) {
     try {
       result = await viaGooglePlaces(landmarkName, city, country);
@@ -109,6 +112,22 @@ export async function geocodeLocation(
         );
       }
     }
+    // Reject Google "low" confidence (APPROXIMATE) — it's neighbourhood-
+    // level at best and would put the player 100+ m from the real
+    // landmark. Force a Nominatim attempt; if Nominatim does better
+    // we keep that, otherwise we fall through to "result stays low"
+    // and the caller will reject the stop.
+    if (result && result.confidence === "low") {
+      console.warn(
+        `[geocode] Google returned low confidence for "${landmarkName}", trying Nominatim`,
+      );
+      try {
+        const osm = await viaNominatim(landmarkName, city, country);
+        if (osm && osm.confidence !== "low") {
+          result = osm;
+        }
+      } catch { /* keep low-confidence Google result */ }
+    }
   }
 
   // Fallback: Nominatim. Free, no key, polite rate-limit applies.
@@ -121,6 +140,17 @@ export async function geocodeLocation(
         err instanceof Error ? err.message : err,
       );
     }
+  }
+
+  // Final guard: a "low" confidence result (whatever the source) is
+  // worse than a clean rejection — the pipeline downstream will fail
+  // loud and the operator will fix the landmarkName. Better that than
+  // shipping a 200 m drift to a paying customer.
+  if (result && result.confidence === "low") {
+    console.warn(
+      `[geocode] All providers returned low confidence for "${landmarkName}" — treating as miss`,
+    );
+    result = null;
   }
 
   cache.set(cacheKey, result);
