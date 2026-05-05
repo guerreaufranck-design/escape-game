@@ -194,8 +194,16 @@ export async function discoverParcours(
           address: c.address,
           rating: c.rating,
           distanceM: c.distanceM,
+          // GPS coords pour que Claude calcule les distances
+          // inter-candidats et garantisse un parcours walkable.
+          lat: c.lat,
+          lon: c.lon,
         })),
         needed: params.stopCount,
+        // Contrainte walkability transmise EN AMONT à Claude pour
+        // qu'il choisisse un cluster cohérent dès le départ — au
+        // lieu qu'on filtre après et perde des stops.
+        maxInterStopM: MAX_INTER_STOP_M,
       });
       console.log(
         `[discoverParcours] Claude curation: ${curation.selectedIndices.length} picked from ${googleCandidates.length} Google candidates. Rationale: ${curation.rationale}`,

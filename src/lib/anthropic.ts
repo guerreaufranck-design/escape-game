@@ -794,9 +794,17 @@ export async function pickThematicLandmarksFromList(params: {
     address?: string;
     rating?: number;
     distanceM: number;
+    /** Coords GPS pour que Claude puisse estimer les distances
+     *  inter-candidats et garantir un parcours marchable upfront. */
+    lat: number;
+    lon: number;
   }>;
   /** Combien de stops à retourner (typiquement 8). */
   needed: number;
+  /** Distance max entre 2 stops consécutifs en mètres. Claude reçoit
+   *  cette contrainte EXPLICITEMENT dans le prompt et l'utilise pour
+   *  filtrer ses choix AVANT que la pipeline en aval ne le fasse. */
+  maxInterStopM: number;
 }): Promise<{
   selectedIndices: number[];
   rationale: string;
@@ -810,6 +818,7 @@ export async function pickThematicLandmarksFromList(params: {
   const candidatesBlock = params.candidates
     .map((c, i) => {
       const meta = [
+        `lat=${c.lat.toFixed(5)},lon=${c.lon.toFixed(5)}`,
         `types=[${c.types.slice(0, 3).join(", ")}]`,
         `${Math.round(c.distanceM)}m from start`,
         c.rating ? `rating=${c.rating.toFixed(1)}` : null,
@@ -829,16 +838,57 @@ LOCKED CONTEXT:
 - Narrative (player intro):
 ${params.narrative}
 
-CANDIDATES (all real, all in walking zone, indexed):
+CANDIDATES (all real, all in walking zone, indexed) — chaque ligne contient lat/lon pour que tu puisses calculer les distances entre candidats :
 ${candidatesBlock}
 
-YOUR TASK:
-- Select EXACTLY ${params.needed} indices from the list, in any order — the pipeline will reorder by walking distance.
-- A landmark fits the theme if its NATURE/ERA/HISTORICAL ROLE can plausibly be threaded into the narrative. Be inclusive: a square, a church, a city hall in the right era are ALL valid even if their direct link to the theme is atmospheric.
-- Prefer well-rated landmarks (rating ≥ 4.0) when available — they're typically more memorable for players.
-- Avoid picking ${params.needed} sites of the same type (8 churches in a row would be boring). Mix church + monument + square + museum + landmark for variety.
+═══════════════════════════════════════════════════════════════════
+CONTRAINTE WALKABILITY (NON-NÉGOCIABLE)
+═══════════════════════════════════════════════════════════════════
 
-YOU MUST RETURN ${params.needed} INDICES. The candidates list has ${params.candidates.length} entries — you have plenty of choice. If you genuinely cannot find ${params.needed} that fit, return your best ${params.needed} anyway and explain why in the rationale; the pipeline will accept slightly off-theme picks rather than fail.
+Le joueur doit pouvoir aller à pied du stop 1 → 2 → 3 → ... → 8 SANS
+qu'il y ait deux stops consécutifs distants de plus de ${params.maxInterStopM}m.
+
+Pour estimer la distance entre 2 candidats à partir de lat/lon (degrés
+décimaux) :
+  Δlat = lat2 - lat1     (1° lat ≈ 111 km partout)
+  Δlon = lon2 - lon1     (1° lon ≈ 111 km × cos(lat) — pour 49°N
+                          c'est ~73 km, pour 38°N ~88 km)
+  distance ≈ √((Δlat × 111000)² + (Δlon × 73000)²)  pour Europe centrale
+
+  Exemple : (49.367, 10.183) → (49.370, 10.180)
+    Δlat = 0.003 → 333 m
+    Δlon = 0.003 → 220 m
+    distance ≈ √(333² + 220²) ≈ 400 m  ← OK, < 1500m
+
+PROCÉDURE OBLIGATOIRE — applique-la mentalement :
+1. Trie tes candidats potentiels par proximité géographique
+   (regroupe ceux qui partagent à peu près la même lat ET lon).
+2. Choisis un CLUSTER géographique cohérent — tous tes ${params.needed}
+   picks doivent être groupés dans une zone de ~1.5 km de diamètre
+   (un quartier compact, pas l'étalement complet de la zone Google).
+3. Si un candidat thématiquement génial est ISOLÉ (>${params.maxInterStopM}m
+   du cluster principal), SACRIFIE-LE. Mieux vaut ${params.needed}
+   stops moyens-thématiques mais walkables que ${params.needed-1} excellents
+   stops + 1 isolé qui force le rejet en aval.
+4. Vérifie : pour chaque paire de tes picks, la distance estimée
+   doit être < ${params.maxInterStopM}m. Si une paire dépasse, retire
+   le moins essentiel et remplace-le par un autre candidat plus proche.
+
+YOUR TASK:
+- Select EXACTLY ${params.needed} indices from the list.
+- Tous tes picks doivent former un cluster walkable (cf. contrainte
+  ci-dessus, ${params.maxInterStopM}m max entre voisins consécutifs
+  une fois ordonnés).
+- Theme fit : NATURE/ERA/HISTORICAL ROLE plausibly threadable dans
+  la narration. Inclusif : un square / church / city hall sans lien
+  thématique direct mais bonne époque = OK.
+- Préfère les landmarks bien notés (rating ≥ 4.0) à choix égal.
+- Variété : évite ${params.needed} sites du même type (8 églises = ennuyeux).
+
+YOU MUST RETURN ${params.needed} INDICES respectant la contrainte
+walkability. La liste a ${params.candidates.length} entrées — il y a
+souvent plusieurs clusters géographiques possibles. Choisis le cluster
+le plus thématiquement riche.
 
 OUTPUT — strict JSON, no markdown, no preamble:
 {
