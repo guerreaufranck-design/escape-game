@@ -324,9 +324,14 @@ export async function generateGameFromTemplate(
     }
 
     const stopCount = template.stopCount ?? 8;
-    if (stopCount < 6) {
+    // Plancher dur : 3 stops minimum sous lequel un escape game n'a
+    // plus de sens (1 énigme = pas un parcours, 2 = trop court, 3 =
+    // début/milieu/fin). oddballtrip catalogue contient des fiches
+    // historiques à 4-5 stops (Espagne, France, Italie) qu'on doit
+    // pouvoir générer.
+    if (stopCount < 3) {
       const err = new Error(
-        `INTERNAL_ERROR: stopCount=${stopCount} below floor of 6 — pipeline cannot publish a game shorter than 6 stops`,
+        `INTERNAL_ERROR: stopCount=${stopCount} below absolute floor of 3 — un escape game ne peut pas avoir moins de 3 stops`,
       ) as Error & { code?: PipelineErrorCode };
       err.code = "INTERNAL_ERROR";
       throw err;

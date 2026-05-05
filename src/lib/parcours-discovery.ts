@@ -65,9 +65,24 @@ const RADIUS_AROUND_START_M = 2_000;
  *  (18 min entre stops = pause narrative + photo + repos boisson). */
 const MAX_INTER_STOP_M = 1_500;
 
-/** Plancher en dessous duquel on rejette le jeu : un parcours < 6
- *  stops est trop court pour livrer l'expérience promise. */
-const MIN_STOPS_TO_PUBLISH = 6;
+/**
+ * Plancher en dessous duquel on rejette le jeu, ADAPTATIF au stopCount
+ * demandé. La règle : on tolère au max 2 drops (au pruning walkability
+ * ou au géocodage), avec un plancher absolu de 3 stops.
+ *
+ *   stopCount = 8 (standard) → plancher 6 (tolère 2 drops)
+ *   stopCount = 5 (Espagne, France court) → plancher 3 (tolère 2 drops)
+ *   stopCount = 4 → plancher 3 (tolère 1 drop)
+ *   stopCount = 3 → plancher 3 (aucun drop)
+ *
+ * Pour un jeu de 5 stops vendu, on ne peut pas en publier que 3 — sinon
+ * le client achète 5 et joue 3, expérience cassée. Mais on tolère 1-2
+ * drops s'ils sont liés à des problèmes de géocodage (mieux qu'un
+ * échec total).
+ */
+function minStopsForPublish(stopCount: number): number {
+  return Math.max(3, stopCount - 2);
+}
 
 export interface DiscoveredStop {
   /** Nom géocodable du landmark ("Cathédrale Notre-Dame de Rouen"). */
@@ -147,9 +162,12 @@ export async function discoverParcours(
 ): Promise<DiscoverParcoursResult> {
   const startTs = Date.now();
   const rejected: Array<{ name: string; reason: string }> = [];
+  // Plancher dérivé du stopCount demandé (cf. minStopsForPublish).
+  // stopCount=8 → 6 ; stopCount=5 → 3 ; stopCount=4 → 3.
+  const minStops = minStopsForPublish(params.stopCount);
 
   console.log(
-    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount}`,
+    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops})`,
   );
 
   // ============================================
@@ -364,13 +382,13 @@ export async function discoverParcours(
     }
   }
 
-  if (claudePicks.length < MIN_STOPS_TO_PUBLISH) {
+  if (claudePicks.length < minStops) {
     return {
       success: false,
       landmarks: [],
       rejected,
       errorCode: "TOO_FEW_LANDMARKS",
-      error: `Only ${claudePicks.length} landmarks could be assembled around startPoint (Google: ${googleCandidates.length}, after enrichment: ${claudePicks.length}). Minimum is ${MIN_STOPS_TO_PUBLISH}. Probable cause: zone too sparse (rural / suburban) or theme too narrow.`,
+      error: `Only ${claudePicks.length} landmarks could be assembled around startPoint (Google: ${googleCandidates.length}, after enrichment: ${claudePicks.length}). Minimum is ${minStops}. Probable cause: zone too sparse (rural / suburban) or theme too narrow.`,
     };
   }
 
@@ -383,11 +401,11 @@ export async function discoverParcours(
   // ============================================
   // PHASE 5 : Élagage walkability inter-stops
   // ============================================
-  // Tant qu'un saut > 1 km existe ET qu'on a > MIN_STOPS_TO_PUBLISH,
+  // Tant qu'un saut > 1 km existe ET qu'on a > minStops,
   // on retire le stop le plus excentré (somme des distances aux voisins
   // immédiats), puis on re-NN.
   while (
-    ordered.length > MIN_STOPS_TO_PUBLISH &&
+    ordered.length > minStops &&
     maxInterStopJump(ordered) > MAX_INTER_STOP_M
   ) {
     let worstIdx = -1;
