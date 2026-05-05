@@ -893,6 +893,190 @@ If nothing fits, output: {"selectedIndices": [], "rationale": "…"}`;
 }
 
 /**
+ * Verdict de validation thématique pour un stop opérateur.
+ *
+ * - "keep" : le stop a un lien documenté ou un lien atmosphérique
+ *   raisonnable avec le thème. On le garde tel quel.
+ * - "replace" : le stop n'a aucun lien plausible avec le thème
+ *   (ex. "Family of Man" ou "Chapelle Sainte-Marthe" dans un thème WWII).
+ *   Le pipeline le route vers l'auto-discovery Perplexity pour trouver
+ *   un meilleur landmark.
+ *
+ * On ne propose PAS "reject definitive" : si Perplexity ne trouve rien
+ * de mieux, le stop original est conservé (graceful degradation).
+ */
+export interface OperatorStopVerdict {
+  /** Index du stop dans le tableau passé en input. */
+  index: number;
+  decision: "keep" | "replace";
+  /** Phrase courte, loggée pour audit, jamais montrée au joueur. */
+  rationale: string;
+}
+
+/**
+ * Valide thématiquement les stops opérateur (post-géocodage). Un stop
+ * géocodé avec succès n'est pas forcément pertinent narrativement :
+ * "Family of Man Museum" est un musée de photographie, sans lien
+ * documenté avec la Bataille des Ardennes — pourtant le pipeline le
+ * laissait passer parce que Google le géocode parfaitement.
+ *
+ * Cette fonction demande à Claude, avec recul global, de juger chaque
+ * stop : "ce landmark a-t-il un lien documenté ou atmosphérique
+ * raisonnable avec le thème ?". Les stops qui échouent sont marqués
+ * "replace" — le pipeline les route ensuite vers l'auto-discovery
+ * Perplexity pour trouver de vrais sites mémoire à la place.
+ *
+ * Le seuil est volontairement bas (atmosphérique OK, lien partiel OK).
+ * On ne sur-rejette pas : un stop borderline est gardé. Mieux conserver
+ * un peu de bruit que dégrader la couverture des stops.
+ */
+export async function validateOperatorStopsThematically(params: {
+  theme: string;
+  themeDescription: string;
+  /** La narration ORIGINALE de l'opérateur. Sert de point de référence
+   *  ; si la narration mentionne explicitement un stop par son rôle
+   *  (ex. "le pont où le canon antichar fut détruit"), on garde ce
+   *  stop même si le geocode lui colle un nom obscur. */
+  narrative: string;
+  stops: Array<{
+    /** Nom de la requête géocodage (ex. "Église Saint-Joseph, Clervaux"). */
+    landmarkName: string;
+    /** Nom poétique côté joueur si différent. */
+    name?: string;
+    /** Description / contexte fourni par l'opérateur. */
+    description?: string;
+  }>;
+}): Promise<OperatorStopVerdict[]> {
+  const client = getAnthropicClient();
+
+  if (params.stops.length === 0) return [];
+
+  const stopsBlock = params.stops
+    .map((s, i) => {
+      const desc = s.description?.trim();
+      const poetic =
+        s.name && s.name !== s.landmarkName ? ` (poetic: "${s.name}")` : "";
+      return `[${i}] ${s.landmarkName}${poetic}${desc ? `\n     description: ${desc}` : ""}`;
+    })
+    .join("\n");
+
+  const prompt = `You are auditing the landmark list of an outdoor escape game for thematic coherence. Each landmark below has already been geocoded and exists. Your job: tell me which ones have a plausible connection to the game's theme and which are off-theme noise that should be replaced.
+
+THEME: "${params.theme}"
+PITCH: ${params.themeDescription}
+
+NARRATIVE (operator-provided, may contain hints about which landmarks they specifically reference):
+${params.narrative}
+
+LANDMARK LIST (one per line, indexed):
+${stopsBlock}
+
+YOUR TASK — for EACH index, decide one of:
+- "keep" if the landmark has a documented OR plausible atmospheric link to the theme. Atmospheric counts (a medieval church in a medieval-mystery theme, a square in a wartime-resistance theme — the era / setting matches even without a documented event).
+- "replace" if the landmark is clearly off-theme (a modern photography museum in a WWII battle theme, a chapel dedicated to a saint with no wartime context in a wartime conspiracy theme, a generic landmark whose only link to the theme is "it's in the same town").
+
+GUIDELINES:
+- THE BAR IS LOW. When in doubt, "keep". Replacing is for OBVIOUS mismatches.
+- A square / street / generic landmark in the right city is OK if the theme is broad enough.
+- A chapel / church / monument is OK if its era matches even without specific theme link.
+- Flag "replace" ONLY when the landmark's documented purpose is at odds with the theme (a contemporary art gallery in a WWII theme; a Buddhist temple in a Christian-Crusades theme).
+- If the operator narrative explicitly references a landmark by its specific role, ALWAYS keep it — they care about that one.
+
+OUTPUT — strict JSON array, no markdown, no commentary, no preamble:
+[
+  { "index": 0, "decision": "keep", "rationale": "Castle housed Allied HQ during the Battle of the Bulge — direct documented link." },
+  { "index": 1, "decision": "replace", "rationale": "Modern photography museum, no documented WWII connection." }
+]
+
+Output exactly ${params.stops.length} objects, one per index in order.`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1500,
+    temperature: 0.2,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const responseText =
+    message.content[0].type === "text" ? message.content[0].text : "";
+
+  const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) {
+    console.warn(
+      `[validateOperatorStopsThematically] no JSON in response: ${responseText.substring(0, 300)} — defaulting to keep-all`,
+    );
+    return params.stops.map((_, i) => ({
+      index: i,
+      decision: "keep",
+      rationale: "fallback (LLM response unparseable)",
+    }));
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch (err) {
+    console.warn(
+      `[validateOperatorStopsThematically] JSON parse failed: ${err instanceof Error ? err.message : err} — defaulting to keep-all`,
+    );
+    return params.stops.map((_, i) => ({
+      index: i,
+      decision: "keep",
+      rationale: "fallback (JSON parse failure)",
+    }));
+  }
+
+  if (!Array.isArray(parsed)) {
+    return params.stops.map((_, i) => ({
+      index: i,
+      decision: "keep",
+      rationale: "fallback (response not array)",
+    }));
+  }
+
+  // Indexe les verdicts par index pour combler les manquants en "keep"
+  // (sécurité : si Claude oublie un stop, on garde par défaut).
+  const verdictMap = new Map<number, OperatorStopVerdict>();
+  for (const entry of parsed) {
+    if (
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { index?: unknown }).index === "number" &&
+      typeof (entry as { decision?: unknown }).decision === "string"
+    ) {
+      const e = entry as {
+        index: number;
+        decision: string;
+        rationale?: unknown;
+      };
+      const decision = e.decision === "replace" ? "replace" : "keep";
+      verdictMap.set(e.index, {
+        index: e.index,
+        decision,
+        rationale:
+          typeof e.rationale === "string" ? e.rationale : "(no rationale)",
+      });
+    }
+  }
+
+  const verdicts: OperatorStopVerdict[] = [];
+  for (let i = 0; i < params.stops.length; i++) {
+    const v = verdictMap.get(i);
+    if (v) {
+      verdicts.push(v);
+    } else {
+      verdicts.push({
+        index: i,
+        decision: "keep",
+        rationale: "fallback (no verdict from LLM, default keep)",
+      });
+    }
+  }
+
+  return verdicts;
+}
+
+/**
  * Adapte le scénario quand des stops ont été remplacés par auto-discovery.
  *
  * Pourquoi ça existe : le pipeline GPS-first commence par géocoder les

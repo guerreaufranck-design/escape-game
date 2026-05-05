@@ -19,6 +19,7 @@ import {
   regenerateStep,
   adaptNarrativeForReplacedStops,
   selectThematicallyRelevantLandmarks,
+  validateOperatorStopsThematically,
   type GeneratedEpilogue,
   type GeneratedStep,
 } from "./anthropic";
@@ -331,6 +332,76 @@ export async function generateGameFromTemplate(
         placeId: geo.externalId,
         originalStopName: stop.name,
       });
+    }
+
+    // ============================================
+    // STEP 1.4 : Validation thématique des stops opérateur
+    // ============================================
+    // Un stop géocodable n'est pas forcément thématiquement pertinent.
+    // Test #4 Clervaux a montré que oddballtrip envoyait "Family of Man"
+    // (musée photo, aucun lien BoB), "Kapel Maria" et "Chapelle Lorette"
+    // (chapelles génériques) dans un thème WWII Battle of the Bulge —
+    // tous géocodés OK, tous laissés passer, scénario hallucine ensuite
+    // des "Sister Augustine résistante" pour habiller le bruit.
+    //
+    // Stratégie : Claude juge chaque stop opérateur. Le seuil est BAS
+    // (atmosphérique = ok, lien partiel = ok). On marque "replace"
+    // uniquement quand l'écart est flagrant. Les "replace" sont déplacés
+    // vers `geocodeFailures` pour que l'auto-discovery Perplexity les
+    // remplace par de vrais sites mémoire.
+    //
+    // Skip si on n'a aucun stop géocodé (tous ont déjà échoué) — la
+    // validation thématique n'a rien à juger.
+    if (stopsAfterGeocode.length > 0) {
+      try {
+        const verdicts = await validateOperatorStopsThematically({
+          theme: template.theme,
+          themeDescription: template.themeDescription,
+          narrative: template.narrative,
+          stops: stopsAfterGeocode.map((s) => ({
+            landmarkName: s.loc.landmarkName ?? s.loc.name,
+            name: s.loc.name,
+            description: s.loc.whatToObserve,
+          })),
+        });
+
+        const toRemoveIdx: number[] = [];
+        for (const v of verdicts) {
+          if (v.decision === "replace") {
+            const stop = stopsAfterGeocode[v.index];
+            if (stop) {
+              console.warn(
+                `[Pipeline] Off-theme operator stop flagged for replacement: "${stop.loc.name}" (${stop.loc.landmarkName}) — ${v.rationale}`,
+              );
+              toRemoveIdx.push(v.index);
+              geocodeFailures.push({
+                stopName: stop.loc.name,
+                tried: [
+                  `off-theme: ${v.rationale}`,
+                ],
+              });
+            }
+          }
+        }
+        // Remove from end → start to preserve indices.
+        toRemoveIdx.sort((a, b) => b - a);
+        for (const idx of toRemoveIdx) {
+          stopsAfterGeocode.splice(idx, 1);
+        }
+        if (toRemoveIdx.length > 0) {
+          console.log(
+            `[Pipeline] Thematic validation: ${toRemoveIdx.length} operator stop(s) flagged off-theme, routed to auto-discovery. ${stopsAfterGeocode.length} kept.`,
+          );
+        } else {
+          console.log(
+            `[Pipeline] Thematic validation: all ${stopsAfterGeocode.length} operator stop(s) pass.`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[Pipeline] validateOperatorStopsThematically threw: ${err instanceof Error ? err.message : err} — skipping thematic gate (operator stops kept as-is)`,
+        );
+      }
     }
 
     // ============================================
