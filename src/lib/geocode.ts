@@ -336,17 +336,31 @@ export async function geocodeStop(
  * landmark différent ou retourne rien. Le namesMatch en aval rejette,
  * et le candidat est marqué "non trouvé" alors qu'il existe.
  *
- * Stratégie : si le `landmark` contient déjà le COEUR de la ville
- * (premier segment avant la virgule), on saute le `city`. Le pays
- * est toujours ajouté pour qu'on reste dans le bon pays.
+ * Stratégie : on extrait les TOKENS distinctifs de la ville (proper
+ * nouns de longueur ≥ 4, hors stopwords) et on regarde si AU MOINS UN
+ * apparaît dans le landmark. Ça détecte tous les cas de duplication
+ * même quand la ville opérateur est qualifiée ("Old Rouen", "Vieux
+ * Lyon", "Centro Storico Roma") alors que le landmark n'a que la
+ * forme courte ("...Rouen", "...Lyon", "...Roma"). Le pays est
+ * toujours ajouté pour disambiguer le pays côté Google.
  */
 function buildGeocodeQuery(landmark: string, city: string, country: string): string {
-  const cityCore = city.split(",")[0].trim().toLowerCase();
+  if (!city) return country ? `${landmark}, ${country}` : landmark;
+
   const landmarkLower = landmark.toLowerCase();
-  // Si la ville est dans le landmark OU vide, on évite la duplication.
-  if (!cityCore || landmarkLower.includes(cityCore)) {
-    return country ? `${landmark}, ${country}` : landmark;
+  // Tokens distinctifs de la ville : ≥ 4 chars, hors stopwords/qualifiants.
+  // 4+ chars élimine les particules ("le", "de", "old", "new") et garde
+  // les noms propres ("Rouen", "Lyon", "Paris", "Storico", "Centro").
+  const cityTokens = nameTokens(city);
+  const distinctiveCityTokens = [...cityTokens].filter((t) => t.length >= 4);
+
+  // Si UN token distinctif est déjà dans le landmark → on skip city.
+  for (const t of distinctiveCityTokens) {
+    if (landmarkLower.includes(t)) {
+      return country ? `${landmark}, ${country}` : landmark;
+    }
   }
+
   return `${landmark}, ${city}, ${country}`;
 }
 
