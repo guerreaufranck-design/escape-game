@@ -158,35 +158,51 @@ export async function discoverParcours(
   );
 
   // === PHASE 2 : Géocodage Google Places ===
+  // Pour chaque candidat, on appelle geocodeLocation EN DEUX PASSES :
+  //   Pass 1 : sans contrainte de distance (juste bias) → on récupère
+  //            les coords RÉELLES si Google les connaît, et on peut
+  //            les comparer au startPoint pour un diagnostic précis.
+  //   Pass 2 : avec contrainte de distance, pour décider si on garde.
+  // Le coût est marginal (les caches Google sont chauds après pass 1)
+  // et le bénéfice énorme : on sait POURQUOI un candidat est rejeté
+  // (pas trouvé / trop loin / nom mismatch) au lieu d'un message vague.
   const geocoded: DiscoveredStop[] = [];
   const seenPlaceIds = new Set<string>();
 
   for (const cand of candidates) {
-    const geo = await geocodeLocation(
+    // Pass 1 : permissif, pour savoir si Google connaît le lieu.
+    const geoLoose = await geocodeLocation(
       cand.name,
       params.city,
       params.country,
-      // Bias serré sur le startPoint : Google nous renvoie le résultat
-      // dans la zone du parcours, pas un homonyme à 100 km.
-      // maxDistanceM = RADIUS_AROUND_START_M : on rejette directement
-      // les résultats hors zone (Phase 3 ci-dessous est redondante mais
-      // gardée pour l'audit log explicite).
       {
         referencePoint: params.startPoint,
-        maxDistanceM: RADIUS_AROUND_START_M,
+        maxDistanceM: 50_000, // 50 km = on capte tout dans la région
       },
     );
 
-    if (!geo) {
-      console.log(
-        `[discoverParcours] DROP "${cand.name}" — not geocodable or > ${RADIUS_AROUND_START_M}m from startPoint`,
-      );
-      rejected.push({
-        name: cand.name,
-        reason: "not geocodable or out of parcours zone",
-      });
+    if (!geoLoose) {
+      const reason = `Google + Nominatim n'ont pas trouvé "${cand.name}" dans ou autour de ${params.city} (probable hallucination Perplexity ou nom trop obscur)`;
+      console.log(`[discoverParcours] DROP "${cand.name}" — ${reason}`);
+      rejected.push({ name: cand.name, reason });
       continue;
     }
+
+    // Vérifier la distance au startPoint
+    const distanceFromStart = haversineMeters(params.startPoint, {
+      lat: geoLoose.lat,
+      lon: geoLoose.lon,
+    });
+
+    if (distanceFromStart > RADIUS_AROUND_START_M) {
+      const reason = `géocodé à ${geoLoose.lat.toFixed(4)},${geoLoose.lon.toFixed(4)} = ${Math.round(distanceFromStart)}m du startPoint (max ${RADIUS_AROUND_START_M}m). Soit homonyme parasite, soit landmark réel mais hors zone.`;
+      console.log(`[discoverParcours] DROP "${cand.name}" — ${reason}`);
+      rejected.push({ name: cand.name, reason });
+      continue;
+    }
+
+    // OK : Google a trouvé ET c'est dans la zone. On utilise ce résultat.
+    const geo = geoLoose;
 
     // Dédup par place_id (Perplexity peut citer 2 fois le même lieu
     // sous deux noms légèrement différents).
@@ -203,11 +219,6 @@ export async function discoverParcours(
     }
     seenPlaceIds.add(placeId);
 
-    const distanceFromStartM = haversineMeters(params.startPoint, {
-      lat: geo.lat,
-      lon: geo.lon,
-    });
-
     geocoded.push({
       name: cand.name,
       description: cand.description,
@@ -215,11 +226,11 @@ export async function discoverParcours(
       lat: geo.lat,
       lon: geo.lon,
       placeId,
-      distanceFromStartM,
+      distanceFromStartM: distanceFromStart,
     });
 
     console.log(
-      `[discoverParcours] KEEP "${cand.name}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (${Math.round(distanceFromStartM)}m from start, src=${geo.source})`,
+      `[discoverParcours] KEEP "${cand.name}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (${Math.round(distanceFromStart)}m from start, src=${geo.source})`,
     );
   }
 
