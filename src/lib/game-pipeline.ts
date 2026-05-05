@@ -8,6 +8,7 @@
  */
 
 import {
+  discoverThematicLandmarks,
   type PredefinedStop,
   type ResearchedLocation,
 } from "./perplexity";
@@ -369,59 +370,152 @@ export async function generateGameFromTemplate(
           .map((s) => s.placeId)
           .filter((id): id is string => !!id),
       );
+      const usedNames = stopsAfterGeocode.map(
+        (s) => s.loc.landmarkName ?? s.loc.name,
+      );
       const needed = geocodeFailures.length;
 
-      let candidates: DiscoveredLandmark[] = [];
+      // PRIMARY PATH : Perplexity découverte thématique. Demande à un
+      // LLM avec recherche web de proposer des landmarks RÉELS
+      // documentés comme liés au thème (vs Google nearbysearch qui
+      // ne renvoie que des POIs catégorisés `church`/`museum` sans
+      // notion de thème). Sur Clervaux/Battle of the Bulge, Perplexity
+      // sait que l'Hôtel Claravallis ou le Buste Fuller sont les
+      // bons sites mémoire — Google nearbysearch retombe sur des
+      // chapelles génériques (Lorette, Maria) sans rapport.
+      //
+      // Les noms retournés sont géocodés via Google Places (sub-10 m).
+      // Ceux que Google ne trouve pas sont droppés silencieusement —
+      // c'est OK, on accepte un parcours plus court mais propre.
+      const verifiedDiscovered: DiscoveredLandmark[] = [];
       try {
-        candidates = await discoverNearbyLandmarks(cityRef, {
-          radiusM: 1_500,
-          excludePlaceIds: usedPlaceIds,
-          limit: 30,
+        const perplexityCandidates = await discoverThematicLandmarks({
+          city: template.city,
+          country: template.country,
+          theme: template.theme,
+          themeDescription: template.themeDescription,
+          narrative: template.narrative,
+          needed,
+          excludeNames: usedNames,
         });
+
+        for (const cand of perplexityCandidates) {
+          if (verifiedDiscovered.length >= needed) break;
+          // Géocode chaque candidat avec le bias serré 1,5 km. Pas
+          // de fallback sur le `name` poétique : Perplexity nous a
+          // déjà donné le nom géocodable.
+          const geo = await geocodeLocation(
+            cand.name,
+            template.city,
+            template.country,
+            { referencePoint: cityRef },
+          );
+          if (!geo) {
+            console.log(
+              `[Pipeline] Perplexity candidate "${cand.name}" failed geocoding — dropping`,
+            );
+            continue;
+          }
+          // Dédup contre les place_id déjà utilisés (au cas où Perplexity
+          // proposerait le même lieu qu'un stop opérateur).
+          if (geo.externalId && usedPlaceIds.has(geo.externalId)) {
+            console.log(
+              `[Pipeline] Perplexity candidate "${cand.name}" duplicates an existing stop — dropping`,
+            );
+            continue;
+          }
+          if (geo.externalId) usedPlaceIds.add(geo.externalId);
+          verifiedDiscovered.push({
+            name: cand.name,
+            lat: geo.lat,
+            lon: geo.lon,
+            // Synthétise un id si Google n'a pas renvoyé de place_id
+            // (cas Nominatim) — sert juste à dé-dupliquer.
+            placeId: geo.externalId ?? `geocoded:${cand.name}`,
+            address: undefined,
+            types: [],
+            distanceM: haversineMeters(cityRef, { lat: geo.lat, lon: geo.lon }),
+          });
+          console.log(
+            `[Pipeline] Perplexity → geocoded "${cand.name}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (${geo.source})`,
+          );
+        }
       } catch (err) {
         console.warn(
-          `[Pipeline] discoverNearbyLandmarks threw: ${err instanceof Error ? err.message : err}`,
+          `[Pipeline] discoverThematicLandmarks threw: ${err instanceof Error ? err.message : err}`,
         );
       }
 
-      // Filtrage thématique par Claude : préserve la narration au lieu
-      // de la rejouer autour de POIs au hasard. Si Claude juge qu'aucun
-      // POI ne peut s'inscrire dans le thème, on retombe sur 0 → on
-      // droppe les stops via la dégradation gracieuse plus bas.
-      let selectedCandidates: DiscoveredLandmark[] = [];
-      if (candidates.length > 0) {
+      // FALLBACK PATH : si Perplexity n'a pas suffi (rate-limit, JSON
+      // mal parsé, candidats tous non-géocodables), on retombe sur
+      // l'ancien combo Google nearbysearch + filtre Claude. Mieux que
+      // rien, et reste contraint au rayon 1,5 km + filtre thématique.
+      if (verifiedDiscovered.length < needed) {
+        const stillNeeded = needed - verifiedDiscovered.length;
+        console.log(
+          `[Pipeline] Perplexity gave ${verifiedDiscovered.length}/${needed} viable candidates — falling back to Google nearbysearch for ${stillNeeded} more`,
+        );
+
+        let googleCandidates: DiscoveredLandmark[] = [];
         try {
-          const filter = await selectThematicallyRelevantLandmarks({
-            theme: template.theme,
-            themeDescription: template.themeDescription,
-            narrative: template.narrative,
-            candidates: candidates.map((c) => ({
-              name: c.name,
-              types: c.types,
-              address: c.address,
-              distanceM: c.distanceM,
-            })),
-            needed,
+          googleCandidates = await discoverNearbyLandmarks(cityRef, {
+            radiusM: 1_500,
+            excludePlaceIds: usedPlaceIds,
+            limit: 30,
           });
-          selectedCandidates = filter.selectedIndices.map((i) => candidates[i]);
-          console.log(
-            `[Pipeline] Thematic filter: kept ${selectedCandidates.length}/${candidates.length} candidate(s)${filter.rationale ? ` — ${filter.rationale}` : ""}`,
-          );
         } catch (err) {
           console.warn(
-            `[Pipeline] selectThematicallyRelevantLandmarks threw: ${err instanceof Error ? err.message : err} — falling back to top-${needed} by heritage rank`,
+            `[Pipeline] discoverNearbyLandmarks threw: ${err instanceof Error ? err.message : err}`,
           );
-          selectedCandidates = candidates.slice(0, needed);
+        }
+
+        if (googleCandidates.length > 0) {
+          try {
+            const filter = await selectThematicallyRelevantLandmarks({
+              theme: template.theme,
+              themeDescription: template.themeDescription,
+              narrative: template.narrative,
+              candidates: googleCandidates.map((c) => ({
+                name: c.name,
+                types: c.types,
+                address: c.address,
+                distanceM: c.distanceM,
+              })),
+              needed: stillNeeded,
+            });
+            const fallbackPicked = filter.selectedIndices.map(
+              (i) => googleCandidates[i],
+            );
+            console.log(
+              `[Pipeline] Fallback thematic filter: kept ${fallbackPicked.length}/${googleCandidates.length} Google candidate(s)${filter.rationale ? ` — ${filter.rationale}` : ""}`,
+            );
+            for (const c of fallbackPicked) {
+              if (verifiedDiscovered.length >= needed) break;
+              if (c.placeId && usedPlaceIds.has(c.placeId)) continue;
+              if (c.placeId) usedPlaceIds.add(c.placeId);
+              verifiedDiscovered.push(c);
+            }
+          } catch (err) {
+            console.warn(
+              `[Pipeline] selectThematicallyRelevantLandmarks threw: ${err instanceof Error ? err.message : err} — using Google top-${stillNeeded} by heritage rank`,
+            );
+            for (const c of googleCandidates.slice(0, stillNeeded)) {
+              if (verifiedDiscovered.length >= needed) break;
+              if (c.placeId && usedPlaceIds.has(c.placeId)) continue;
+              if (c.placeId) usedPlaceIds.add(c.placeId);
+              verifiedDiscovered.push(c);
+            }
+          }
         }
       }
 
-      const toFill = Math.min(selectedCandidates.length, needed);
+      const toFill = Math.min(verifiedDiscovered.length, needed);
       console.log(
-        `[Pipeline] ${needed} stop(s) failed geocoding, ${candidates.length} candidate(s) found, ${selectedCandidates.length} thematically-fit, filling ${toFill}`,
+        `[Pipeline] ${needed} stop(s) failed geocoding, ${verifiedDiscovered.length} viable candidate(s) (Perplexity + Google fallback), filling ${toFill}`,
       );
 
       for (let i = 0; i < toFill; i++) {
-        const c = selectedCandidates[i];
+        const c = verifiedDiscovered[i];
         const failure = geocodeFailures[i];
         stopsAfterGeocode.push({
           loc: {

@@ -338,3 +338,202 @@ Research each location thoroughly with sources.`;
 
   return locations;
 }
+
+/**
+ * Candidat thématique retourné par la découverte Perplexity. Contient
+ * uniquement le nom + une description courte ; la géolocalisation est
+ * faite en aval par le pipeline via geocodeLocation() pour garantir
+ * la précision sub-10 m. Source URL conservée pour la traçabilité.
+ */
+export interface ThematicLandmarkCandidate {
+  /** Nom géocodable du lieu (ex. "Hôtel Claravallis, Clervaux"). */
+  name: string;
+  /** Phrase d'une ligne expliquant le lien thématique. Sera utilisée
+   *  comme `whatToObserve` initial avant la regen narrative. */
+  description: string;
+  /** URL source citée par Perplexity quand disponible. Pas critique
+   *  fonctionnellement, mais utile pour debug / audit. */
+  source?: string;
+}
+
+/**
+ * Découvre des landmarks RÉELS dans une ville qui sont thématiquement
+ * connectés au scénario du jeu. Utilisé en backup quand des stops fournis
+ * par oddballtrip sont introuvables au géocodage : plutôt que de prendre
+ * n'importe quel POI patrimonial proche (ce que fait Google nearbysearch),
+ * Perplexity cherche des lieux QUI ONT UN LIEN avec le thème vendu.
+ *
+ * Pourquoi Perplexity et pas Google : sur Clervaux/WWII, Google nearbysearch
+ * renvoie des chapelles génériques (Lorette, Maria) parce qu'elles tagguent
+ * `church` ou `tourist_attraction`. Perplexity sait que les vrais sites
+ * mémoire de la Bataille des Ardennes sont l'Hôtel Claravallis, le Buste
+ * du Colonel Fuller, le Pont sur la Clerve — landmarks que Google ignore
+ * faute de catégorie ou trop spécifiques pour son index.
+ *
+ * Les noms retournés sont ENSUITE géocodés via Google Places dans le
+ * pipeline pour obtenir des coordonnées sub-10 m. Ceux que Google ne
+ * trouve pas (ex. "Maison Kratzenberg" peu indexée) sont droppés —
+ * c'est OK, on accepte un parcours plus court mais propre.
+ */
+export async function discoverThematicLandmarks(params: {
+  city: string;
+  country: string;
+  theme: string;
+  themeDescription: string;
+  /** Narration intégrale du jeu — donne à Perplexity le contexte tonal
+   *  pour comprendre quels landmarks "fittent" l'histoire. */
+  narrative: string;
+  /** Combien de candidats max à demander. On en demande TOUJOURS plus
+   *  que `needed` (typiquement +50%) pour absorber le taux de drop au
+   *  géocodage en aval. */
+  needed: number;
+  /** Noms de landmarks déjà utilisés (= stops opérateur réussis). On
+   *  les pousse à Perplexity pour qu'il évite les doublons. */
+  excludeNames?: string[];
+}): Promise<ThematicLandmarkCandidate[]> {
+  // Marge légère au-dessus de needed : on veut absorber les drops au
+  // géocodage (Perplexity peut citer un nom obscur que Google ignore)
+  // sans exiger un nombre absurde qui pousse Perplexity à fabriquer
+  // ou à refuser. +2 est un bon compromis empirique.
+  const requested = params.needed + 2;
+
+  const exclusionBlock =
+    params.excludeNames && params.excludeNames.length > 0
+      ? `\n\nDO NOT propose these landmarks (already part of the parcours):\n${params.excludeNames.map((n) => `- ${n}`).join("\n")}`
+      : "";
+
+  // ATTENTION : on ne passe PAS \`params.narrative\` à Perplexity. La
+  // narration est en partie fictionnelle (personnages inventés, intrigue
+  // dramatisée par Claude pour le scénario du jeu). Si on la donne à
+  // Perplexity, il refuse à juste titre de fabriquer des liens documentés
+  // entre des landmarks réels et une histoire fictive — et retourne du
+  // texte d'avertissement à la place de notre JSON. On lui passe seulement
+  // \`theme\` + \`themeDescription\` qui pointent vers un sujet historique
+  // réel ("Battle of the Bulge", "Renaissance art trail"), suffisant pour
+  // la découverte. L'adaptation narrative en aval (Claude) habillera
+  // ces landmarks réels avec la fiction.
+  const prompt = `You are sourcing real, existing landmarks in ${params.city}, ${params.country} for an outdoor walking tour. The tour will be themed, but you only need to find REAL landmarks tied to a real historical/cultural subject — the storytelling layer is added later.
+
+REAL-WORLD SUBJECT (extracted from the tour's theme — this is what to anchor on):
+- Theme: "${params.theme}"
+- Pitch: ${params.themeDescription}
+
+TASK: list UP TO ${requested} REAL landmarks in the city centre of ${params.city} (within ~1.5 km walking distance of the historic centre) that resonate with this subject. Returning fewer is FINE — quality over quantity. Use web search to confirm each landmark exists and has a verifiable real-world link to the subject's broader topic (era, event, movement, person, architectural style…). It is acceptable to include landmarks where the link is partial or atmospheric (a square central to the era's life, a building from the right century) as long as the era / topic matches.${exclusionBlock}
+
+INTERPRETING THE SUBJECT:
+- If the theme references a war/battle, list memorials, command posts, museums, monuments, plaques, key buildings.
+- If the theme references an art movement or era, list museums, galleries, statues, period buildings, artist residences.
+- If the theme is broader ("medieval mystery", "Renaissance secrets"), list landmarks from that era — churches, towers, palaces, fortifications.
+- The link must be DOCUMENTED in heritage/tourism/Wikipedia sources, not invented.
+- It is FINE if landmarks have only a partial / atmospheric link (a square where the era's life happened) as long as the era/topic is right.
+
+CRITERIA:
+- Each landmark must EXIST today and be findable on Google Maps or via a Wikipedia / heritage / tourism URL.
+- Within ~1.5 km of the historic centre, walkable.
+- Prefer well-named landmarks (geocoding will fail on overly obscure names like "the third house on the left").
+- A mix of types is welcome (building, monument, street, square, bridge, plaque, café with historical plaque).
+
+OUTPUT FORMAT — strict JSON array, no markdown, no commentary, no preamble:
+[
+  {
+    "name": "Hôtel Claravallis, Clervaux",
+    "description": "Headquarters of Colonel Hurley Fuller during the Battle of the Bulge, hit by panzers on 17 December 1944.",
+    "source": "https://www.tracesofwar.com/sights/135470/Memorial-Colonel-Hurley-E-Fuller.htm"
+  }
+]
+
+The "name" field MUST be in a form Google Maps can geocode (real name + city). The "description" stays under 200 chars and explains the link concretely (date, person, event, style), not poetically.`;
+
+  let raw: string;
+  try {
+    raw = await callPerplexity(
+      [{ role: "user", content: prompt }],
+      "sonar-pro",
+    );
+  } catch (err) {
+    console.warn(
+      `[discoverThematicLandmarks] Perplexity call failed: ${err instanceof Error ? err.message : err}`,
+    );
+    return [];
+  }
+
+  // Parse JSON robustly: Perplexity sometimes wraps in ```json``` blocks,
+  // adds a preamble, or peppers the prose with citation-style "[1]"
+  // brackets that confuse a naïve `\[...\]` regex. Strategy:
+  //   1. Strip code-block fences if present.
+  //   2. Find the FIRST '[' followed by '{' (start of object array).
+  //   3. Walk forward counting bracket depth to find the matching ']'.
+  let work = raw;
+  const codeBlockMatch = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (codeBlockMatch) work = codeBlockMatch[1];
+
+  let jsonStr = "";
+  // Find the start of a JSON array of objects: '[' then optional whitespace then '{'
+  const startMatch = work.match(/\[\s*\{/);
+  if (startMatch && startMatch.index !== undefined) {
+    const startIdx = startMatch.index;
+    let depth = 0;
+    let inStr = false;
+    let escape = false;
+    let end = -1;
+    for (let i = startIdx; i < work.length; i++) {
+      const ch = work[i];
+      if (escape) { escape = false; continue; }
+      if (ch === "\\") { escape = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === "[") depth++;
+      else if (ch === "]") {
+        depth--;
+        if (depth === 0) { end = i; break; }
+      }
+    }
+    if (end > startIdx) jsonStr = work.substring(startIdx, end + 1);
+  }
+
+  if (!jsonStr) {
+    console.warn(
+      `[discoverThematicLandmarks] no JSON array of objects in response (${raw.length} chars): ${raw.substring(0, 500)}`,
+    );
+    return [];
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(jsonStr);
+  } catch (err) {
+    console.warn(
+      `[discoverThematicLandmarks] JSON parse failed: ${err instanceof Error ? err.message : err}\nRaw chunk: ${jsonStr.substring(0, 500)}`,
+    );
+    return [];
+  }
+
+  if (!Array.isArray(parsed)) {
+    console.warn(
+      `[discoverThematicLandmarks] expected array, got ${typeof parsed}`,
+    );
+    return [];
+  }
+
+  const candidates: ThematicLandmarkCandidate[] = [];
+  for (const entry of parsed) {
+    if (
+      typeof entry === "object" &&
+      entry !== null &&
+      typeof (entry as { name?: unknown }).name === "string" &&
+      typeof (entry as { description?: unknown }).description === "string"
+    ) {
+      const e = entry as { name: string; description: string; source?: unknown };
+      candidates.push({
+        name: e.name.trim(),
+        description: e.description.trim(),
+        source: typeof e.source === "string" ? e.source : undefined,
+      });
+    }
+  }
+
+  console.log(
+    `[discoverThematicLandmarks] Perplexity returned ${candidates.length} candidate(s) for theme "${params.theme}" in ${params.city}`,
+  );
+  return candidates;
+}
