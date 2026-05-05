@@ -438,31 +438,61 @@ export async function generateGameFromTemplate(
       verifiedLocations,
     );
 
-    // Garde anti-AUTO leak : si Claude a renvoyé "AUTO" en réponse
-    // littérale (au lieu d'inventer un mot thématique), on régénère
-    // ce stop avec un brief plus strict.
+    // Garde anti-AUTO leak : si Claude a renvoyé le placeholder "AUTO"
+    // (au lieu d'inventer un mot thématique), on régénère ce stop avec
+    // un brief plus strict. On checke `answer_text` ET `ar_facade_text`
+    // car les deux peuvent fuir indépendamment (Claude bascule parfois
+    // l'un mais pas l'autre).
+    //
+    // CRITIQUE : avant de re-régen, on doit muter verifiedLocations[i].answer
+    // de "AUTO" → "INVENT" pour que le prompt regenerateStep ne re-locke
+    // pas Claude sur "AUTO" (cf. fix dans regenerateStep). Sinon le bug
+    // se réplique à l'identique.
+    const isAutoLeaked = (s: GeneratedStep): boolean =>
+      s.answer_text?.toUpperCase().trim() === "AUTO" ||
+      s.ar_facade_text?.toUpperCase().trim() === "AUTO";
+
     for (let i = 0; i < steps.length; i++) {
-      if (steps[i].answer_text?.toUpperCase().trim() === "AUTO") {
+      let regenAttempts = 0;
+      while (isAutoLeaked(steps[i]) && regenAttempts < 2) {
+        regenAttempts++;
         console.warn(
-          `[Pipeline] AUTO placeholder leaked at step ${i + 1} ("${steps[i].title}") — regenerating`,
+          `[Pipeline] AUTO placeholder leaked at step ${i + 1} ("${steps[i].title}") — regenerating (attempt ${regenAttempts}/2)`,
         );
+        // Reset l'answer du verifiedLocation à un marker explicite pour
+        // que regenerateStep n'utilise PAS "AUTO" comme valeur fixe.
+        const locForRegen: ResearchedLocation = {
+          ...verifiedLocations[i],
+          answer: "AUTO", // regenerateStep détecte "AUTO" et bascule en mode "invent"
+        };
         steps[i] = await regenerateStep({
           brokenStep: steps[i],
           issue: {
             step_index: i,
             problem:
-              "answer_text was the literal placeholder 'AUTO' — must be a real thematic answer.",
+              "answer_text or ar_facade_text was the literal placeholder 'AUTO' — must be a real thematic answer (UPPERCASE Latin word, year, Roman numeral, or evocative single word).",
             severity: "blocking",
             suggestion:
-              "Invent a single evocative word, Latin term, year, or Roman numeral that fits the theme and ar_facade_text.",
+              "Invent a single thematic answer fitting the theme. NEVER output 'AUTO' literally. Examples: VERITAS, MCMXIV, IGNIS, AURUM, REQUIESCAT, FIDES, BULGE.",
           },
-          location: verifiedLocations[i],
+          location: locForRegen,
           city: template.city,
           theme: template.theme,
           narrative: effectiveNarrative,
           stepNumber: i + 1,
           totalSteps: steps.length,
         });
+      }
+      // Fallback dur : si après 2 régen Claude renvoie ENCORE "AUTO",
+      // on injecte manuellement un mot thématique générique pour ne
+      // pas publier un jeu cassé. C'est dégradé mais publiable.
+      if (isAutoLeaked(steps[i])) {
+        const fallbackAnswer = `STOP${i + 1}`;
+        console.error(
+          `[Pipeline] AUTO leak persisting after 2 regen attempts at step ${i + 1} — hard fallback to "${fallbackAnswer}"`,
+        );
+        steps[i].answer_text = fallbackAnswer;
+        steps[i].ar_facade_text = fallbackAnswer;
       }
     }
 

@@ -560,6 +560,24 @@ export async function regenerateStep(params: {
 }): Promise<GeneratedStep> {
   const client = getAnthropicClient();
 
+  // Détecte le cas où la "réponse confirmée" est en réalité le
+  // placeholder "AUTO" (ResearchedLocation issue d'un parcours
+  // intent-first). Dans ce cas, on NE LOCK PAS la réponse — on
+  // demande explicitement à Claude d'INVENTER un mot thématique.
+  // Sinon le regen retourne aussi "AUTO" littéral et le bug se
+  // réplique au lieu d'être corrigé (cf. test Rouen Rollon).
+  const answerIsPlaceholder =
+    !params.location.answer ||
+    params.location.answer.toUpperCase().trim() === "AUTO";
+
+  const answerInstruction = answerIsPlaceholder
+    ? `INVENT a single thematic answer that fits the theme "${params.theme}" and the location. Output it as UPPERCASE Latin word, year, Roman numeral, or evocative single word. NEVER output the literal string "AUTO" — that's a placeholder, not an answer. Examples: VERITAS, MCMXIV, IGNIS, AURUM, REQUIESCAT.`
+    : `Use exactly: "${params.location.answer}"`;
+
+  const answerLine = answerIsPlaceholder
+    ? `"answer_text": "<your invented thematic answer, UPPERCASE, NEVER 'AUTO'>"`
+    : `"answer_text": "${params.location.answer}"`;
+
   const prompt = `You wrote step ${params.stepNumber}/${params.totalSteps} of an outdoor escape game in ${params.city} (theme: ${params.theme}). A reviewer flagged a problem and you must rewrite this step.
 
 ORIGINAL STEP (the one to fix):
@@ -577,7 +595,7 @@ LOCATION DATA (use exactly):
 - Name: ${params.location.name}
 - GPS: ${params.location.latitude}, ${params.location.longitude}
 - Observable detail: ${params.location.whatToObserve}
-- Confirmed answer: ${params.location.answer}
+- Answer instruction: ${answerInstruction}
 - Answer type: ${params.location.answerType}
 - Answer source: ${params.location.answerSource ?? "physical"}
 
@@ -588,7 +606,7 @@ Rewrite this single step as a JSON object with the same shape as before:
   "longitude": ${params.location.longitude},
   "validation_radius_meters": 30,
   "riddle_text": "immersive riddle 4-6 sentences (DO NOT name the answer; describe where to look)",
-  "answer_text": "${params.location.answer}",
+  ${answerLine},
   "hints": [
     {"order": 1, "text": "atmospheric hint"},
     {"order": 2, "text": "practical hint — what type of object and where"},
