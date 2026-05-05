@@ -324,6 +324,32 @@ export async function geocodeStop(
   return r ? { latitude: r.lat, longitude: r.lon } : null;
 }
 
+/**
+ * Construit une query géocodage propre, sans dupliquer la ville si
+ * elle est déjà dans `landmark`.
+ *
+ * Cas typique : Perplexity retourne des landmarks au format
+ * "Église Saint-Maclou, Rouen" (ville déjà incluse). Si on concatène
+ * naïvement city + country, on obtient
+ *   "Église Saint-Maclou, Rouen, Old Rouen, France, France"
+ * — purée illisible où Google Places se perd, fallback sur un
+ * landmark différent ou retourne rien. Le namesMatch en aval rejette,
+ * et le candidat est marqué "non trouvé" alors qu'il existe.
+ *
+ * Stratégie : si le `landmark` contient déjà le COEUR de la ville
+ * (premier segment avant la virgule), on saute le `city`. Le pays
+ * est toujours ajouté pour qu'on reste dans le bon pays.
+ */
+function buildGeocodeQuery(landmark: string, city: string, country: string): string {
+  const cityCore = city.split(",")[0].trim().toLowerCase();
+  const landmarkLower = landmark.toLowerCase();
+  // Si la ville est dans le landmark OU vide, on évite la duplication.
+  if (!cityCore || landmarkLower.includes(cityCore)) {
+    return country ? `${landmark}, ${country}` : landmark;
+  }
+  return `${landmark}, ${city}, ${country}`;
+}
+
 async function viaGooglePlaces(
   landmark: string,
   city: string,
@@ -331,7 +357,7 @@ async function viaGooglePlaces(
   refPoint?: { lat: number; lon: number },
 ): Promise<GeocodeResult | null> {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY!;
-  const query = `${landmark}, ${city}, ${country}`;
+  const query = buildGeocodeQuery(landmark, city, country);
   const url = new URL(
     "https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
   );
@@ -389,7 +415,7 @@ async function viaGoogleGeocoding(
 ): Promise<GeocodeResult | null> {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY!;
   const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
-  url.searchParams.set("address", `${landmark}, ${city}, ${country}`);
+  url.searchParams.set("address", buildGeocodeQuery(landmark, city, country));
   url.searchParams.set("key", apiKey);
   // Anti-homonyme : `bounds` est un viewport préféré (south,west|north,east).
   // Geocoding API n'a pas de cercle, donc on calcule un carré ~ équivalent
@@ -453,7 +479,7 @@ async function viaNominatim(
 ): Promise<GeocodeResult | null> {
   await paceNominatim();
   const url = new URL("https://nominatim.openstreetmap.org/search");
-  url.searchParams.set("q", `${landmark}, ${city}, ${country}`);
+  url.searchParams.set("q", buildGeocodeQuery(landmark, city, country));
   url.searchParams.set("format", "json");
   url.searchParams.set("addressdetails", "1");
   url.searchParams.set("limit", "5");
