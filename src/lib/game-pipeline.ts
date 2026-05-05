@@ -30,7 +30,6 @@ import {
   type GeneratedStep,
 } from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
-import { fetchHistoricalPhoto, type HistoricalPhotoResult } from "./wikipedia";
 import { geocodeLocation, haversineMeters } from "./geocode";
 import { discoverParcours } from "./parcours-discovery";
 import { v4 as uuidv4 } from "uuid";
@@ -176,7 +175,8 @@ export interface PublishedLandmark {
   lat: number;
   lon: number;
   /** URL Wikipedia/heritage de la photo historique si trouvée. */
-  photoUrl?: string | null;
+  /** Champ retiré (Wikipedia photos drop le 2026-05-05). Toujours null. */
+  photoUrl?: null;
   /** Lien thématique documenté (issu de Perplexity). */
   themeLink?: string;
   /** URL source citée par Perplexity (audit). */
@@ -567,11 +567,14 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
-    // STEP 6 : Photos historiques + epilogue (en parallèle)
+    // STEP 6 : Epilogue
     // ============================================
-    const [stepPhotos, epilogue] = await Promise.all([
-      fetchPhotosForSteps(steps, verifiedLocations, template.city),
-      generateEpilogue({
+    // Photos historiques Wikipedia retirées (commit 2026-05-05) — la
+    // couche AR fonctionne sans : le mot magique se matérialise sur
+    // la façade, le character_dialogue donne le contexte, l'AR_treasure
+    // est révélé. La photo Wikipedia ajoutait peu et compliquait la
+    // mise en page UI.
+    const epilogue = await generateEpilogue({
         city: template.city,
         country: template.country,
         theme: template.theme,
@@ -583,8 +586,7 @@ export async function generateGameFromTemplate(
           `[Pipeline] Epilogue generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
         );
         return null;
-      }),
-    ]);
+      });
 
     // ============================================
     // STEP 7 : Insert DB
@@ -596,7 +598,7 @@ export async function generateGameFromTemplate(
         themeDescription: effectiveThemeDescription,
       },
       steps,
-      stepPhotos,
+      [],
       epilogue,
       verifiedLocations,
     );
@@ -615,7 +617,6 @@ export async function generateGameFromTemplate(
         landmarkName: s.name, // nom géocodable réel
         lat: s.lat,
         lon: s.lon,
-        photoUrl: stepPhotos[i]?.url ?? null,
         themeLink: s.description,
         source: s.source,
       }),
@@ -673,50 +674,12 @@ export async function generateGameFromTemplate(
 }
 
 /**
- * Match each generated step to its source location by GPS proximity, then
- * fetch a Wikipedia historical photo for that location. Runs in parallel.
- * Returns one entry per step (null if no photo found).
- */
-async function fetchPhotosForSteps(
-  steps: Awaited<ReturnType<typeof generateGameSteps>>,
-  locations: ResearchedLocation[],
-  city: string,
-): Promise<(HistoricalPhotoResult | null)[]> {
-  // Distance in metres between two GPS points (fast equirectangular approx)
-  const distance = (a: [number, number], b: [number, number]) => {
-    const R = 6371000;
-    const dLat = ((b[0] - a[0]) * Math.PI) / 180;
-    const dLon = ((b[1] - a[1]) * Math.PI) / 180;
-    const lat1 = (a[0] * Math.PI) / 180;
-    const lat2 = (b[0] * Math.PI) / 180;
-    const x = dLon * Math.cos((lat1 + lat2) / 2);
-    return R * Math.sqrt(x * x + dLat * dLat);
-  };
-
-  // For each step, find the nearest source location (usually <20m)
-  const queries = steps.map((step) => {
-    let best: ResearchedLocation | null = null;
-    let bestDist = Infinity;
-    for (const loc of locations) {
-      const d = distance([step.latitude, step.longitude], [loc.latitude, loc.longitude]);
-      if (d < bestDist) {
-        bestDist = d;
-        best = loc;
-      }
-    }
-    return best ? best.name : step.title;
-  });
-
-  return Promise.all(queries.map((name) => fetchHistoricalPhoto(name, city)));
-}
-
-/**
  * Insert a generated game and its steps into Supabase
  */
 async function insertGameIntoDatabase(
   template: GameTemplate,
   steps: Awaited<ReturnType<typeof generateGameSteps>>,
-  stepPhotos: (HistoricalPhotoResult | null)[] = [],
+  _stepPhotos: Array<null> = [],
   epilogue: GeneratedEpilogue | null = null,
   // Indexed by step_order - 1. Carries the locked-in geocoded
   // coordinates and the real landmark name for each step. Required by
@@ -872,8 +835,8 @@ async function insertGameIntoDatabase(
       anecdote: step.anecdote,
       bonus_time_seconds: step.bonus_time_seconds,
       has_photo_challenge: false,
-      ar_historical_photo_url: stepPhotos[index]?.url || null,
-      ar_historical_photo_credit: stepPhotos[index]?.credit || null,
+      ar_historical_photo_url: null,
+      ar_historical_photo_credit: null,
       // AR-first flow: every step is virtual_ar regardless of what the
       // model returned. The "physical" mode is fully retired.
       answer_source: "virtual_ar" as const,

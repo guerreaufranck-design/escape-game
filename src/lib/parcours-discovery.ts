@@ -191,18 +191,15 @@ export async function discoverParcours(
         needed: params.stopCount,
       });
       console.log(
-        `[discoverParcours] Claude curation: ${curation.selectedIndices.length} picked. Rationale: ${curation.rationale}`,
+        `[discoverParcours] Claude curation: ${curation.selectedIndices.length} picked from ${googleCandidates.length} Google candidates. Rationale: ${curation.rationale}`,
       );
-      // Mark non-selected as rejected for audit
-      const selectedSet = new Set(curation.selectedIndices);
-      for (let i = 0; i < googleCandidates.length; i++) {
-        if (!selectedSet.has(i)) {
-          rejected.push({
-            name: googleCandidates[i].name,
-            reason: "not picked by thematic curation",
-          });
-        }
-      }
+      // NOTE : on ne pousse PAS les non-sélectionnés dans rejected[].
+      // Sur Rouen, Google retourne 60 candidats, Claude en pick 8 — les
+      // 52 non-pickés sont juste les non-choisis, pas des "échecs".
+      // Les remonter dans le callback STOPS_DROPPED induit l'opérateur
+      // en erreur (l'email disait "52 stops droppés" alors que tout
+      // s'est passé normalement). On ne logge dans rejected[] que les
+      // VRAIS rejets : géocodage cassé, walkability fail, etc.
       claudePicks = curation.selectedIndices.map((i) => {
         const c = googleCandidates[i];
         return {

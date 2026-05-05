@@ -242,31 +242,16 @@ export async function POST(request: NextRequest) {
         }
       }
 
-      // If stops were dropped, fire a warning email to the admin (and
-      // oddballtrip ops via ODDBALLTRIP_ALERT_EMAIL). The game IS
-      // published, so this is not a pipeline failure — but the team
-      // wants to know which landmarkName(s) got dropped so they can
-      // tighten them in the generator prompt.
-      if (result.droppedStops?.length) {
-        try {
-          await sendPipelineFailureAlert({
-            city,
-            country,
-            theme,
-            slug: template.slug,
-            error: `${result.droppedStops.length} stop(s) dropped — game published with ${result.steps} stops instead of ${stops?.length ?? "?"}`,
-            errorCode: "STOPS_DROPPED",
-            failedLandmarks: result.droppedStops,
-            durationSeconds: Math.round((result.durationMs || 0) / 1000),
-            buyerEmail: body.buyerEmail,
-            orderId: body.orderId,
-          });
-        } catch (alertErr) {
-          console.error(
-            `[GenerateGame] Dropped-stops alert failed: ${alertErr instanceof Error ? alertErr.message : alertErr}`,
-          );
-        }
-      }
+      // Email STOPS_DROPPED retiré : dans l'architecture Google-first,
+      // les "drops" (candidats Google non-pickés par Claude) sont en
+      // réalité juste les non-sélectionnés — ce sont des choix, pas
+      // des échecs. Avec 60 candidats Google et stopCount=8, on a
+      // mathématiquement 52 "non-pickés" qui ne sont pas un problème.
+      // L'email "52 stops dropped — game published with 8 stops
+      // instead of 8" était trompeur. Si un VRAI problème survient
+      // (walkability filter drop, geocoding fail), il est remonté
+      // dans le callback comme `droppedStops` pour audit, mais ne
+      // déclenche plus d'email d'alerte (qui spammait pour rien).
 
       // If stops were auto-replaced, fire a notification email so the
       // sales team knows the product page must be updated to match the
