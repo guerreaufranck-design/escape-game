@@ -73,16 +73,65 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
  * anything — the caller is expected to surface that to the operator
  * (reject the step, fail the pipeline) rather than fall back to a guess.
  */
+/**
+ * Rayon maximum (mètres) au-delà duquel on rejette un résultat
+ * géocodé même s'il vient avec confidence high. Utilisé quand un
+ * `referencePoint` est fourni — typiquement le centre de la ville
+ * du jeu. Sans ce garde-fou, Google Maps peut shifter sur un homonyme
+ * célèbre (ex: "Pont Saint-Pierre" à 800 km au lieu de la même rue
+ * dans le village du jeu) et le joueur arrive à 100 km du parcours.
+ *
+ * 10 km couvre :
+ *  - villes étendues type Paris, Berlin (intra-muros + 1ʳᵉ couronne)
+ *  - sites archéologiques annexes (musée à 5 km du site principal)
+ *  - banlieue immédiate (point de départ en gare → centre historique)
+ *
+ * Si on a besoin d'aller au-delà (jeu sur 2 villes voisines, parcours
+ * inter-villages), le pipeline peut surcharger via maxDistanceM.
+ */
+const DEFAULT_MAX_DISTANCE_M = 10_000;
+
+/**
+ * Rayon préféré (mètres) pour le `locationbias` de Google Places /
+ * Geocoding. Plus serré que MAX_DISTANCE pour pousser Google à
+ * trouver dans le centre ville en priorité ; le filtre haversine
+ * en aval rattrape les rares résultats hors zone.
+ */
+const PREFERRED_BIAS_RADIUS_M = 5_000;
+
+export interface GeocodeOptions {
+  /**
+   * Point de référence (typiquement le centre de la ville du jeu).
+   * Quand fourni :
+   *  - injecté en `locationbias` côté Google Places + Geocoding
+   *  - injecté en `viewbox` + `bounded=1` côté Nominatim (filtrage strict)
+   *  - validation haversine post-résultat : tout résultat à > maxDistanceM
+   *    du referencePoint est rejeté (= traité comme miss, fallback enclenché).
+   *
+   * Si NON fourni : comportement legacy (pas de bias, pas de validation
+   * de distance). Compat ascendante pour les anciens callers.
+   */
+  referencePoint?: { lat: number; lon: number };
+  /** Rayon max accepté en mètres (défaut DEFAULT_MAX_DISTANCE_M = 10 km). */
+  maxDistanceM?: number;
+}
+
 export async function geocodeLocation(
   landmarkName: string,
   city: string,
   country: string,
+  options?: GeocodeOptions,
 ): Promise<GeocodeResult | null> {
   if (!landmarkName?.trim()) return null;
-  const cacheKey = `${landmarkName}|${city}|${country}`.toLowerCase();
+  const refKey = options?.referencePoint
+    ? `@${options.referencePoint.lat.toFixed(3)},${options.referencePoint.lon.toFixed(3)}`
+    : '';
+  const cacheKey = `${landmarkName}|${city}|${country}${refKey}`.toLowerCase();
   if (cache.has(cacheKey)) {
     return cache.get(cacheKey) ?? null;
   }
+  const refPoint = options?.referencePoint;
+  const maxDistance = options?.maxDistanceM ?? DEFAULT_MAX_DISTANCE_M;
 
   let result: GeocodeResult | null = null;
 
@@ -95,21 +144,32 @@ export async function geocodeLocation(
   // we drop down to Nominatim instead and keep its result if better.
   if (process.env.GOOGLE_MAPS_API_KEY) {
     try {
-      result = await viaGooglePlaces(landmarkName, city, country);
+      result = await viaGooglePlaces(landmarkName, city, country, refPoint);
     } catch (err) {
       console.warn(
         `[geocode] Google Places threw for "${landmarkName}":`,
         err instanceof Error ? err.message : err,
       );
     }
+    // Si Google a renvoyé un résultat MAIS qu'il est hors du rayon
+    // accepté autour du referencePoint, on le rejette comme s'il
+    // n'avait rien trouvé. Cas typique : homonyme célèbre qui éclipse
+    // le local ("Pont Saint-Pierre" → renvoie le pont parisien à
+    // 800 km au lieu du pont de village).
+    if (result && refPoint && isOutOfRange(result, refPoint, maxDistance, landmarkName)) {
+      result = null;
+    }
     if (!result) {
       try {
-        result = await viaGoogleGeocoding(landmarkName, city, country);
+        result = await viaGoogleGeocoding(landmarkName, city, country, refPoint);
       } catch (err) {
         console.warn(
           `[geocode] Google Geocoding threw for "${landmarkName}":`,
           err instanceof Error ? err.message : err,
         );
+      }
+      if (result && refPoint && isOutOfRange(result, refPoint, maxDistance, landmarkName)) {
+        result = null;
       }
     }
     // Reject Google "low" confidence (APPROXIMATE) — it's neighbourhood-
@@ -122,9 +182,14 @@ export async function geocodeLocation(
         `[geocode] Google returned low confidence for "${landmarkName}", trying Nominatim`,
       );
       try {
-        const osm = await viaNominatim(landmarkName, city, country);
+        const osm = await viaNominatim(landmarkName, city, country, refPoint);
         if (osm && osm.confidence !== "low") {
-          result = osm;
+          if (refPoint && isOutOfRange(osm, refPoint, maxDistance, landmarkName)) {
+            // Nominatim aussi a dérapé → on garde le low de Google,
+            // le caller traitera comme miss.
+          } else {
+            result = osm;
+          }
         }
       } catch { /* keep low-confidence Google result */ }
     }
@@ -133,12 +198,15 @@ export async function geocodeLocation(
   // Fallback: Nominatim. Free, no key, polite rate-limit applies.
   if (!result) {
     try {
-      result = await viaNominatim(landmarkName, city, country);
+      result = await viaNominatim(landmarkName, city, country, refPoint);
     } catch (err) {
       console.warn(
         `[geocode] Nominatim threw for "${landmarkName}":`,
         err instanceof Error ? err.message : err,
       );
+    }
+    if (result && refPoint && isOutOfRange(result, refPoint, maxDistance, landmarkName)) {
+      result = null;
     }
   }
 
@@ -175,6 +243,7 @@ async function viaGooglePlaces(
   landmark: string,
   city: string,
   country: string,
+  refPoint?: { lat: number; lon: number },
 ): Promise<GeocodeResult | null> {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY!;
   const query = `${landmark}, ${city}, ${country}`;
@@ -185,6 +254,17 @@ async function viaGooglePlaces(
   url.searchParams.set("inputtype", "textquery");
   url.searchParams.set("fields", "name,geometry,place_id,formatted_address");
   url.searchParams.set("key", apiKey);
+  // Anti-homonyme : pousse Google vers la zone du jeu. Format Places
+  // API : `circle:RADIUS@LAT,LNG`. Si le landmark a un homonyme célèbre
+  // (Pont Saint-Pierre Paris vs village), Google priorise celui dans
+  // le rayon du bias. Le filtre haversine en aval rattrape les rares
+  // qui passent quand même (l'API de bias n'est pas une exclusion stricte).
+  if (refPoint) {
+    url.searchParams.set(
+      "locationbias",
+      `circle:${PREFERRED_BIAS_RADIUS_M}@${refPoint.lat},${refPoint.lon}`,
+    );
+  }
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
@@ -220,11 +300,24 @@ async function viaGoogleGeocoding(
   landmark: string,
   city: string,
   country: string,
+  refPoint?: { lat: number; lon: number },
 ): Promise<GeocodeResult | null> {
   const apiKey = process.env.GOOGLE_MAPS_API_KEY!;
   const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
   url.searchParams.set("address", `${landmark}, ${city}, ${country}`);
   url.searchParams.set("key", apiKey);
+  // Anti-homonyme : `bounds` est un viewport préféré (south,west|north,east).
+  // Geocoding API n'a pas de cercle, donc on calcule un carré ~ équivalent
+  // au rayon souhaité (1° lat ≈ 111 km, 1° lon ≈ 111 km × cos(lat)).
+  if (refPoint) {
+    const dLat = PREFERRED_BIAS_RADIUS_M / 111_000;
+    const dLon = PREFERRED_BIAS_RADIUS_M / (111_000 * Math.cos((refPoint.lat * Math.PI) / 180));
+    const south = (refPoint.lat - dLat).toFixed(6);
+    const north = (refPoint.lat + dLat).toFixed(6);
+    const west = (refPoint.lon - dLon).toFixed(6);
+    const east = (refPoint.lon + dLon).toFixed(6);
+    url.searchParams.set("bounds", `${south},${west}|${north},${east}`);
+  }
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
@@ -271,6 +364,7 @@ async function viaNominatim(
   landmark: string,
   city: string,
   country: string,
+  refPoint?: { lat: number; lon: number },
 ): Promise<GeocodeResult | null> {
   await paceNominatim();
   const url = new URL("https://nominatim.openstreetmap.org/search");
@@ -278,6 +372,21 @@ async function viaNominatim(
   url.searchParams.set("format", "json");
   url.searchParams.set("addressdetails", "1");
   url.searchParams.set("limit", "5");
+  // Anti-homonyme : viewbox + bounded=1 = filtre STRICT. Tout résultat
+  // hors de la box est exclu directement par Nominatim (contrairement
+  // à Google où locationbias est juste une préférence). Format Nominatim :
+  // `viewbox=west,north,east,south` (pas la convention south,west|north,east
+  // de Google — attention au piège).
+  if (refPoint) {
+    const dLat = PREFERRED_BIAS_RADIUS_M / 111_000;
+    const dLon = PREFERRED_BIAS_RADIUS_M / (111_000 * Math.cos((refPoint.lat * Math.PI) / 180));
+    const south = (refPoint.lat - dLat).toFixed(6);
+    const north = (refPoint.lat + dLat).toFixed(6);
+    const west = (refPoint.lon - dLon).toFixed(6);
+    const east = (refPoint.lon + dLon).toFixed(6);
+    url.searchParams.set("viewbox", `${west},${north},${east},${south}`);
+    url.searchParams.set("bounded", "1");
+  }
 
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), REQUEST_TIMEOUT_MS);
@@ -333,6 +442,29 @@ async function viaNominatim(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Vérifie si un résultat géocodé est hors du rayon accepté autour
+ * du point de référence. Utilisé pour rattraper les rares cas où
+ * Google Places renvoie un homonyme à l'autre bout de la planète
+ * malgré le `locationbias` (qui n'est qu'une préférence). Log
+ * explicite pour permettre l'audit après coup.
+ */
+function isOutOfRange(
+  result: GeocodeResult,
+  refPoint: { lat: number; lon: number },
+  maxDistanceM: number,
+  landmarkName: string,
+): boolean {
+  const distance = haversineMeters({ lat: result.lat, lon: result.lon }, refPoint);
+  if (distance > maxDistanceM) {
+    console.warn(
+      `[geocode] "${landmarkName}" rejeté : ${Math.round(distance / 1000)} km du centre ville (max ${Math.round(maxDistanceM / 1000)} km). Probable homonyme parasité — fallback enclenché.`,
+    );
+    return true;
+  }
+  return false;
 }
 
 /**

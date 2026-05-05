@@ -153,6 +153,37 @@ export async function generateGameFromTemplate(
     );
     const researchStart = Date.now();
 
+    // STEP 0 : géocoder la ville pour avoir un POINT DE RÉFÉRENCE qui
+    // contraindra Google Maps à rester dans le bon périmètre. Sans ça,
+    // un landmark à nom commun ("Pont Saint-Pierre", "Hotel Central")
+    // peut shifter sur un homonyme célèbre et placer le joueur à 100+ km.
+    // L'appel se fait SANS bias (premier appel pur) pour avoir le centre
+    // ville authoritative ; les appels suivants sur les stops héritent
+    // ensuite du bias autour de ce centre.
+    let cityRef: { lat: number; lon: number } | undefined;
+    try {
+      const cityGeo = await geocodeLocation(
+        `${template.city}, ${template.country}`,
+        template.city,
+        template.country,
+      );
+      if (cityGeo) {
+        cityRef = { lat: cityGeo.lat, lon: cityGeo.lon };
+        console.log(
+          `[Pipeline] City reference for "${template.city}, ${template.country}" : ${cityRef.lat.toFixed(4)},${cityRef.lon.toFixed(4)} — landmark geocoding will be biased to a 5 km radius`,
+        );
+      } else {
+        console.warn(
+          `[Pipeline] Could not geocode city center for "${template.city}" — landmark geocoding will run WITHOUT location bias (homonym risk)`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[Pipeline] City geocoding threw:`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+
     const verifiedLocations: ResearchedLocation[] = [];
     const geocodeFailures: Array<{ stopName: string; tried: string[] }> = [];
 
@@ -163,6 +194,7 @@ export async function generateGameFromTemplate(
         queryName,
         template.city,
         template.country,
+        { referencePoint: cityRef },
       );
       // If we used `landmarkName` and it failed, give the poetic `name`
       // a single second chance — it might still happen to be a real
@@ -173,6 +205,7 @@ export async function generateGameFromTemplate(
           stop.name,
           template.city,
           template.country,
+          { referencePoint: cityRef },
         );
       }
       if (!geo) {
