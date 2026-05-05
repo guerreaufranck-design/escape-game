@@ -1,4 +1,4 @@
-import { NextRequest, NextResponse, after } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
   validateApiKey,
@@ -9,12 +9,21 @@ import { sendCodeGenerationFailureAlert } from "@/lib/email";
 import { prepareGamePackage } from "@/lib/game-package";
 
 /**
- * Pre-generation of text + audio takes 30-60s for one new (game × lang).
- * Vercel default function timeout is 10s on Hobby, 60s on Pro. Bump to
- * 5 minutes — synchronous flow lets the merchant know everything is
- * ready before they email the customer.
+ * Pre-generation de text + audio prend 4-6 min pour un nouveau (game × lang)
+ * (8 stops × 3 slots × ~5 sec ElevenLabs + traductions Claude/Gemini).
+ *
+ * Mode synchrone : on AWAIT la fin de prepareGamePackage avant de
+ * répondre à oddballtrip → oddballtrip envoie l'email au client
+ * UNIQUEMENT quand tout est en DB → expérience joueur sans latence.
+ *
+ * 600 sec (10 min) = marge confortable au-dessus du pire cas observé
+ * (296 sec sur Rothenburg). Vercel Pro autorise 900 sec, on reste
+ * sous le plafond.
+ *
+ * Côté oddballtrip : leur HTTP timeout sur cette route doit être
+ * ≥ 10 min. Si c'est un webhook Stripe ils ont 30 min par défaut.
  */
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 /**
  * OPTIONS /api/external/generate-code
@@ -246,50 +255,67 @@ export async function POST(request: NextRequest) {
       `[external/generate-code] code=${finalCode} game=${game.city} email=${buyerEmail} order=${orderId || "N/A"} lang=${language || "—"} raw="${body.language ?? ""}" idempotent=${isIdempotentReturn}`
     );
 
-    // ─── Pre-generation EN ARRIÈRE-PLAN ──────────────────────────────
-    // AVANT : on awaitait prepareGamePackage avant de répondre. Ça
-    // prenait 30-60 sec → oddballtrip timeout (HTTP fetch < 30s) →
-    // retry → nouveau code créé → on s'est retrouvé avec 5 codes
-    // orphelins par achat sur Rouen.
+    // ─── Pre-generation SYNCHRONE ────────────────────────────────────
+    // On AWAIT prepareGamePackage avant de répondre. oddballtrip
+    // recevra la réponse uniquement quand TOUT est en DB (texts +
+    // audios + traductions). Conséquence : oddballtrip envoie l'email
+    // au client UNIQUEMENT quand le jeu est 100% prêt → joueur a
+    // zéro latence à l'arrivée.
     //
-    // MAINTENANT : on lance prepareGamePackage en BACKGROUND (Next.js
-    // `after()` qui exécute après la réponse HTTP renvoyée). La
-    // réponse part en ~1-2 sec → oddballtrip ne timeout plus → 1 seul
-    // code par achat. Audios prêts ~30-60 sec après l'envoi de
-    // l'email au client (qui met de toute façon plus longtemps que
-    // ça avant de cliquer le lien).
+    // Latence observée : 4-6 min. maxDuration de la route est 600s
+    // (10 min) pour absorber sans risque. oddballtrip doit avoir un
+    // HTTP timeout ≥ 10 min côté caller (webhook Stripe = 30 min par
+    // défaut, donc OK).
     //
-    // Si l'idempotence kick (code déjà existant), on relance quand
-    // même prepareGamePackage en background — il sera idempotent
-    // côté audio_cache (skip ce qui existe déjà) donc no-op si déjà
-    // prêt, ou rattrape si la première tentative avait foiré.
+    // Précédente version BACKGROUND (after()) ne tenait pas — Vercel
+    // tuait l'invocation avant la fin de la génération audio. Le code
+    // partait au client avant que les audios soient en DB → mauvaise
+    // expérience.
+    let audioReport:
+      | {
+          prepared: boolean;
+          generated: number;
+          skipped: number;
+          failed: number;
+          durationMs: number;
+        }
+      | undefined;
     if (language) {
-      after(
-        prepareGamePackage(gameId, language)
-          .then((result) => {
-            if (result.errors.length > 0) {
-              console.error(
-                `[external/generate-code] background package errors for ${gameId}/${language}:`,
-                result.errors,
-              );
-            } else {
-              console.log(
-                `[external/generate-code] background package done for ${gameId}/${language} — gen=${result.audioGenerated}, skip=${result.audioSkipped}, fail=${result.audioFailed}, ${Math.round(result.durationMs / 1000)}s`,
-              );
-            }
-          })
-          .catch((err) => {
-            console.error(
-              `[external/generate-code] background package crashed for ${gameId}/${language}:`,
-              err,
-            );
-          }),
-      );
+      try {
+        const result = await prepareGamePackage(gameId, language);
+        audioReport = {
+          prepared: result.success,
+          generated: result.audioGenerated,
+          skipped: result.audioSkipped,
+          failed: result.audioFailed,
+          durationMs: result.durationMs,
+        };
+        if (result.errors.length > 0) {
+          console.error(
+            `[external/generate-code] package errors for ${gameId}/${language}:`,
+            result.errors,
+          );
+        } else {
+          console.log(
+            `[external/generate-code] package done for ${gameId}/${language} — gen=${result.audioGenerated}, skip=${result.audioSkipped}, fail=${result.audioFailed}, ${Math.round(result.durationMs / 1000)}s`,
+          );
+        }
+      } catch (err) {
+        // Audio prep failure must NOT block code delivery — le joueur
+        // peut toujours jouer avec Web Speech fallback. Log + continue.
+        console.error(
+          `[external/generate-code] package crashed for ${gameId}/${language}:`,
+          err,
+        );
+        audioReport = {
+          prepared: false,
+          generated: 0,
+          skipped: 0,
+          failed: 0,
+          durationMs: 0,
+        };
+      }
     }
-    // audioReport n'est plus disponible en sortie (background) — on
-    // signale l'état via `audioPrepStatus` côté response.
-    const audioPrepStatus: "queued" | "skipped" =
-      language ? "queued" : "skipped";
 
     // Activation URL pre-fills the language so the player lands directly
     // in the right locale (no language picker step on first visit).
@@ -304,13 +330,10 @@ export async function POST(request: NextRequest) {
         gameTitle: extractTitle(game.title),
         gameCity: game.city,
         activationUrl,
-        // Indique au caller (oddballtrip) si la prep audio est en
-        // background (queued) ou skipped (pas de language fourni).
-        // L'ancien `audio` (avec stats détaillées) n'est plus dispo
-        // car le calcul se fait après la réponse — on aurait pu
-        // exposer un endpoint /audio-status mais YAGNI tant que
-        // oddballtrip n'en a pas besoin.
-        audioPrepStatus,
+        // Stats détaillées de la prep audio (synchrone) : si prepared:
+        // false ou failed > 0, oddballtrip peut décider de retarder
+        // l'envoi de l'email ou prévenir l'admin.
+        ...(audioReport && { audio: audioReport }),
         // Idempotency flag : true si le code retourné existait déjà
         // pour ce orderId (réponse à un retry du caller).
         idempotent: isIdempotentReturn,
