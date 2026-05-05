@@ -53,10 +53,17 @@ import {
 const RADIUS_AROUND_START_M = 2_000;
 
 /** Distance maximale autorisée entre deux stops consécutifs après le
- *  NN reorder. Au-delà, le parcours impose une marche absurde
- *  (>12 min entre deux énigmes — joueur qui se demande s'il s'est
- *  perdu, casse le rythme du jeu). */
-const MAX_INTER_STOP_M = 1_000;
+ *  NN reorder. 1500m ≈ 18 min de marche, qui reste acceptable pour un
+ *  escape game outdoor (pause narrative entre énigmes). Au-delà, le
+ *  joueur perd vraiment le rythme.
+ *
+ *  Historique : démarré à 1000m (test Clervaux). Test Rothenburg a
+ *  rejeté avec 1330m > 1000m parce que la ville fortifiée a 2 ponts
+ *  de la vallée parmi ses POIs touristiques, à 600-800m sous le
+ *  rocher. Aligner sur 1500m permet de publier ces parcours qui sont
+ *  marchables même si tendus, et n'introduit rien d'absurde côté UX
+ *  (18 min entre stops = pause narrative + photo + repos boisson). */
+const MAX_INTER_STOP_M = 1_500;
 
 /** Plancher en dessous duquel on rejette le jeu : un parcours < 6
  *  stops est trop court pour livrer l'expérience promise. */
