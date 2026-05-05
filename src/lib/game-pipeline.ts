@@ -43,6 +43,30 @@ export interface GameTemplate {
   difficulty: number; // 1-5
   estimatedDurationMin: number;
   coverImage?: string;
+  /**
+   * Point de départ du parcours, transmis par oddballtrip. C'est LE
+   * point de référence du jeu — pas le centre-ville officiel.
+   *
+   * Pourquoi c'est critique : un parcours peut tenir dans un quartier
+   * (Montmartre à Paris, Trastevere à Rome, le centre historique de
+   * Tournus dans une grande agglomération) qui est lui-même à
+   * plusieurs km du "centre-ville" géocodé. Si on filtrait les stops
+   * sur leur distance au centre-ville, tous les landmarks Montmartre
+   * seraient rejetés à Paris alors qu'ils forment un parcours
+   * parfaitement cohérent à pied.
+   *
+   * Comportement quand absent :
+   *   1. coords du PREMIER stop opérateur géocodé → c'est le stop où
+   *      le joueur démarre, donc le start naturel du parcours.
+   *   2. en dernier recours (si 0 stop géocode), on retombe sur le
+   *      centre-ville géocodé pour pouvoir au moins déclencher
+   *      l'auto-discovery sur la zone.
+   *
+   * Recommandation forte côté oddballtrip : transmettre startPoint
+   * explicitement. C'est le contrat le plus fiable pour les grandes
+   * villes où le parcours ne couvre qu'un quartier.
+   */
+  startPoint?: { lat: number; lon: number };
   /** Predefined stops from oddballtrip — if provided, Perplexity only researches these */
   stops?: PredefinedStop[];
   /**
@@ -227,13 +251,13 @@ export async function generateGameFromTemplate(
     );
     const researchStart = Date.now();
 
-    // STEP 0 : géocoder la ville pour avoir un POINT DE RÉFÉRENCE qui
-    // contraindra Google Maps à rester dans le bon périmètre. Sans ça,
-    // un landmark à nom commun ("Pont Saint-Pierre", "Hotel Central")
-    // peut shifter sur un homonyme célèbre et placer le joueur à 100+ km.
-    // L'appel se fait SANS bias (premier appel pur) pour avoir le centre
-    // ville authoritative ; les appels suivants sur les stops héritent
-    // ensuite du bias autour de ce centre.
+    // STEP 0 : géocoder la ville. Sert UNIQUEMENT de bias pour aider
+    // Google Places à désambiguïser les homonymes ("Pont Saint-Pierre"
+    // → celui de la bonne ville, pas celui de Genève à 800 km). Le
+    // centre-ville N'EST PAS la référence du parcours — un parcours
+    // peut tenir dans un quartier (Montmartre, Trastevere) à plusieurs
+    // km du centre. La vraie référence est calculée plus bas en STEP 0.5
+    // (startPoint operator OU centroïde des stops géocodés).
     let cityRef: { lat: number; lon: number } | undefined;
     try {
       const cityGeo = await geocodeLocation(
@@ -244,7 +268,7 @@ export async function generateGameFromTemplate(
       if (cityGeo) {
         cityRef = { lat: cityGeo.lat, lon: cityGeo.lon };
         console.log(
-          `[Pipeline] City reference for "${template.city}, ${template.country}" : ${cityRef.lat.toFixed(4)},${cityRef.lon.toFixed(4)} — landmark geocoding will be biased to a 1.5 km radius`,
+          `[Pipeline] City bias for "${template.city}, ${template.country}" : ${cityRef.lat.toFixed(4)},${cityRef.lon.toFixed(4)} — used to disambiguate landmark names, NOT as the parcours reference`,
         );
       } else {
         console.warn(
@@ -278,6 +302,13 @@ export async function generateGameFromTemplate(
     const stopsAfterGeocode: PipelineStop[] = [];
     const geocodeFailures: Array<{ stopName: string; tried: string[] }> = [];
 
+    // PHASE A — géocodage permissif autour de la ville. À ce stade, on
+    // accepte un rayon LARGE (50 km) parce qu'on n'a pas encore le point
+    // de référence du parcours. Le bias `cityRef` reste serré pour
+    // disambiguïser les homonymes, mais on tolère des résultats à
+    // plusieurs km — c'est PHASE B (post-centroïde) qui appliquera le
+    // filtre 1.5 km final.
+    const PHASE_A_LOOSE_M = 50_000;
     for (const stop of template.stops) {
       const queryName = stop.landmarkName?.trim() || stop.name.trim();
       const tried = [queryName];
@@ -285,7 +316,7 @@ export async function generateGameFromTemplate(
         queryName,
         template.city,
         template.country,
-        { referencePoint: cityRef },
+        { referencePoint: cityRef, maxDistanceM: PHASE_A_LOOSE_M },
       );
       // If we used `landmarkName` and it failed, give the poetic `name`
       // a single second chance — it might still happen to be a real
@@ -296,7 +327,7 @@ export async function generateGameFromTemplate(
           stop.name,
           template.city,
           template.country,
-          { referencePoint: cityRef },
+          { referencePoint: cityRef, maxDistanceM: PHASE_A_LOOSE_M },
         );
       }
       if (!geo) {
@@ -332,6 +363,92 @@ export async function generateGameFromTemplate(
         placeId: geo.externalId,
         originalStopName: stop.name,
       });
+    }
+
+    // ============================================
+    // STEP 0.5 : POINT DE DÉPART DU PARCOURS
+    // ============================================
+    // Trois sources possibles, dans l'ordre de priorité :
+    //   1. `template.startPoint` transmis explicitement par oddballtrip
+    //      — cas nominal, le client opérateur dit où le joueur démarre.
+    //   2. Coords du PREMIER stop opérateur géocodé (= le stop d'index 0
+    //      tel qu'il a été ordonné par oddballtrip). C'est le start
+    //      naturel du parcours quand pas de startPoint explicite — le
+    //      joueur arrive au stop 1 et marche vers les suivants.
+    //   3. Centre-ville (cityRef) en dernier recours si AUCUN stop n'a
+    //      pu être géocodé (= toute la liste est hallucinée). Permet à
+    //      l'auto-discovery de tourner quand même sur la zone.
+    //
+    // Note : on n'utilise PAS de centroïde. Le centre d'un parcours est
+    // mal défini (point géographique moyen ? mi-chemin du tracé ?) et
+    // sensible aux outliers. Le point de départ, lui, est sans
+    // ambiguïté : l'opérateur l'a choisi, le joueur y arrive.
+    //
+    // C'est cette référence — pas le centre-ville — qui servira au
+    // filtre 1.5 km, à l'auto-discovery Perplexity / Google, et au NN
+    // reorder. Cas d'usage : un parcours dans Montmartre est valide à
+    // Paris même si Montmartre est à 5 km du "centre" (Île de la Cité).
+    let parcoursRef: { lat: number; lon: number } | undefined;
+    if (template.startPoint) {
+      parcoursRef = template.startPoint;
+      console.log(
+        `[Pipeline] Parcours start: operator-provided startPoint at ${parcoursRef.lat.toFixed(4)},${parcoursRef.lon.toFixed(4)}`,
+      );
+    } else if (stopsAfterGeocode.length > 0) {
+      const first = stopsAfterGeocode[0];
+      parcoursRef = {
+        lat: first.loc.latitude,
+        lon: first.loc.longitude,
+      };
+      console.log(
+        `[Pipeline] Parcours start: first geocoded operator stop "${first.loc.name}" at ${parcoursRef.lat.toFixed(4)},${parcoursRef.lon.toFixed(4)} (no explicit startPoint from oddballtrip)`,
+      );
+    } else if (cityRef) {
+      parcoursRef = cityRef;
+      console.warn(
+        `[Pipeline] Parcours start: falling back to city center (no operator startPoint, no geocoded stops)`,
+      );
+    }
+
+    // ============================================
+    // PHASE B — filtre les stops opérateur à 1.5 km de parcoursRef
+    // ============================================
+    // Maintenant qu'on a la vraie référence du parcours, on retire les
+    // stops qui sont géocodés mais hors zone (= en dehors du parcours
+    // que l'opérateur a effectivement designé). C'est ici que "Saint-
+    // Joseph à 2,2 km du château de Clervaux" tombe enfin — référence
+    // = château + ses voisins, pas le centre administratif de la
+    // commune.
+    if (parcoursRef) {
+      const PHASE_B_TIGHT_M = 1_500;
+      const removeIdx: number[] = [];
+      for (let i = 0; i < stopsAfterGeocode.length; i++) {
+        const s = stopsAfterGeocode[i];
+        const d = haversineMeters(parcoursRef, {
+          lat: s.loc.latitude,
+          lon: s.loc.longitude,
+        });
+        if (d > PHASE_B_TIGHT_M) {
+          console.warn(
+            `[Pipeline] Stop "${s.loc.name}" geocoded ${Math.round(d)}m from parcours reference > ${PHASE_B_TIGHT_M}m — moving to auto-discovery`,
+          );
+          removeIdx.push(i);
+          geocodeFailures.push({
+            stopName: s.loc.name,
+            tried: [
+              `geocoded out of parcours zone: ${Math.round(d)}m from ref`,
+            ],
+          });
+        }
+      }
+      // Suppression de la fin vers le début pour préserver les indices
+      removeIdx.sort((a, b) => b - a);
+      for (const idx of removeIdx) stopsAfterGeocode.splice(idx, 1);
+      if (removeIdx.length > 0) {
+        console.log(
+          `[Pipeline] Phase B: ${removeIdx.length} stop(s) outside parcours zone, ${stopsAfterGeocode.length} kept`,
+        );
+      }
     }
 
     // ============================================
@@ -435,7 +552,7 @@ export async function generateGameFromTemplate(
     // sinon le scénario continuerait de référencer les landmarks
     // hallucinés.
     const replacedStops: ReplacedStop[] = [];
-    if (geocodeFailures.length > 0 && cityRef) {
+    if (geocodeFailures.length > 0 && parcoursRef) {
       const usedPlaceIds = new Set<string>(
         stopsAfterGeocode
           .map((s) => s.placeId)
@@ -475,11 +592,15 @@ export async function generateGameFromTemplate(
           // Géocode chaque candidat avec le bias serré 1,5 km. Pas
           // de fallback sur le `name` poétique : Perplexity nous a
           // déjà donné le nom géocodable.
+          // Géocode chaque candidat Perplexity avec bias serré sur
+          // parcoursRef (pas cityRef) pour que Google nous donne le
+          // résultat dans la zone du parcours, pas celui d'une ville
+          // lointaine portant un nom similaire.
           const geo = await geocodeLocation(
             cand.name,
             template.city,
             template.country,
-            { referencePoint: cityRef },
+            { referencePoint: parcoursRef },
           );
           if (!geo) {
             console.log(
@@ -505,7 +626,7 @@ export async function generateGameFromTemplate(
             placeId: geo.externalId ?? `geocoded:${cand.name}`,
             address: undefined,
             types: [],
-            distanceM: haversineMeters(cityRef, { lat: geo.lat, lon: geo.lon }),
+            distanceM: haversineMeters(parcoursRef, { lat: geo.lat, lon: geo.lon }),
           });
           console.log(
             `[Pipeline] Perplexity → geocoded "${cand.name}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)} (${geo.source})`,
@@ -529,7 +650,7 @@ export async function generateGameFromTemplate(
 
         let googleCandidates: DiscoveredLandmark[] = [];
         try {
-          googleCandidates = await discoverNearbyLandmarks(cityRef, {
+          googleCandidates = await discoverNearbyLandmarks(parcoursRef, {
             radiusM: 1_500,
             excludePlaceIds: usedPlaceIds,
             limit: 30,
@@ -624,30 +745,30 @@ export async function generateGameFromTemplate(
       // combler) tomberont dans le `droppedStops` legacy via la
       // condition de dégradation gracieuse plus bas.
       geocodeFailures.splice(0, toFill);
-    } else if (geocodeFailures.length > 0 && !cityRef) {
+    } else if (geocodeFailures.length > 0 && !parcoursRef) {
       console.warn(
-        `[Pipeline] ${geocodeFailures.length} stop(s) failed but no city reference — auto-discovery disabled, falling through to graceful drop`,
+        `[Pipeline] ${geocodeFailures.length} stop(s) failed but no parcours reference — auto-discovery disabled, falling through to graceful drop`,
       );
     }
 
-    // Réordonnancement par nearest-neighbor depuis le centre ville
-    // dès qu'un remplacement a eu lieu : la liste résultante mélange
-    // des stops opérateur et des POIs auto-découverts dont les
+    // Réordonnancement par nearest-neighbor depuis le point de départ
+    // du parcours dès qu'un remplacement a eu lieu : la liste résultante
+    // mélange des stops opérateur et des POIs auto-découverts dont les
     // positions n'ont aucune raison de tracer un parcours cohérent
     // dans l'ordre d'insertion. NN garantit qu'on ne « repasse pas
     // au point A » entre deux étapes. Pour 8 stops c'est suffisant ;
     // si on voulait optimiser globalement il faudrait un vrai TSP
     // mais le gain serait marginal.
-    if (replacedStops.length > 0 && cityRef) {
-      const ordered = greedyNearestNeighborFromRef(stopsAfterGeocode, cityRef);
+    if (replacedStops.length > 0 && parcoursRef) {
+      const ordered = greedyNearestNeighborFromRef(stopsAfterGeocode, parcoursRef);
       stopsAfterGeocode.splice(0, stopsAfterGeocode.length, ...ordered);
     }
 
     // ============================================
     // STEP 1.6 : Garde-fou inter-stops
     // ============================================
-    // Même quand chaque stop est dans le rayon 1,5 km du centre, deux
-    // stops diamétralement opposés peuvent être à 2-3 km l'un de l'autre.
+    // Même quand chaque stop est dans le rayon 1,5 km du point de départ,
+    // deux stops diamétralement opposés peuvent être à 2-3 km l'un de l'autre.
     // Le NN reorder atténue mais ne résout pas (le dernier stop d'une
     // tournée NN peut toujours être à 2 km du précédent — c'est ce qui
     // s'est passé sur Clervaux avec Saint-Joseph à 2,2 km).
@@ -659,7 +780,7 @@ export async function generateGameFromTemplate(
     // tous les sauts sont ≤ seuil, soit on a atteint le plancher de
     // stops publiables.
     const distanceDroppedStops: FailedLandmark[] = [];
-    if (cityRef && stopsAfterGeocode.length > MIN_STOPS_TO_PUBLISH) {
+    if (parcoursRef && stopsAfterGeocode.length > MIN_STOPS_TO_PUBLISH) {
       const maxJump = () => {
         let m = 0;
         for (let i = 1; i < stopsAfterGeocode.length; i++) {
@@ -717,7 +838,7 @@ export async function generateGameFromTemplate(
           if (ridx >= 0) replacedStops.splice(ridx, 1);
         }
         // Re-NN-reorder pour que la chaîne reste cohérente après drop.
-        const reordered = greedyNearestNeighborFromRef(stopsAfterGeocode, cityRef);
+        const reordered = greedyNearestNeighborFromRef(stopsAfterGeocode, parcoursRef);
         stopsAfterGeocode.splice(0, stopsAfterGeocode.length, ...reordered);
         console.warn(
           `[Pipeline] Dropped "${dropped.loc.name}" (jump=${Math.round(currentMax)}m > ${MAX_INTER_STOP_M}m), ${stopsAfterGeocode.length} stop(s) remaining`,

@@ -50,6 +50,7 @@ export async function POST(request: NextRequest) {
       hasThemeDesc: !!body.themeDescription, hasNarrative: !!body.narrative,
       stopsCount: body.stops?.length, slug: body.slug,
       hasCallback: !!body.callbackUrl,
+      hasStartPoint: !!body.startPoint,
       buyerEmail: body.buyerEmail || "N/A",
     }));
 
@@ -94,6 +95,33 @@ export async function POST(request: NextRequest) {
           )
       : undefined;
 
+    // Point de départ du parcours. CONTRAT: oddballtrip dispose du
+    // startPoint dans chaque fiche de jeu et DOIT le transmettre.
+    // C'est ce point qui sert de référence au filtre 1.5 km, à l'auto-
+    // discovery et au NN reorder. Sans lui, on retombe sur le 1er stop
+    // géocodé (heuristique correcte mais moins fiable, surtout pour les
+    // grandes villes où le parcours peut être dans un quartier).
+    //
+    // Accepte plusieurs formats au cas où l'amont varie :
+    //   { lat, lon } | { latitude, longitude } | { lat, lng }
+    let startPoint: { lat: number; lon: number } | undefined;
+    if (body.startPoint && typeof body.startPoint === "object") {
+      const sp = body.startPoint as Record<string, unknown>;
+      const lat = typeof sp.lat === "number" ? sp.lat : typeof sp.latitude === "number" ? sp.latitude : null;
+      const lon = typeof sp.lon === "number" ? sp.lon : typeof sp.longitude === "number" ? sp.longitude : typeof sp.lng === "number" ? sp.lng : null;
+      if (lat !== null && lon !== null) {
+        startPoint = { lat, lon };
+      } else {
+        console.warn(
+          `[GenerateGame] ⚠ body.startPoint provided but missing lat/lon (got keys: ${Object.keys(sp).join(",")}) — ignoring, fallback to first geocoded stop`,
+        );
+      }
+    } else {
+      console.warn(
+        `[GenerateGame] ⚠ MISSING startPoint in payload — oddballtrip must transmit { startPoint: { lat, lon } } on every request. Falling back to first geocoded operator stop, which is approximate.`,
+      );
+    }
+
     const template: GameTemplate = {
       slug:
         body.slug ||
@@ -107,6 +135,7 @@ export async function POST(request: NextRequest) {
       estimatedDurationMin: body.estimatedDuration || body.estimatedDurationMin || 90,
       coverImage: body.coverImage || null,
       stops,
+      startPoint,
     };
 
     // Idempotency: if a game with this slug already exists, return it
