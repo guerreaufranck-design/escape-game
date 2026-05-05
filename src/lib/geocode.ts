@@ -81,15 +81,13 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
  * célèbre (ex: "Pont Saint-Pierre" à 800 km au lieu de la même rue
  * dans le village du jeu) et le joueur arrive à 100 km du parcours.
  *
- * 10 km couvre :
- *  - villes étendues type Paris, Berlin (intra-muros + 1ʳᵉ couronne)
- *  - sites archéologiques annexes (musée à 5 km du site principal)
- *  - banlieue immédiate (point de départ en gare → centre historique)
- *
- * Si on a besoin d'aller au-delà (jeu sur 2 villes voisines, parcours
- * inter-villages), le pipeline peut surcharger via maxDistanceM.
+ * 5 km est la valeur par défaut : un parcours de jeu fait au max
+ * ~4 km cumulés à pied, donc accepter un landmark au-delà de 5 km
+ * du centre ville garantit déjà un parcours injouable. Si on a besoin
+ * d'aller au-delà (cas exceptionnel), le pipeline peut surcharger
+ * via maxDistanceM.
  */
-const DEFAULT_MAX_DISTANCE_M = 10_000;
+const DEFAULT_MAX_DISTANCE_M = 5_000;
 
 /**
  * Rayon préféré (mètres) pour le `locationbias` de Google Places /
@@ -97,7 +95,74 @@ const DEFAULT_MAX_DISTANCE_M = 10_000;
  * trouver dans le centre ville en priorité ; le filtre haversine
  * en aval rattrape les rares résultats hors zone.
  */
-const PREFERRED_BIAS_RADIUS_M = 5_000;
+const PREFERRED_BIAS_RADIUS_M = 3_000;
+
+/**
+ * Stopwords multilingues — articles, prépositions et particules qui
+ * n'aident pas à différencier deux landmarks. On les exclut du token-
+ * matching pour ne pas valider un faux positif sur "le", "de", "the",
+ * etc. quand un homonyme partage juste une particule courante.
+ */
+const STOPWORDS = new Set([
+  // FR
+  "le", "la", "les", "un", "une", "des", "de", "du", "et", "ou", "à", "au", "aux",
+  "sur", "sous", "dans", "vers", "pour", "par", "chez", "avec",
+  // EN
+  "the", "a", "an", "of", "and", "or", "in", "on", "at", "to", "for", "with", "by", "from",
+  // ES
+  "el", "los", "las", "y", "o", "en", "para", "con", "por", "del", "al",
+  // IT
+  "il", "lo", "gli", "ed", "per", "nel", "alla", "dello", "della",
+  // DE
+  "der", "die", "das", "den", "dem", "ein", "eine", "und", "oder", "für", "mit", "auf", "an",
+]);
+
+/**
+ * Tokenise un nom pour comparaison sémantique.
+ *  - lowercase
+ *  - dénormalise les diacritiques (é → e, ü → u)
+ *  - supprime ponctuation et tirets
+ *  - garde les mots de 3+ caractères, hors stopwords
+ */
+function nameTokens(s: string): Set<string> {
+  return new Set(
+    s
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[̀-ͯ]/g, "")
+      .replace(/[^a-z0-9\s]/g, " ")
+      .split(/\s+/)
+      .filter((t) => t.length >= 3 && !STOPWORDS.has(t)),
+  );
+}
+
+/**
+ * Vérifie qu'au moins un token DISTINCTIF du nom demandé apparaît
+ * dans le nom retourné par le geocoder. "Distinctif" = hors stopword
+ * et hors nom de ville (qu'on retire des deux côtés pour ne pas
+ * valider un match basé uniquement sur "Clervaux" présent partout).
+ *
+ * Cas d'usage : Google Places sur "Pont sur la Clerve, Clervaux"
+ * retourne "Abbaye Saint-Maurice, Clervaux" parce que le pont n'est
+ * pas un POI nommé chez eux. La ville matche mais aucun des tokens
+ * distinctifs ("pont", "clerve") n'apparaît dans la réponse → on
+ * rejette pour éviter le faux positif.
+ */
+function namesMatch(requested: string, returned: string, city: string): boolean {
+  const reqTokens = nameTokens(requested);
+  const cityTokens = nameTokens(city);
+  for (const t of cityTokens) reqTokens.delete(t);
+  if (reqTokens.size === 0) {
+    // Le nom demandé n'a pas de token distinctif au-delà de la ville
+    // (ex: "Clervaux" tout seul) — on ne peut rien valider, on accepte.
+    return true;
+  }
+  const retTokens = nameTokens(returned);
+  for (const t of reqTokens) {
+    if (retTokens.has(t)) return true;
+  }
+  return false;
+}
 
 export interface GeocodeOptions {
   /**
@@ -151,12 +216,20 @@ export async function geocodeLocation(
         err instanceof Error ? err.message : err,
       );
     }
-    // Si Google a renvoyé un résultat MAIS qu'il est hors du rayon
-    // accepté autour du referencePoint, on le rejette comme s'il
-    // n'avait rien trouvé. Cas typique : homonyme célèbre qui éclipse
-    // le local ("Pont Saint-Pierre" → renvoie le pont parisien à
-    // 800 km au lieu du pont de village).
+    // Validations en cascade :
+    // (1) hors du rayon ? — homonyme à 800 km
+    // (2) nom du résultat divergent du nom demandé ? — Google a
+    //     fallback sur le POI le plus célèbre quand le nom demandé
+    //     n'existe pas chez eux (ex: "Pont sur la Clerve, Clervaux"
+    //     → renvoie "Abbaye Saint-Maurice, Clervaux" parce que le
+    //     pont n'est pas catalogué). On le détecte par token-overlap.
     if (result && refPoint && isOutOfRange(result, refPoint, maxDistance, landmarkName)) {
+      result = null;
+    }
+    if (result && !namesMatch(landmarkName, result.displayName, city)) {
+      console.warn(
+        `[geocode] Name mismatch (Google Places) for "${landmarkName}" — got "${result.displayName}". Treating as miss.`,
+      );
       result = null;
     }
     if (!result) {
@@ -169,6 +242,12 @@ export async function geocodeLocation(
         );
       }
       if (result && refPoint && isOutOfRange(result, refPoint, maxDistance, landmarkName)) {
+        result = null;
+      }
+      if (result && !namesMatch(landmarkName, result.displayName, city)) {
+        console.warn(
+          `[geocode] Name mismatch (Google Geocoding) for "${landmarkName}" — got "${result.displayName}". Treating as miss.`,
+        );
         result = null;
       }
     }
@@ -206,6 +285,12 @@ export async function geocodeLocation(
       );
     }
     if (result && refPoint && isOutOfRange(result, refPoint, maxDistance, landmarkName)) {
+      result = null;
+    }
+    if (result && !namesMatch(landmarkName, result.displayName, city)) {
+      console.warn(
+        `[geocode] Name mismatch (Nominatim) for "${landmarkName}" — got "${result.displayName}". Treating as miss.`,
+      );
       result = null;
     }
   }
