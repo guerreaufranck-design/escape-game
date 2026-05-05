@@ -117,6 +117,13 @@ export async function discoverParcours(
       // ne PAS lier les landmarks à la fiction (cf. perplexity.ts), juste
       // au sujet historique réel sous-jacent.
       narrative: params.narrative,
+      // CRITIQUE : Perplexity reçoit le startPoint pour ancrer sa
+      // recherche AU BON ENDROIT. Sans ça, il choisit la zone la plus
+      // thématiquement riche (qui peut être à 10 km du startPoint réel)
+      // et tous ses candidats sont ensuite rejetés par le filtre 1,5 km
+      // (cf. test Greek/Themistocles : Perplexity choisit Piraeus,
+      // startPoint à Athens, 6 candidats sur 7 perdus).
+      startPoint: params.startPoint,
       // On en demande quelques-uns en plus que stopCount pour absorber
       // les drops au géocodage et au filtre walkability.
       needed: params.stopCount,

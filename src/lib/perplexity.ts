@@ -383,6 +383,17 @@ export async function discoverThematicLandmarks(params: {
   /** Narration intégrale du jeu — donne à Perplexity le contexte tonal
    *  pour comprendre quels landmarks "fittent" l'histoire. */
   narrative: string;
+  /** Point de départ du parcours, transmis par oddballtrip. CRITIQUE :
+   *  Perplexity DOIT chercher autour de ce point précis, pas autour du
+   *  "centre-ville" abstrait. Sans ça, sur une `city` ambiguë comme
+   *  "Port of Piraeus and historic center of Athens", Perplexity choisit
+   *  une zone de son cru (la plus thématiquement pertinente : Piraeus
+   *  pour Themistocle), tandis que mon pipeline filtre autour du
+   *  startPoint réel (Athens). Résultat : 6 candidats sur 7 rejetés.
+   *
+   *  En passant les coords explicitement dans le prompt, on aligne le
+   *  scope de découverte Perplexity avec celui du filtre 1.5 km. */
+  startPoint: { lat: number; lon: number };
   /** Combien de candidats max à demander. On en demande TOUJOURS plus
    *  que `needed` (typiquement +50%) pour absorber le taux de drop au
    *  géocodage en aval. */
@@ -412,24 +423,38 @@ export async function discoverThematicLandmarks(params: {
   // réel ("Battle of the Bulge", "Renaissance art trail"), suffisant pour
   // la découverte. L'adaptation narrative en aval (Claude) habillera
   // ces landmarks réels avec la fiction.
-  const prompt = `You are sourcing real, existing landmarks in ${params.city}, ${params.country} for an outdoor walking tour. The tour will be themed, but you only need to find REAL landmarks tied to a real historical/cultural subject — the storytelling layer is added later.
+  // GPS coordinates précises du point de départ — ON ANCRE Perplexity ICI.
+  // Lui dire "around the city centre" est ambigu pour les villes complexes
+  // (Athens-Piraeus, Greater London, Tokyo). Les coords sub-degré lèvent
+  // toute ambiguïté.
+  const startLat = params.startPoint.lat.toFixed(5);
+  const startLon = params.startPoint.lon.toFixed(5);
+
+  const prompt = `You are sourcing real, existing landmarks for an outdoor walking tour. The tour will be themed, but you only need to find REAL landmarks tied to a real historical/cultural subject — the storytelling layer is added later.
+
+GEOGRAPHIC ANCHOR — search ONLY around this exact point:
+- Starting point GPS: ${startLat}, ${startLon}
+- City: ${params.city}, ${params.country}
+- Search radius: 1.5 km maximum from the GPS point above (NOT from "the city centre" — use the exact coordinates).
 
 REAL-WORLD SUBJECT (extracted from the tour's theme — this is what to anchor on):
 - Theme: "${params.theme}"
 - Pitch: ${params.themeDescription}
 
-TASK: list UP TO ${requested} REAL landmarks in the city centre of ${params.city} (within ~1.5 km walking distance of the historic centre) that resonate with this subject. Returning fewer is FINE — quality over quantity. Use web search to confirm each landmark exists and has a verifiable real-world link to the subject's broader topic (era, event, movement, person, architectural style…). It is acceptable to include landmarks where the link is partial or atmospheric (a square central to the era's life, a building from the right century) as long as the era / topic matches.${exclusionBlock}
+TASK: list UP TO ${requested} REAL landmarks within 1.5 km walking distance of the GPS starting point given above, that resonate with the subject. Returning fewer is FINE — quality over quantity. Use web search to confirm each landmark (a) exists, (b) is geographically within ~1.5 km of ${startLat},${startLon}, and (c) has a verifiable real-world link to the subject (era, event, movement, person, architectural style…). It is acceptable to include landmarks where the link is partial or atmospheric (a square central to the era's life, a building from the right century) as long as the era / topic matches.${exclusionBlock}
+
+CRITICAL — IF THE STARTING POINT'S NEIGHBORHOOD HAS LITTLE TO DO WITH THE THEME:
+The operator may have chosen a starting point in a neighborhood that doesn't perfectly match the theme. DO NOT compensate by proposing landmarks in another neighborhood far away. STICK to the 1.5 km radius around the GPS point. If you cannot find ${requested} good landmarks in that radius, return fewer — even returning 0 is fine. The pipeline downstream will surface the issue rather than ship a non-walkable tour. Returning landmarks 5+ km away from the GPS point is a HARD FAIL — they will be rejected by the geocoding filter and the tour will fail to publish.
 
 INTERPRETING THE SUBJECT:
-- If the theme references a war/battle, list memorials, command posts, museums, monuments, plaques, key buildings.
-- If the theme references an art movement or era, list museums, galleries, statues, period buildings, artist residences.
-- If the theme is broader ("medieval mystery", "Renaissance secrets"), list landmarks from that era — churches, towers, palaces, fortifications.
+- If the theme references a war/battle, list memorials, command posts, museums, monuments, plaques, key buildings — within the 1.5 km radius.
+- If the theme references an art movement or era, list museums, galleries, statues, period buildings, artist residences — within the 1.5 km radius.
+- If the theme is broader ("medieval mystery", "Renaissance secrets"), list landmarks from that era — within the 1.5 km radius.
 - The link must be DOCUMENTED in heritage/tourism/Wikipedia sources, not invented.
-- It is FINE if landmarks have only a partial / atmospheric link (a square where the era's life happened) as long as the era/topic is right.
 
 CRITERIA:
 - Each landmark must EXIST today and be findable on Google Maps or via a Wikipedia / heritage / tourism URL.
-- Within ~1.5 km of the historic centre, walkable.
+- Within 1.5 km of GPS ${startLat},${startLon}, walkable.
 - Prefer well-named landmarks (geocoding will fail on overly obscure names like "the third house on the left").
 - A mix of types is welcome (building, monument, street, square, bridge, plaque, café with historical plaque).
 

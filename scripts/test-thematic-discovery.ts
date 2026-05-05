@@ -32,6 +32,8 @@ async function main() {
     theme: THEME,
     themeDescription: THEME_DESCRIPTION,
     narrative: NARRATIVE,
+    // Hard-coded Clervaux Castle GPS for the test
+    startPoint: { lat: 50.0545, lon: 6.0301 },
     needed: 8,
     excludeNames: [],
   });
