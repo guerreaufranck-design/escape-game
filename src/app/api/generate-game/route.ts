@@ -152,10 +152,18 @@ export async function POST(request: NextRequest) {
       // le pipeline pré-génère TOUS les audios + traductions dans cette
       // langue après l'insert DB. Si absent, log warning + lazy gen
       // pendant la session (latence joueur).
-      language:
-        typeof body.language === "string" && /^[a-z]{2}$/i.test(body.language)
-          ? body.language.toLowerCase()
-          : undefined,
+      //
+      // Accepte ISO 639-1 + BCP-47 + locale variants :
+      //   "fr"     → "fr"
+      //   "fr-FR"  → "fr"  (Stripe / browsers)
+      //   "fr_FR"  → "fr"
+      //   "FR"     → "fr"
+      // Tout le reste → undefined → fallback warning + lazy gen.
+      language: (() => {
+        if (typeof body.language !== "string") return undefined;
+        const m = body.language.toLowerCase().trim().match(/^([a-z]{2})(?:[-_][a-z0-9]+)?$/);
+        return m ? m[1] : undefined;
+      })(),
     };
 
     // Idempotency: if a game with this slug already exists, return it

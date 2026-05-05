@@ -91,8 +91,20 @@ export async function POST(request: NextRequest) {
     const { gameId, buyerEmail, buyerName, orderId } = body;
     const rawLanguage =
       typeof body.language === "string" ? body.language.toLowerCase().trim() : null;
-    // Defensive: only accept a clean 2-letter ISO code
-    const language = rawLanguage && /^[a-z]{2}$/.test(rawLanguage) ? rawLanguage : null;
+    // Accept a wider set de locale formats et normalise vers ISO 639-1
+    // (2-letter base) :
+    //   "fr"     → "fr"
+    //   "fr-FR"  → "fr"  (BCP-47, courant Stripe + navigateurs)
+    //   "fr_FR"  → "fr"
+    //   "FR"     → "fr"  (toLowerCase déjà fait)
+    //   "fra", "english", "" → null (rejet)
+    //
+    // Avant : regex strict /^[a-z]{2}$/ rejetait "fr-FR" → language=null
+    // → prepareGamePackage skippé → joueur subissait lazy gen en jeu.
+    const langMatch = rawLanguage
+      ? rawLanguage.match(/^([a-z]{2})(?:[-_][a-z0-9]+)?$/)
+      : null;
+    const language = langMatch ? langMatch[1] : null;
 
     if (!gameId) {
       return NextResponse.json(
@@ -175,9 +187,12 @@ export async function POST(request: NextRequest) {
       finalCode = retryCode;
     }
 
-    // Log buyer info for traceability
+    // Log buyer info for traceability. On expose AUSSI la valeur brute
+    // de body.language pour diagnostiquer les cas où l'opérateur amont
+    // envoie un format non-standard (BCP-47 "fr-FR", "fra", "english"...)
+    // qu'on ne capture pas et qui fait skipper prepareGamePackage.
     console.log(
-      `[external/generate-code] code=${finalCode} game=${game.city} email=${buyerEmail} order=${orderId || "N/A"} lang=${language || "—"}`
+      `[external/generate-code] code=${finalCode} game=${game.city} email=${buyerEmail} order=${orderId || "N/A"} lang=${language || "—"} raw="${body.language ?? ""}"`
     );
 
     // ─── Pre-generation: text translation + ElevenLabs audio ─────────
