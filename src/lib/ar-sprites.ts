@@ -174,36 +174,62 @@ export function pickFallbackGuide(seed: string): ARFallbackCharacter {
 
 /**
  * Format the character catalogue for a Claude prompt. Each entry includes
- * the description, which sites/themes match it best, and pitfalls to avoid.
+ * la description, les sites/thèmes qui matchent le mieux, et les pièges
+ * à éviter.
  */
 export function formatCharactersForPrompt(): string {
   const lines = AR_CHARACTERS.map(
     (c) =>
       `  - "${c.type}" — ${c.description}\n      best for: ${c.bestFor}\n      avoid: ${c.avoid}`,
   ).join("\n");
-  return `AVAILABLE CHARACTER TYPES:\n${lines}\n  - "default" — neutral OddballTrip guide. Use ONLY when none of the themed characters fits the step's setting (e.g. modern museums, civic buildings of the late 20c, neutral squares).`;
+  return `AVAILABLE THEMED CHARACTER TYPES (use ONLY when there's a SLAM-DUNK match):\n${lines}\n\nDEFAULT (use 90% of the time):\n  - "default" — neutral OddballTrip guide (homme ou femme, le runtime choisit). C'est la valeur PAR DÉFAUT à utiliser dès qu'il y a le moindre doute.`;
 }
 
 /**
- * Build the full character-selection block for a Claude prompt:
- * a deterministic procedure, a strict diversity mandate, and the
- * character catalogue. Keeps the diversity rule co-located with the
- * catalogue so the LLM never sees one without the other.
+ * Build the full character-selection block for a Claude prompt.
+ *
+ * IMPORTANT (changement 2026-05-05) : on inverse la logique. Avant on
+ * forçait de la "diversité" et un thème à chaque stop, ce qui produisait
+ * des matches absurdes (monk au Parthénon classique grec, princess pour
+ * les Caryatides, peasant au temple d'Héphaïstos). Maintenant on demande
+ * à Claude de choisir "default" (guide OddballTrip) PAR DÉFAUT, et de
+ * passer à un personnage thématique UNIQUEMENT quand le match est
+ * EVIDENT et UNIVOQUE.
+ *
+ * Rationale opérateur : le catalogue de personnages thématiques est
+ * volontairement limité (9 archétypes), et la plupart des sites du monde
+ * ne tombent dans aucune de ces catégories. Plutôt que de forcer un
+ * peasant pour Hadrian's Library faute de mieux, on met le guide neutre
+ * — moins de friction immersive pour le joueur.
  */
 export function buildCharacterSelectionGuidance(stepCount: number): string {
-  const targetVariety = Math.min(stepCount, AR_CHARACTERS.length);
-  return `CHARACTER SELECTION PROCEDURE — apply for EACH step:
-  1. Identify the SITE TYPE: church / fortress / port / cemetery / palace / market / lighthouse / watchtower / convent / etc. The SITE TYPE is the primary signal — it almost always determines the character.
-  2. Identify the ERA: medieval / renaissance / 18th-c / 19th-c / 1920s / modern.
-  3. Identify the THEME: justice, faith, war, trade, magic, death, exploration, mystery.
-  4. Pick the character whose "best for" list most directly matches (1)+(2)+(3). The SITE TYPE wins ties.
+  return `CHARACTER SELECTION — RÈGLE NOUVELLE (priorité au "default") :
 
-DIVERSITY MANDATE — STRICT:
-  - Across the ${stepCount} steps of this game, use AS MANY DIFFERENT character archetypes as the storyline plausibly allows.
-  - Target: at least ${targetVariety} DISTINCT character types across the ${stepCount} steps.
-  - NEVER repeat the same character on two consecutive steps unless they share an EXACT setting + era + theme triplet.
-  - If you find yourself reaching for the same character a 2nd time, STOP and reconsider — there is almost always a better thematic alternative in the catalogue.
-  - "default" is a last resort — only when NO themed character fits.
+VALEUR PAR DÉFAUT : "default" (= guide OddballTrip neutre).
+Tu écris "default" pour TOUS les stops sauf si la règle SLAM-DUNK ci-dessous s'applique.
+
+RÈGLE SLAM-DUNK pour passer à un personnage thématique :
+Tu ne sors du "default" QUE SI le SITE TYPE + ÉRA correspond DIRECTEMENT et SANS DOUTE à un personnage du catalogue ci-dessous. Si tu hésites une seconde, tu mets "default".
+
+Exemples qui justifient un personnage thématique :
+  - Site = château fortifié médiéval → "knight"
+  - Site = cathédrale catholique du 13e siècle → "monk"
+  - Site = phare ou port marchand → "sailor"
+  - Site = bûcher/place d'inquisition documentée → "witch"
+  - Site = champ de bataille WWII / monument GI → "soldier"
+  - Site = cimetière / mausolée / catacombes → "ghost"
+
+Exemples qui DOIVENT rester "default" :
+  - Site archéologique grec antique (ne match aucun personnage du catalogue : pas de moine ni chevalier dans la Grèce de Périclès) → "default"
+  - Musée moderne (Acropolis Museum, Louvre, Beaux-Arts) → "default"
+  - Place publique générique / bâtiment civique récent → "default"
+  - Théâtre antique (Dionysos) — aucun de nos personnages n'est un acteur grec → "default"
+  - Bibliothèque (Hadrian, BNF) — pas de "scholar" dans le catalogue → "default"
+  - Synagogue / mosquée / temple bouddhiste si on n'a que "monk" qui est trop christianocentré → "default"
+
+PRINCIPE GUIDANT : il vaut mieux 8 stops avec "default" qu'un seul stop avec un personnage qui n'a rien à voir. Le guide neutre n'aliène personne ; un mauvais match casse l'immersion.
+
+PAS de mandat de diversité. Tu peux mettre "default" sur les ${stepCount} stops si rien ne match clairement.
 
 ${formatCharactersForPrompt()}`;
 }

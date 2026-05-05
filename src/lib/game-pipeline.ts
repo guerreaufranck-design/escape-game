@@ -33,6 +33,7 @@ import { createAdminClient } from "./supabase/admin";
 import { geocodeLocation, haversineMeters } from "./geocode";
 import { discoverParcours } from "./parcours-discovery";
 import { prepareGamePackage } from "./game-package";
+import { pickFallbackGuide, AR_CHARACTERS } from "./ar-sprites";
 import { v4 as uuidv4 } from "uuid";
 
 export interface GameTemplate {
@@ -872,8 +873,31 @@ async function insertGameIntoDatabase(
     const landmarkName =
       sourceLocation?.landmarkName?.trim() || sourceLocation?.name || null;
 
+    // Résout le character_type à stocker en DB.
+    //
+    // Politique opérateur (changement 2026-05-05) : par défaut on met
+    // un guide OddballTrip neutre (homme/femme alterné). On ne met un
+    // personnage thématique que si Claude a EXPLICITEMENT renvoyé un
+    // type valide du catalogue AR_CHARACTERS (knight/witch/monk/sailor/
+    // detective/ghost/princess/peasant/soldier).
+    //
+    // Pourquoi : le catalogue thématique est volontairement restreint
+    // à 9 archétypes ; sur la majorité des sites du monde aucun ne
+    // colle vraiment. Mieux vaut un guide neutre qu'un mauvais match
+    // (peasant au temple d'Héphaïstos = absurde).
+    //
+    // Le guide est sélectionné via pickFallbackGuide(stepId) — hash
+    // stable sur l'id pour que le même stop affiche toujours le
+    // MÊME guide (pas de flickering entre sessions).
+    const stepId = uuidv4();
+    const themedTypes = new Set<string>(AR_CHARACTERS.map((c) => c.type));
+    const claudeChoice = (step.ar_character_type || "").toLowerCase().trim();
+    const resolvedCharacter: string = themedTypes.has(claudeChoice)
+      ? claudeChoice
+      : pickFallbackGuide(stepId);
+
     return {
-      id: uuidv4(),
+      id: stepId,
       game_id: gameId,
       step_order: index + 1,
       title: step.title,
@@ -896,8 +920,10 @@ async function insertGameIntoDatabase(
       // AR-first flow: every step is virtual_ar regardless of what the
       // model returned. The "physical" mode is fully retired.
       answer_source: "virtual_ar" as const,
-      // AR runtime layer — populated by Claude during generation
-      ar_character_type: step.ar_character_type || "default",
+      // AR character — résolu vers une valeur stockable directement
+      // (guide_male / guide_female / type thématique du catalogue).
+      // Plus de "default" en DB : le runtime n'a pas à interpréter.
+      ar_character_type: resolvedCharacter,
       ar_character_dialogue: step.ar_character_dialogue || null,
       ar_facade_text: enforcedFacade,
       ar_treasure_reward: step.ar_treasure_reward || null,

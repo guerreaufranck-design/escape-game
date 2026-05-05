@@ -152,53 +152,53 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
 3. "validation_radius_meters": 25-50. Smaller for tight squares, larger for
    open plazas.
 
-4. "riddle_text": 6-9 sentences. STRUCTURE in 3 movements — POETIC up
-   front, EXPLICIT at the end. The player must walk away knowing
-   EXACTLY (a) where to stand, (b) where to point the phone, (c) how
-   to open AR, (d) what to do with what they see.
+4. "riddle_text": 5-7 sentences. STRUCTURE en 3 mouvements brefs —
+   POETIC d'abord, FACTUEL ensuite, ACTION-CALL succinct.
 
-   (a) NARRATIVE STORY (2-3 sentences) — Tell a vivid micro-story tied
-       to the place and the game theme. Past tense, in-character. Use
-       sensory detail.
-       Example tone: "Le corsaire passait par cette rue chaque soir,
-       il s'arrêtait à la taverne du Lion Rouge pour y boire une chope
-       de bière brune avant de retourner à son navire."
+   (a) NARRATIVE STORY (2-3 sentences) — Vivid micro-story tied to
+       the place AND the game theme. Past tense, in-character,
+       sensory detail. Vary the rhythm between steps : some open
+       on suspense ("It was three in the morning when..."), some on
+       a sensory detail ("The smell of incense still clung to..."),
+       some on a question ("Why did the abbot leave that night ?").
+       AVOID the same "X stood here, did Y" template at every step.
 
-   (b) THEN vs NOW BRIDGE (1-2 sentences) — Anchor the past to what
-       the player sees TODAY. Mention how the place evolved. This is
-       the "tour guide" beat that turns the riddle into a heritage
-       walk.
-       Example tone: "Aujourd'hui cette taverne est devenue une
-       petite boutique d'épices, mais sa façade en pierre n'a pas
-       changé d'un cheveu depuis 1684."
+   (b) THEN vs NOW BRIDGE (1-2 sentences) — Anchor le passé au
+       présent. Comment ce lieu a évolué, ce que le joueur peut
+       observer aujourd'hui. C'est le beat "audioguide" qui
+       transforme l'énigme en marche patrimoniale.
 
-   (c) AR INSTRUCTION (2-3 sentences) — TELL THE PLAYER TO GO TO THE
-       LOCATION, then HUNT for the clue with their AR camera by
-       scanning EVERYTHING around them.
+   (c) ACTION-CALL — UNE SEULE phrase courte qui invite à observer
+       avec l'AR. PAS de tutoriel verbeux ("appuie sur le grand
+       bouton violet" est ÉCRIT 8 FOIS = casse l'immersion).
+       Le tutoriel détaillé est dans l'app, hors riddle.
 
-       CRITICAL — DO NOT REVEAL where exactly the clue is hidden.
-       That's the active-discovery part of the gameplay. The player
-       must scan walls, ground, doorways, windows, balconies, signs,
-       the sky, the corners — until the magical letters appear
-       somewhere on a surface around them. Discovery > spoon-feeding.
+       FORMATS ACCEPTÉS — varie d'un stop à l'autre :
+         • "Approche-toi de la porte principale, puis ouvre l'AR :
+            quelque part, les lettres se matérialisent."
+         • "Trouve l'angle où le soleil frappe la façade et lance
+            la Réalité Augmentée."
+         • "Place-toi face au tympan. La caméra te montrera ce
+            que les pierres cachent depuis huit siècles."
+         • "Active l'AR depuis le centre du parvis."
 
-       MANDATORY CLOSING TEMPLATE — adapt the wording but include
-       EVERY element. Reference the BUTTON literally so the UI
-       matches the riddle:
-
-         "Rends-toi à [LIEU GÉNÉRAL: "la place du marché", "devant
-         le monument", "au pied de la cathédrale"], puis appuie sur
-         le grand bouton violet 'Ouvrir la Réalité Augmentée' en
-         bas de ton écran. Une fois la caméra ouverte, balaie
-         LENTEMENT tout ce qui t'entoure — les murs, le sol, les
-         portes, les fenêtres, les recoins. Quelque part, des
-         lettres dorées vont se matérialiser : c'est ta réponse.
-         Note-la dans ton carnet pour passer à la suite."
+       INTERDIT : "tap the large purple 'Open Augmented Reality'
+       button at the bottom of your screen, then slowly sweep
+       everything..." — verbeux, répétitif, sort le joueur de
+       l'immersion. UNE phrase courte, c'est tout.
 
        NEVER name "the north facade" / "the carved lion" / "the
        wooden studded door". Keep the destination generic ("at the
-       church", "in front of the tower", "in the market square") so
-       the discovery moment is the player's reward, not a checkbox.
+       church", "in front of the tower") — la découverte est le
+       reward du joueur, pas une checklist.
+
+   VARIÉTÉ NARRATIVE OBLIGATOIRE — sur ${stepCount} stops :
+     - Au moins UN stop ouvre par un dialogue ou une question
+     - Au moins UN stop révèle un détail historique inattendu
+       qui contredit légèrement la première impression
+     - Le stop ${stepCount} (final) doit contenir une RÉVÉLATION
+       qui recontextualise les 7 précédents — un twist narratif,
+       pas juste "you found all the clues" générique.
 
 5. "answer_text": ONLY the short evocative answer. A year, a roman
    numeral, ONE word. NEVER a sentence. NEVER the literal string
