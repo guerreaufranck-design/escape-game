@@ -32,6 +32,7 @@ import {
 import { createAdminClient } from "./supabase/admin";
 import { geocodeLocation, haversineMeters } from "./geocode";
 import { discoverParcours } from "./parcours-discovery";
+import { prepareGamePackage } from "./game-package";
 import { v4 as uuidv4 } from "uuid";
 
 export interface GameTemplate {
@@ -73,6 +74,22 @@ export interface GameTemplate {
    *  filtré ensuite par géocodage et walkability. Plancher dur = 6 ;
    *  en dessous le pipeline rejette. */
   stopCount?: number;
+  /**
+   * Langue de l'acheteur (code ISO 2 lettres : "fr", "en", "de"...).
+   *
+   * Quand fournie, le pipeline lance EN AUTOMATIQUE
+   * `prepareGamePackage(gameId, language)` après l'insert DB :
+   * traduction de tous les textes (riddle/anecdote/dialogue/hints) +
+   * génération de tous les audios (8 stops × 3 slots = 24 MP3) via
+   * ElevenLabs, stockés en Supabase Storage. Résultat : zéro latence
+   * pour le joueur quand il démarre la session.
+   *
+   * Ajoute ~30-60 sec à la génération mais évite ~60 sec de latence
+   * cumulés en cours de session. Si absent, on log un warning et le
+   * jeu publie quand même (audios générés lazy à la demande, mais
+   * latence pénible pour le joueur).
+   */
+  language?: string;
   /** [LEGACY] Stops fournis par oddballtrip. Dans le modèle intent-first
    *  ce champ est SILENCIEUSEMENT IGNORÉ — Perplexity découvre les
    *  landmarks à partir du theme + startPoint. Conservé dans le type
@@ -603,6 +620,45 @@ export async function generateGameFromTemplate(
       verifiedLocations,
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
+
+    // ============================================
+    // STEP 7.5 : Pré-génération audio + traductions (langue acheteur)
+    // ============================================
+    // Pour que le joueur ait ZÉRO latence quand il démarre la session,
+    // on génère ICI tous les audios + traductions dans la langue
+    // qu'il a achetée. Sans ça, chaque stop déclenche une génération
+    // ElevenLabs + Claude/Gemini en cours de jeu (~5-10 sec × 8 stops
+    // = ~60 sec de blocage cumulés, ressentis comme « l'app est cassée »).
+    //
+    // Validation simple : on attend un code ISO 2 lettres en lowercase
+    // (cf. /api/external/generate-code). Sinon on warn et on laisse
+    // le pipeline générer en lazy à la demande — pas idéal mais le
+    // jeu publie quand même.
+    if (template.language && /^[a-z]{2}$/.test(template.language)) {
+      const lang = template.language;
+      const audioStart = Date.now();
+      try {
+        const pkg = await prepareGamePackage(gameId, lang);
+        const audioMs = Date.now() - audioStart;
+        if (pkg.success) {
+          console.log(
+            `[Pipeline] Pre-generated audio package for "${lang}" in ${Math.round(audioMs / 1000)}s — generated=${pkg.audioGenerated}, skipped=${pkg.audioSkipped}, failed=${pkg.audioFailed}`,
+          );
+        } else {
+          console.warn(
+            `[Pipeline] Audio package for "${lang}" returned errors (non-blocking): ${pkg.errors?.join("; ")}`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[Pipeline] Audio package generation threw (non-blocking): ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    } else {
+      console.warn(
+        `[Pipeline] ⚠ MISSING template.language — audios will be generated LAZILY when the player starts the session. Latency in-game ~5-10s × 8 stops. Send body.language = "fr"|"en"|... in /api/games/generate to pre-generate.`,
+      );
+    }
 
     // ============================================
     // STEP 8 : Build canonical landmarks[] payload

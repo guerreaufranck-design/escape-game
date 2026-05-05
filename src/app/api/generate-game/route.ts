@@ -51,6 +51,7 @@ export async function POST(request: NextRequest) {
       stopsCount: body.stops?.length, slug: body.slug,
       hasCallback: !!body.callbackUrl,
       hasStartPoint: !!body.startPoint,
+      language: body.language || "(none)",
       buyerEmail: body.buyerEmail || "N/A",
     }));
 
@@ -147,6 +148,14 @@ export async function POST(request: NextRequest) {
         typeof body.stopCount === "number"
           ? body.stopCount
           : (stops?.length ?? 8),
+      // language : code ISO 2 lettres ("fr", "en", "de"...). Si présent,
+      // le pipeline pré-génère TOUS les audios + traductions dans cette
+      // langue après l'insert DB. Si absent, log warning + lazy gen
+      // pendant la session (latence joueur).
+      language:
+        typeof body.language === "string" && /^[a-z]{2}$/i.test(body.language)
+          ? body.language.toLowerCase()
+          : undefined,
     };
 
     // Idempotency: if a game with this slug already exists, return it
