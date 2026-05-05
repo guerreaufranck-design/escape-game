@@ -141,19 +141,30 @@ export async function POST(request: NextRequest) {
     // le même orderId pour le même jeu, on RENVOIE LE CODE EXISTANT au
     // lieu d'en créer un nouveau. Évite les codes orphelins en DB.
     //
-    // L'idempotence n'est appliquée QUE si orderId est fourni — sans
-    // orderId, comportement legacy (nouveau code à chaque appel).
+    // RÉSILIENCE : si la migration 022 (colonne order_id) n'est pas
+    // encore appliquée, le check idempotent ET l'insert avec order_id
+    // tombent en erreur "column does not exist". On catche
+    // silencieusement et on continue en mode legacy (nouveau code à
+    // chaque appel) jusqu'à l'application de la migration. Pas
+    // d'idempotence sans order_id, mais au moins le code est créé.
     let finalCode: string | null = null;
     let isIdempotentReturn = false;
+    let orderIdColumnAvailable = true;
     if (orderId && typeof orderId === "string" && orderId.trim()) {
-      const { data: existing } = await supabase
+      const { data: existing, error: lookupError } = await supabase
         .from("activation_codes")
         .select("code")
         .eq("game_id", gameId)
         .eq("order_id", orderId)
         .limit(1)
         .maybeSingle();
-      if (existing?.code) {
+      if (lookupError && /column.*does not exist|order_id/i.test(lookupError.message)) {
+        // Migration 022 pas encore appliquée — fallback legacy
+        orderIdColumnAvailable = false;
+        console.warn(
+          `[external/generate-code] migration 022 not applied — column order_id missing, idempotency disabled. Apply ALTER TABLE activation_codes ADD COLUMN order_id TEXT;`,
+        );
+      } else if (existing?.code) {
         finalCode = existing.code;
         isIdempotentReturn = true;
         console.log(
@@ -165,37 +176,49 @@ export async function POST(request: NextRequest) {
     // Generate + insert only si on n'a pas trouvé de code existant.
     if (!finalCode) {
       const code = generateActivationCode(game.city);
-      const { error: insertError } = await supabase
+      const insertPayload: Record<string, unknown> = {
+        code,
+        game_id: gameId,
+        is_single_use: true,
+        max_uses: 1,
+        current_uses: 0,
+        team_name: buyerName || null,
+        buyer_email: buyerEmail,
+        // expires_at stays null — set to now+8h upon activation
+      };
+      // N'inclut order_id que si la colonne est disponible (migration
+      // 022 appliquée). Sinon Postgres rejette toute la query.
+      if (orderIdColumnAvailable && orderId) {
+        insertPayload.order_id = orderId;
+      }
+      let { error: insertError } = await supabase
         .from("activation_codes")
-        .insert({
-          code,
-          game_id: gameId,
-          is_single_use: true,
-          max_uses: 1,
-          current_uses: 0,
-          team_name: buyerName || null,
-          buyer_email: buyerEmail,
-          order_id: orderId || null,
-          // expires_at stays null — set to now+8h upon activation
-        });
+        .insert(insertPayload);
+
+      // Si l'insert échoue à cause de order_id (colonne inexistante),
+      // on retire le champ et on retente.
+      if (insertError && /column.*order_id|order_id.*does not exist/i.test(insertError.message)) {
+        console.warn(
+          `[external/generate-code] order_id column missing on INSERT — retrying without it`,
+        );
+        delete insertPayload.order_id;
+        orderIdColumnAvailable = false;
+        const retry = await supabase.from("activation_codes").insert(insertPayload);
+        insertError = retry.error;
+      }
 
       finalCode = code;
 
       if (insertError) {
-        // Code collision (extremely unlikely) — retry once
+        // Code collision (extremely unlikely) — retry once with new code
         const retryCode = generateActivationCode(game.city);
+        const retryPayload: Record<string, unknown> = {
+          ...insertPayload,
+          code: retryCode,
+        };
         const { error: retryError } = await supabase
           .from("activation_codes")
-          .insert({
-            code: retryCode,
-            game_id: gameId,
-            is_single_use: true,
-            max_uses: 1,
-            current_uses: 0,
-            team_name: buyerName || null,
-            buyer_email: buyerEmail,
-            order_id: orderId || null,
-          });
+          .insert(retryPayload);
 
         if (retryError) {
           console.error("Erreur insertion code:", retryError);
