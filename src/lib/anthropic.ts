@@ -7,6 +7,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { ResearchedLocation } from "./perplexity";
 import { getRelevantNegativeFeedback, formatFeedbackForPrompt } from "./feedback-memory";
 import { buildCharacterSelectionGuidance } from "./ar-sprites";
+import { type GameGenre, DEFAULT_GENRE } from "./game-genres";
+import {
+  buildGenreRiddleOverlay,
+  buildGenreEpilogueOverlay,
+} from "./genre-templates";
 
 export interface GeneratedStep {
   title: string;
@@ -64,7 +69,8 @@ export async function generateGameSteps(
   theme: string,
   narrative: string,
   difficulty: number,
-  locations: ResearchedLocation[]
+  locations: ResearchedLocation[],
+  genre: GameGenre = DEFAULT_GENRE,
 ): Promise<GeneratedStep[]> {
   // RAG: pull lessons from past admin thumbs-down feedback on similar contexts
   let feedbackBlock = "";
@@ -101,7 +107,9 @@ export async function generateGameSteps(
 
   const stepCount = Math.min(locations.length, 8);
 
-  const prompt = `You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
+  const genreOverlay = buildGenreRiddleOverlay(genre);
+
+  const prompt = `${genreOverlay}You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
 
 I am giving you ${locations.length} researched locations. Your job is to select the best ${stepCount} that form a SAFE WALKING ROUTE (no major roads to cross, all stops within ~10 minutes' walk of each other, ideally a coherent neighbourhood) and craft a single coherent narrative around them.
 
@@ -583,8 +591,13 @@ export async function regenerateStep(params: {
   narrative: string;
   stepNumber: number;
   totalSteps: number;
+  /** Genre du jeu — nécessaire pour que le step regénéré garde la
+   *  tonalité (AR character, mot magique). Sans ça, un regen retombe
+   *  par défaut sur les biais historical et casse l'homogénéité narrative. */
+  genre?: GameGenre;
 }): Promise<GeneratedStep> {
   const client = getAnthropicClient();
+  const genreOverlay = buildGenreRiddleOverlay(params.genre ?? DEFAULT_GENRE);
 
   // Détecte le cas où la "réponse confirmée" est en réalité le
   // placeholder "AUTO" (ResearchedLocation issue d'un parcours
@@ -604,7 +617,7 @@ export async function regenerateStep(params: {
     ? `"answer_text": "<your invented thematic answer, UPPERCASE, NEVER 'AUTO'>"`
     : `"answer_text": "${params.location.answer}"`;
 
-  const prompt = `You wrote step ${params.stepNumber}/${params.totalSteps} of an outdoor escape game in ${params.city} (theme: ${params.theme}). A reviewer flagged a problem and you must rewrite this step.
+  const prompt = `${genreOverlay}You wrote step ${params.stepNumber}/${params.totalSteps} of an outdoor escape game in ${params.city} (theme: ${params.theme}). A reviewer flagged a problem and you must rewrite this step.
 
 ORIGINAL STEP (the one to fix):
 - Title: ${params.brokenStep.title}
@@ -693,6 +706,7 @@ export async function generateEpilogue(params: {
   narrative: string;
   difficulty: number;
   steps: GeneratedStep[];
+  genre?: GameGenre;
 }): Promise<GeneratedEpilogue> {
   const client = getAnthropicClient();
 
@@ -705,7 +719,9 @@ export async function generateEpilogue(params: {
     )
     .join("\n\n");
 
-  const prompt = `You are a master storyteller writing the EPILOGUE of an outdoor escape game adventure that the player has just completed in ${params.city}, ${params.country}.
+  const genreOverlay = buildGenreEpilogueOverlay(params.genre ?? DEFAULT_GENRE);
+
+  const prompt = `${genreOverlay}You are a master storyteller writing the EPILOGUE of an outdoor escape game adventure that the player has just completed in ${params.city}, ${params.country}.
 
 GAME THEME: ${params.theme}
 GAME NARRATIVE: ${params.narrative}

@@ -34,6 +34,7 @@ import { geocodeLocation, haversineMeters } from "./geocode";
 import { discoverParcours } from "./parcours-discovery";
 import { prepareGamePackage } from "./game-package";
 import { pickFallbackGuide, AR_CHARACTERS } from "./ar-sprites";
+import { type GameGenre, DEFAULT_GENRE } from "./game-genres";
 import { v4 as uuidv4 } from "uuid";
 
 export interface GameTemplate {
@@ -91,6 +92,19 @@ export interface GameTemplate {
    * latence pénible pour le joueur).
    */
   language?: string;
+  /**
+   * Genre narratif du jeu. Détermine la tonalité, le style des mots
+   * magiques, le biais AR character et le cadrage de l'épilogue, sans
+   * toucher aux stops réels. Mêmes POIs Aegina jouables `historical`,
+   * `mystery`, `fantasy`...
+   *
+   * MVP : transmis par oddballtrip dans le body API, propagé en mémoire
+   * dans le pipeline UNIQUEMENT — pas de col DB. Si l'expérience tient,
+   * Phase 2 = migration. Si elle casse, `git revert` propre.
+   *
+   * Fallback : `historical` (cf. DEFAULT_GENRE in game-genres.ts).
+   */
+  genre?: GameGenre;
   /** [LEGACY] Stops fournis par oddballtrip. Dans le modèle intent-first
    *  ce champ est SILENCIEUSEMENT IGNORÉ — Perplexity découvre les
    *  landmarks à partir du theme + startPoint. Conservé dans le type
@@ -462,6 +476,8 @@ export async function generateGameFromTemplate(
     // STEP 4 : Génération des énigmes (Claude #1)
     // ============================================
     const creationStart = Date.now();
+    const genre: GameGenre = template.genre ?? DEFAULT_GENRE;
+    console.log(`[Pipeline] Genre: ${genre} (${template.genre ? "from operator" : "default fallback"})`);
     let steps: GeneratedStep[] = await generateGameSteps(
       template.city,
       template.country,
@@ -469,6 +485,7 @@ export async function generateGameFromTemplate(
       effectiveNarrative,
       template.difficulty,
       verifiedLocations,
+      genre,
     );
 
     // Garde anti-AUTO leak : si Claude a renvoyé le placeholder "AUTO"
@@ -514,6 +531,7 @@ export async function generateGameFromTemplate(
           narrative: effectiveNarrative,
           stepNumber: i + 1,
           totalSteps: steps.length,
+          genre,
         });
       }
       // Fallback dur : si après 2 régen Claude renvoie ENCORE "AUTO",
@@ -555,6 +573,7 @@ export async function generateGameFromTemplate(
           narrative: effectiveNarrative,
           stepNumber: idx + 1,
           totalSteps: steps.length,
+          genre,
         });
       }
     }
@@ -604,6 +623,7 @@ export async function generateGameFromTemplate(
         narrative: effectiveNarrative,
         difficulty: template.difficulty,
         steps,
+        genre,
       }).catch((err) => {
         console.warn(
           `[Pipeline] Epilogue generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,

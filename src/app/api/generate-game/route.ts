@@ -28,6 +28,7 @@ import {
 } from "@/lib/game-pipeline";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPipelineFailureAlert } from "@/lib/email";
+import { parseGenre } from "@/lib/game-genres";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
 export const maxDuration = 600; // 10 minutes max
@@ -164,6 +165,11 @@ export async function POST(request: NextRequest) {
         const m = body.language.toLowerCase().trim().match(/^([a-z]{2})(?:[-_][a-z0-9]+)?$/);
         return m ? m[1] : undefined;
       })(),
+      // genre : tonalité narrative choisie par l'opérateur (historical,
+      // fantasy, mystery, romance, supernatural, espionnage, cinema,
+      // fairytale). Fallback `historical` si absent ou invalide. MVP en
+      // mémoire — pas de col DB ; cf. game-genres.ts.
+      genre: parseGenre(body.genre),
     };
 
     // Idempotency: if a game with this slug already exists, return it
