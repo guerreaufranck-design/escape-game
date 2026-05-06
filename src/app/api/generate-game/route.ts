@@ -29,6 +29,7 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPipelineFailureAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
+import { getGenreOverride } from "@/lib/genre-overrides";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
 export const maxDuration = 600; // 10 minutes max
@@ -171,6 +172,18 @@ export async function POST(request: NextRequest) {
       // mémoire — pas de col DB ; cf. game-genres.ts.
       genre: parseGenre(body.genre),
     };
+
+    // Override de genre par slug — harness de test MVP. Permet de forcer
+    // un genre sur une fiche EXISTANTE d'oddballtrip sans changer l'appel
+    // côté oddballtrip. Si une entrée existe pour ce slug, l'override
+    // gagne sur body.genre. Cf. src/lib/genre-overrides.ts.
+    const slugOverride = getGenreOverride(template.slug);
+    if (slugOverride && slugOverride !== template.genre) {
+      console.log(
+        `[GenerateGame] Genre override by slug "${template.slug}": ${template.genre} → ${slugOverride}`,
+      );
+      template.genre = slugOverride;
+    }
 
     // Idempotency: if a game with this slug already exists, return it
     const supabase = createAdminClient();
