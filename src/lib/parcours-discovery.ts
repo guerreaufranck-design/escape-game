@@ -108,6 +108,19 @@ function minInterStopFor(stopCount: number): number {
   return 300; // stopCount >= 8
 }
 
+/**
+ * Plancher ABSOLU en dessous duquel deux stops sont considérés comme
+ * le même endroit physique (même bâtiment, même cour, même portail).
+ * Sous ce seuil, le drop est DÉFINITIF — jamais restauré, même si
+ * cela fait passer le jeu sous minStops. Mieux vaut un jeu court mais
+ * propre qu'un jeu "à 5 stops" dont 2 sont au même endroit.
+ *
+ * Cas observés : Aegina hôtels à 28m, Rothenburg Aussichtspunkte à 63m,
+ * Prague musée pédago ↔ synagogue à 88m. Tous étaient des doublons
+ * physiques restaurés à tort par le garde-fou minStops.
+ */
+const ABSOLUTE_MIN_INTER_STOP_M = 100;
+
 export interface DiscoveredStop {
   /** Nom géocodable du landmark ("Cathédrale Notre-Dame de Rouen"). */
   name: string;
@@ -437,58 +450,76 @@ export async function discoverParcours(
   // Universel pour tous les jeux. minInterStopM dérivé du stopCount :
   // plus le jeu est court, plus l'écart minimum est grand (sinon un
   // jeu de 5 stops dans 300m = nul).
+  // Deux niveaux de dedup :
+  //   - HARD (< ABSOLUTE_MIN_INTER_STOP_M, ~100m) : même endroit physique,
+  //     drop définitif, JAMAIS restauré même si on tombe sous minStops.
+  //     Mieux vaut un jeu court mais propre qu'un jeu avec 2 stops au
+  //     même endroit. Cas couverts : hôtels Aegina à 28m, viewpoints
+  //     Rothenburg à 63m, twin Prague à 88m.
+  //   - SOFT (entre ABSOLUTE_MIN et minInter) : éloignés mais sous le
+  //     min-spacing désiré pour le stopCount. Drop par défaut, mais
+  //     restaurables si la dedup nous fait passer sous minStops (cas
+  //     vieille ville compacte type Ávila).
   const minInter = minInterStopFor(params.stopCount);
   const dedupedOrder: DiscoveredStop[] = [];
+  const softDropped: DiscoveredStop[] = []; // restaurables si nécessaire
   for (const stop of ordered) {
-    const tooClose = dedupedOrder.find(
-      (kept) =>
-        haversineMeters(
-          { lat: stop.lat, lon: stop.lon },
-          { lat: kept.lat, lon: kept.lon },
-        ) < minInter,
-    );
-    if (tooClose) {
+    let conflict: { kept: DiscoveredStop; distance: number } | null = null;
+    for (const kept of dedupedOrder) {
+      const d = haversineMeters(
+        { lat: stop.lat, lon: stop.lon },
+        { lat: kept.lat, lon: kept.lon },
+      );
+      if (d < minInter) {
+        conflict = { kept, distance: d };
+        break;
+      }
+    }
+    if (!conflict) {
+      dedupedOrder.push(stop);
+      continue;
+    }
+    if (conflict.distance < ABSOLUTE_MIN_INTER_STOP_M) {
       console.warn(
-        `[discoverParcours] DROP twin "${stop.name}" — too close to "${tooClose.name}" (< ${minInter}m). Universal min-spacing rule for stopCount=${params.stopCount}.`,
+        `[discoverParcours] HARD DROP "${stop.name}" — only ${Math.round(conflict.distance)}m from "${conflict.kept.name}" (< ${ABSOLUTE_MIN_INTER_STOP_M}m absolute floor, same place). Never restored.`,
       );
       rejected.push({
         name: stop.name,
-        reason: `twin stop, < ${minInter}m from "${tooClose.name}" (min-spacing rule for ${params.stopCount}-stop game)`,
+        reason: `same physical location as "${conflict.kept.name}" (${Math.round(conflict.distance)}m, hard floor < ${ABSOLUTE_MIN_INTER_STOP_M}m — never restored)`,
       });
     } else {
-      dedupedOrder.push(stop);
+      console.warn(
+        `[discoverParcours] SOFT DROP twin "${stop.name}" — ${Math.round(conflict.distance)}m from "${conflict.kept.name}" (< ${minInter}m min-spacing for stopCount=${params.stopCount}, restorable).`,
+      );
+      softDropped.push(stop);
+      rejected.push({
+        name: stop.name,
+        reason: `twin stop, ${Math.round(conflict.distance)}m from "${conflict.kept.name}" (< ${minInter}m min-spacing for ${params.stopCount}-stop game)`,
+      });
     }
   }
   if (dedupedOrder.length < ordered.length) {
     console.log(
-      `[discoverParcours] Dedup: ${ordered.length - dedupedOrder.length} twin stops removed, ${dedupedOrder.length} kept`,
+      `[discoverParcours] Dedup: ${ordered.length - dedupedOrder.length} twin stops removed (${softDropped.length} soft, restorable), ${dedupedOrder.length} kept`,
     );
 
     // GARDE-FOU : si la dedup nous fait passer SOUS minStops, on
-    // restaure des twins jusqu'à atteindre minStops. Bug observé sur
-    // Ávila : vieille ville fortifiée TRÈS compacte, dedup 300m a
-    // réduit Claude's 5 picks à 2. Le pipeline publiait 2 stops sans
-    // garde-fou — c'est cassé.
-    //
-    // Stratégie de restauration : les twins droppés sont restaurés
-    // dans l'ordre où ils étaient dans `ordered` (= ordre NN, donc
-    // proche du startPoint d'abord), jusqu'à ce qu'on ait ≥ minStops.
-    // C'est dégradé (twin pas idéal) mais publiable, vs un jeu à 2
-    // stops qui est carrément cassé.
-    if (dedupedOrder.length < minStops) {
+    // restaure UNIQUEMENT les soft drops (>= ABSOLUTE_MIN_INTER_STOP_M).
+    // Les hard drops (< 100m, même endroit) ne sont JAMAIS restaurés —
+    // si après restore on est encore sous minStops, le pipeline laissera
+    // la phase TOO_FEW_LANDMARKS faire son travail.
+    if (dedupedOrder.length < minStops && softDropped.length > 0) {
       const restored = [...dedupedOrder];
-      const droppedThisTurn = ordered.filter((s) => !dedupedOrder.includes(s));
-      for (const twin of droppedThisTurn) {
+      for (const twin of softDropped) {
         if (restored.length >= minStops) break;
         restored.push(twin);
-        // Retire ce stop de la rejected list car finalement gardé
         const idx = rejected.findIndex(
           (r) => r.name === twin.name && r.reason.includes("twin stop"),
         );
         if (idx >= 0) rejected.splice(idx, 1);
       }
       console.warn(
-        `[discoverParcours] Dedup would have left only ${dedupedOrder.length} stops (< minStops=${minStops}). Restoring ${restored.length - dedupedOrder.length} twin(s) to reach floor. Zone is very compact — twin stops accepted as fallback.`,
+        `[discoverParcours] Dedup would have left only ${dedupedOrder.length} stops (< minStops=${minStops}). Restoring ${restored.length - dedupedOrder.length} soft twin(s) to reach floor. Zone is very compact — soft twins accepted as fallback.`,
       );
       ordered = restored;
     } else {
