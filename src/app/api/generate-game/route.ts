@@ -29,7 +29,11 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPipelineFailureAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
-import { getGenreOverride, getStopCountOverride } from "@/lib/genre-overrides";
+import {
+  getGenreOverride,
+  getStopCountOverride,
+  getStartPointOverride,
+} from "@/lib/genre-overrides";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
 export const maxDuration = 600; // 10 minutes max
@@ -198,6 +202,18 @@ export async function POST(request: NextRequest) {
         `[GenerateGame] StopCount override by slug "${template.slug}": ${template.stopCount} → ${slugStopCountOverride}`,
       );
       template.stopCount = slugStopCountOverride;
+    }
+
+    // Override du startPoint par slug — pour les fiches dont le label
+    // de vente diffère de la zone-jeu réelle (ex. "Brest" vendu, jeu
+    // à Pointe Saint-Mathieu à 22 km). Le pipeline utilise alors les
+    // coords overrides plutôt que celles transmises par oddballtrip.
+    const slugStartPointOverride = getStartPointOverride(template.slug);
+    if (slugStartPointOverride) {
+      console.log(
+        `[GenerateGame] StartPoint override by slug "${template.slug}": ${template.startPoint?.lat.toFixed(4)},${template.startPoint?.lon.toFixed(4)} → ${slugStartPointOverride.lat.toFixed(4)},${slugStartPointOverride.lon.toFixed(4)}`,
+      );
+      template.startPoint = slugStartPointOverride;
     }
 
     // Idempotency: if a game with this slug already exists, return it

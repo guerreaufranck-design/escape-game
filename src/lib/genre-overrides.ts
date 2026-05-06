@@ -68,3 +68,34 @@ export const STOPCOUNT_OVERRIDES: Record<string, number> = {
 export function getStopCountOverride(slug: string): number | undefined {
   return STOPCOUNT_OVERRIDES[slug];
 }
+
+/**
+ * Override du startPoint par slug. Pattern oddballtrip courant :
+ * "label-vendeur ≠ zone-jeu" — la fiche est vendue sous "Brest" mais
+ * le jeu doit se jouer à Pointe Saint-Mathieu (à 22 km du centre Brest).
+ * Le startPoint envoyé par oddballtrip cible le centre du label,
+ * donc la discovery rate la zone-jeu réelle.
+ *
+ * Cet override permet de patcher la zone-jeu côté escape-game pour
+ * tester l'hypothèse sans toucher la fiche oddballtrip.
+ *
+ * Map vide par défaut — le pipeline utilise body.startPoint tant
+ * qu'aucune entrée ne match. Long-terme, c'est oddballtrip qui doit
+ * transmettre le bon startPoint par fiche.
+ */
+export const STARTPOINT_OVERRIDES: Record<
+  string,
+  { lat: number; lon: number }
+> = {
+  // Brest fiche vendue sous "Brest" mais zone-jeu à Pointe Saint-Mathieu
+  // (extrémité du Finistère). Coords du phare Saint-Mathieu.
+  "le-phare-de-saint-mathieu": { lat: 48.3304, lon: -4.7711 },
+};
+
+/** Récupère un override de startPoint pour un slug. Retourne undefined
+ *  si aucun override actif. */
+export function getStartPointOverride(
+  slug: string,
+): { lat: number; lon: number } | undefined {
+  return STARTPOINT_OVERRIDES[slug];
+}

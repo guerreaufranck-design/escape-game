@@ -337,25 +337,35 @@ export async function generateGameFromTemplate(
       );
     }
 
-    const stopCount = template.stopCount ?? 8;
-    // Plancher dur : 3 stops minimum sous lequel un escape game n'a
-    // plus de sens (1 énigme = pas un parcours, 2 = trop court, 3 =
-    // début/milieu/fin). oddballtrip catalogue contient des fiches
-    // historiques à 4-5 stops (Espagne, France, Italie) qu'on doit
-    // pouvoir générer.
-    if (stopCount < 3) {
-      const err = new Error(
-        `INTERNAL_ERROR: stopCount=${stopCount} below absolute floor of 3 — un escape game ne peut pas avoir moins de 3 stops`,
-      ) as Error & { code?: PipelineErrorCode };
-      err.code = "INTERNAL_ERROR";
-      throw err;
+    // Plancher commercial : 5 stops minimum (cf. ABSOLUTE_MIN_STOPS dans
+    // parcours-discovery.ts). Si oddballtrip envoie stopCount<5, on bumpe
+    // silencieusement à 5 — la promesse "escape game vendable" exige ce
+    // floor, indépendamment de la fiche.
+    const stopCount = Math.max(5, template.stopCount ?? 8);
+    if ((template.stopCount ?? 8) < 5) {
+      console.warn(
+        `[Pipeline] stopCount=${template.stopCount} below commercial floor of 5 — bumped to 5`,
+      );
     }
 
     // ============================================
-    // STEP 1 : Discovery (Perplexity → Google → walkability)
+    // STEP 1 : Discovery avec WIDENING progressif
     // ============================================
+    // Si la zone est sparse au radius standard, on retry avec un radius
+    // + max-hop élargis. 3 niveaux : 1× → 1.5× → 2.5×. Le seul rejet
+    // possible est si même à 2.5× on a < 5 walkables (zone vraiment
+    // impossible — auquel cas oddballtrip doit reframer la fiche).
+    //
+    // Quand le widening kick in, on auto-bumpe la difficulty publiée à
+    // 5/5 ("parcours costaud, longues marches") pour ne pas surprendre
+    // le joueur en lui vendant un facile dans une zone difficile.
     const researchStart = Date.now();
-    const discovery = await discoverParcours({
+    const wideningAttempts = [
+      { multiplier: 1, label: "standard" },
+      { multiplier: 1.5, label: "widened" },
+      { multiplier: 2.5, label: "wide" },
+    ];
+    const discoveryParamsBase = {
       city: template.city,
       country: template.country,
       theme: template.theme,
@@ -363,16 +373,36 @@ export async function generateGameFromTemplate(
       narrative: template.narrative,
       startPoint,
       stopCount,
+    };
+    console.log(
+      `[Pipeline] Discovery attempt: ${wideningAttempts[0].label} (multiplier ${wideningAttempts[0].multiplier}x)`,
+    );
+    let discovery = await discoverParcours({
+      ...discoveryParamsBase,
+      wideningMultiplier: wideningAttempts[0].multiplier,
     });
+    let usedWidening = wideningAttempts[0];
+    for (const attempt of wideningAttempts.slice(1)) {
+      if (discovery.success && discovery.landmarks.length >= 5) break;
+      console.warn(
+        `[Pipeline] ${usedWidening.label} attempt yielded ${discovery.success ? discovery.landmarks.length : 0} stops (need ≥5) — retrying with ${attempt.label} (multiplier ${attempt.multiplier}x)`,
+      );
+      discovery = await discoverParcours({
+        ...discoveryParamsBase,
+        wideningMultiplier: attempt.multiplier,
+      });
+      usedWidening = attempt;
+    }
 
-    if (!discovery.success) {
+    if (!discovery.success || discovery.landmarks.length < 5) {
       const err = new Error(
-        discovery.error || "Discovery failed (unknown reason)",
+        discovery.error ||
+          `All widening attempts failed — zone too sparse for ≥5 walkable stops even at 2.5× radius/maxHop. Reframe the fiche editorially.`,
       ) as Error & {
         code?: PipelineErrorCode;
         failedLandmarks?: FailedLandmark[];
       };
-      err.code = discovery.errorCode ?? "DISCOVERY_FAILED";
+      err.code = discovery.errorCode ?? "PARCOURS_TOO_DISPERSED";
       err.failedLandmarks = discovery.rejected.map((r) => ({
         stopName: r.name,
         tried: [r.reason],
@@ -382,8 +412,19 @@ export async function generateGameFromTemplate(
 
     const researchDurationMs = Date.now() - researchStart;
     console.log(
-      `[Pipeline] Discovery complete in ${Math.round(researchDurationMs / 1000)}s — ${discovery.landmarks.length} landmarks (${discovery.rejected.length} rejected)`,
+      `[Pipeline] Discovery complete in ${Math.round(researchDurationMs / 1000)}s — ${discovery.landmarks.length} landmarks (${discovery.rejected.length} rejected) — widening=${usedWidening.label}`,
     );
+
+    // Auto-bump difficulty si widening a kick in. Le joueur achète un
+    // jeu où on lui annonce des longues marches entre stops — on calibre
+    // la promesse produit pour ne pas surprendre ("difficile" attendu).
+    let effectiveDifficulty = template.difficulty;
+    if (usedWidening.multiplier > 1) {
+      effectiveDifficulty = 5;
+      console.warn(
+        `[Pipeline] Widening triggered (${usedWidening.label}, ${usedWidening.multiplier}x) — auto-bumping difficulty ${template.difficulty} → 5/5 (longues marches entre stops, parcours costaud)`,
+      );
+    }
 
     // ============================================
     // STEP 2 : Convert to ResearchedLocation[] for downstream helpers
@@ -483,7 +524,7 @@ export async function generateGameFromTemplate(
       template.country,
       template.theme,
       effectiveNarrative,
-      template.difficulty,
+      effectiveDifficulty,
       verifiedLocations,
       genre,
     );
@@ -621,7 +662,7 @@ export async function generateGameFromTemplate(
         country: template.country,
         theme: template.theme,
         narrative: effectiveNarrative,
-        difficulty: template.difficulty,
+        difficulty: effectiveDifficulty,
         steps,
         genre,
       }).catch((err) => {
@@ -639,6 +680,7 @@ export async function generateGameFromTemplate(
         ...template,
         narrative: effectiveNarrative,
         themeDescription: effectiveThemeDescription,
+        difficulty: effectiveDifficulty,
       },
       steps,
       [],

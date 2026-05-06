@@ -96,17 +96,31 @@ function maxInterStopFor(stopCount: number): number {
 }
 
 /**
- * Plancher en dessous duquel on rejette le jeu, ADAPTATIF au stopCount
- * demandé. La règle : on tolère au max 2 drops (au pruning walkability
- * ou au géocodage), avec un plancher absolu de 3 stops.
+ * Plancher ABSOLU en dessous duquel on ne publie JAMAIS un jeu, peu
+ * importe le stopCount demandé ou la sparsité de la zone. Décision
+ * commerciale (2026-05-06) : un escape game à moins de 5 stops n'est
+ * pas vendable. Mieux vaut rejeter et signaler "fiche à reframer" que
+ * publier un jeu de 3 stops qui dégrade la promesse produit.
+ *
+ * Si une zone donne <5 walkables au radius/maxHop standard, le pipeline
+ * ÉLARGIT progressivement (cf. wideningMultiplier dans discoverParcours)
+ * et bumpe la difficulté à 5/5 ("attention parcours costaud") plutôt
+ * que d'amputer le jeu.
+ */
+const ABSOLUTE_MIN_STOPS = 5;
+
+/**
+ * Plancher dérivé du stopCount demandé, mais jamais sous ABSOLUTE_MIN_STOPS.
  *
  *   stopCount = 8 (standard) → plancher 6 (tolère 2 drops)
- *   stopCount = 5 (Espagne, France court) → plancher 3 (tolère 2 drops)
- *   stopCount = 4 → plancher 3 (tolère 1 drop)
- *   stopCount = 3 → plancher 3 (aucun drop)
+ *   stopCount = 7            → plancher 5
+ *   stopCount = 6            → plancher 5
+ *   stopCount = 5            → plancher 5 (aucun drop)
+ *   stopCount ≤ 4            → plancher 5 (force à 5 — oddballtrip
+ *                              doit demander au moins 5)
  */
 function minStopsForPublish(stopCount: number): number {
-  return Math.max(3, stopCount - 2);
+  return Math.max(ABSOLUTE_MIN_STOPS, stopCount - 2);
 }
 
 /**
@@ -194,6 +208,17 @@ export interface DiscoverParcoursParams {
   narrative: string;
   startPoint: { lat: number; lon: number };
   stopCount: number;
+  /**
+   * Multiplicateur de widening appliqué à `radiusForStopCount` et
+   * `maxInterStopFor`. Utilisé par game-pipeline en cas de zone sparse :
+   * le pipeline retry avec multiplier 1 → 1.5 → 2.5 jusqu'à atteindre
+   * ≥ 5 walkables. Default 1 (pas de widening).
+   *
+   * Quand multiplier > 1, le pipeline doit aussi auto-bumper la
+   * difficulté du jeu publié à 5/5 ("parcours costaud, longues marches
+   * entre stops") pour ne pas surprendre le joueur.
+   */
+  wideningMultiplier?: number;
 }
 
 export interface DiscoverParcoursResult {
@@ -235,11 +260,13 @@ export async function discoverParcours(
   // Walkability adaptative : moins de stops = hops plus longs + zone plus
   // large, pour tenir la durée 90 min vendue indépendamment du nombre
   // d'étapes. Cf. radiusForStopCount + maxInterStopFor.
-  const radiusM = radiusForStopCount(params.stopCount);
-  const maxInterStopM = maxInterStopFor(params.stopCount);
+  // Widening multiplier appliqué quand le pipeline retry sur zone sparse.
+  const widening = params.wideningMultiplier ?? 1;
+  const radiusM = Math.round(radiusForStopCount(params.stopCount) * widening);
+  const maxInterStopM = Math.round(maxInterStopFor(params.stopCount) * widening);
 
   console.log(
-    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m)`,
+    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m, widening=${widening}x)`,
   );
 
   // ============================================
