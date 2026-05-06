@@ -463,7 +463,37 @@ export async function discoverParcours(
     console.log(
       `[discoverParcours] Dedup: ${ordered.length - dedupedOrder.length} twin stops removed, ${dedupedOrder.length} kept`,
     );
-    ordered = dedupedOrder;
+
+    // GARDE-FOU : si la dedup nous fait passer SOUS minStops, on
+    // restaure des twins jusqu'à atteindre minStops. Bug observé sur
+    // Ávila : vieille ville fortifiée TRÈS compacte, dedup 300m a
+    // réduit Claude's 5 picks à 2. Le pipeline publiait 2 stops sans
+    // garde-fou — c'est cassé.
+    //
+    // Stratégie de restauration : les twins droppés sont restaurés
+    // dans l'ordre où ils étaient dans `ordered` (= ordre NN, donc
+    // proche du startPoint d'abord), jusqu'à ce qu'on ait ≥ minStops.
+    // C'est dégradé (twin pas idéal) mais publiable, vs un jeu à 2
+    // stops qui est carrément cassé.
+    if (dedupedOrder.length < minStops) {
+      const restored = [...dedupedOrder];
+      const droppedThisTurn = ordered.filter((s) => !dedupedOrder.includes(s));
+      for (const twin of droppedThisTurn) {
+        if (restored.length >= minStops) break;
+        restored.push(twin);
+        // Retire ce stop de la rejected list car finalement gardé
+        const idx = rejected.findIndex(
+          (r) => r.name === twin.name && r.reason.includes("twin stop"),
+        );
+        if (idx >= 0) rejected.splice(idx, 1);
+      }
+      console.warn(
+        `[discoverParcours] Dedup would have left only ${dedupedOrder.length} stops (< minStops=${minStops}). Restoring ${restored.length - dedupedOrder.length} twin(s) to reach floor. Zone is very compact — twin stops accepted as fallback.`,
+      );
+      ordered = restored;
+    } else {
+      ordered = dedupedOrder;
+    }
   }
 
   // ============================================
