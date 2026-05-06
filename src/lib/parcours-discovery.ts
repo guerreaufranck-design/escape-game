@@ -508,14 +508,81 @@ export async function discoverParcours(
     ordered = greedyNearestNeighborFromStart(ordered, params.startPoint);
   }
 
+  // ============================================
+  // PHASE 5.5 : Dégradation gracieuse (cluster densest)
+  // ============================================
+  // Si après pruning on a encore un saut > MAX, on tente un DERNIER
+  // sauvetage : trouver le plus gros cluster compact dans la liste
+  // restante et publier UNIQUEMENT ce cluster (parcours réduit mais
+  // marchable). Mieux qu'un rejet hard pour l'opérateur qui voit son
+  // achat échouer.
+  //
+  // Algorithme : pour chaque stop, on calcule combien d'autres stops
+  // sont à ≤ MAX_INTER_STOP_M de lui (cluster size autour de ce point).
+  // On garde le cluster max, qui définit le sous-ensemble walkable.
   if (maxInterStopJump(ordered) > MAX_INTER_STOP_M) {
-    return {
-      success: false,
-      landmarks: [],
-      rejected,
-      errorCode: "PARCOURS_TOO_DISPERSED",
-      error: `After walkability pruning, max inter-stop jump still ${Math.round(maxInterStopJump(ordered))}m > ${MAX_INTER_STOP_M}m. Try a different startPoint or theme.`,
-    };
+    console.warn(
+      `[discoverParcours] After pruning, max jump still ${Math.round(maxInterStopJump(ordered))}m. Attempting cluster-densest fallback...`,
+    );
+
+    // Trouve le cluster le plus dense
+    let bestClusterCenter = -1;
+    let bestClusterSize = 0;
+    for (let i = 0; i < ordered.length; i++) {
+      const clusterMembers = [i];
+      for (let j = 0; j < ordered.length; j++) {
+        if (i === j) continue;
+        const d = haversineMeters(
+          { lat: ordered[i].lat, lon: ordered[i].lon },
+          { lat: ordered[j].lat, lon: ordered[j].lon },
+        );
+        if (d <= MAX_INTER_STOP_M) clusterMembers.push(j);
+      }
+      if (clusterMembers.length > bestClusterSize) {
+        bestClusterSize = clusterMembers.length;
+        bestClusterCenter = i;
+      }
+    }
+
+    if (bestClusterCenter >= 0 && bestClusterSize >= minStops) {
+      // Reconstitue le cluster autour du centre identifié
+      const clusterStops: DiscoveredStop[] = [];
+      for (let j = 0; j < ordered.length; j++) {
+        const d = haversineMeters(
+          {
+            lat: ordered[bestClusterCenter].lat,
+            lon: ordered[bestClusterCenter].lon,
+          },
+          { lat: ordered[j].lat, lon: ordered[j].lon },
+        );
+        if (d <= MAX_INTER_STOP_M) clusterStops.push(ordered[j]);
+      }
+
+      // Drop les outliers (non-cluster) avec un message clair
+      for (const stop of ordered) {
+        if (!clusterStops.includes(stop)) {
+          rejected.push({
+            name: stop.name,
+            reason: `outside densest walkable cluster (graceful degradation, ${bestClusterSize} stops kept instead of failing)`,
+          });
+        }
+      }
+
+      ordered = greedyNearestNeighborFromStart(clusterStops, params.startPoint);
+      console.warn(
+        `[discoverParcours] Cluster fallback succeeded — ${ordered.length} walkable stops kept (vs ${params.stopCount} requested). Game will publish with reduced count + warning.`,
+      );
+    } else {
+      // Cluster fallback ÉCHOUE aussi (zone trop sparse pour minStops
+      // dans MAX_INTER_STOP_M). Là on rejette vraiment.
+      return {
+        success: false,
+        landmarks: [],
+        rejected,
+        errorCode: "PARCOURS_TOO_DISPERSED",
+        error: `Even in the densest sub-cluster, only ${bestClusterSize} stops walkable (need ${minStops} minimum). Zone is too sparse for any walkable parcours. Restrict the city to a smaller, denser quartier OR change theme.`,
+      };
+    }
   }
 
   // ============================================
