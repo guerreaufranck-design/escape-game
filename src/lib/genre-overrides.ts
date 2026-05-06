@@ -26,11 +26,16 @@ import type { GameGenre } from "./game-genres";
  * d'override actif (pipeline reste sur body.genre / fallback historical).
  */
 export const GENRE_OVERRIDES: Record<string, GameGenre> = {
-  // Exemples — décommente / adapte selon les slugs que tu veux tester :
-  // "aegina-tortues-argent": "mystery",
-  // "brest-secret-rade": "espionnage",
-  // "prague-jan-palach": "supernatural",
-  // "rouen-jeanne-arc": "fantasy",
+  // Slugs des 7 jeux publiés (snapshot 2026-05-06). Couverture de 4
+  // genres distincts pour le test MVP. Édite pour ajouter/changer.
+  "les-tortues-d-argent": "mystery",                 // Aegina (hôtels = scènes de crime)
+  "le-phare-de-saint-mathieu": "espionnage",         // Brest (rade militaire, cold-war)
+  "jan-palach-l-appel-des-cendres": "supernatural",  // Prague (fantômes, vieille ville)
+  "le-secret-des-remparts-de-rothenburg": "fantasy", // Rothenburg (ville fortifiée médiévale)
+  // Restent en `historical` par défaut (pas d'override) :
+  //   le-secret-de-bothwell                 (Bothwell)
+  //   les-murmures-de-la-tour-londres       (London)
+  //   la-mystique-de-sainte-therese         (Ávila)
 };
 
 /** Récupère un override de genre pour un slug. Retourne undefined si
