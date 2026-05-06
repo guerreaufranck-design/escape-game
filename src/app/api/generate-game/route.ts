@@ -29,7 +29,7 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPipelineFailureAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
-import { getGenreOverride } from "@/lib/genre-overrides";
+import { getGenreOverride, getStopCountOverride } from "@/lib/genre-overrides";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
 export const maxDuration = 600; // 10 minutes max
@@ -177,12 +177,27 @@ export async function POST(request: NextRequest) {
     // un genre sur une fiche EXISTANTE d'oddballtrip sans changer l'appel
     // côté oddballtrip. Si une entrée existe pour ce slug, l'override
     // gagne sur body.genre. Cf. src/lib/genre-overrides.ts.
-    const slugOverride = getGenreOverride(template.slug);
-    if (slugOverride && slugOverride !== template.genre) {
+    const slugGenreOverride = getGenreOverride(template.slug);
+    if (slugGenreOverride && slugGenreOverride !== template.genre) {
       console.log(
-        `[GenerateGame] Genre override by slug "${template.slug}": ${template.genre} → ${slugOverride}`,
+        `[GenerateGame] Genre override by slug "${template.slug}": ${template.genre} → ${slugGenreOverride}`,
       );
-      template.genre = slugOverride;
+      template.genre = slugGenreOverride;
+    }
+
+    // Override de stopCount par slug — pour les fiches géographiquement
+    // maigres. Réduire le stopCount déclenche l'adaptatif inter-stop /
+    // radius dans parcours-discovery (hops plus longs, zone plus large)
+    // → durée constante mais moins d'étapes.
+    const slugStopCountOverride = getStopCountOverride(template.slug);
+    if (
+      typeof slugStopCountOverride === "number" &&
+      slugStopCountOverride !== template.stopCount
+    ) {
+      console.log(
+        `[GenerateGame] StopCount override by slug "${template.slug}": ${template.stopCount} → ${slugStopCountOverride}`,
+      );
+      template.stopCount = slugStopCountOverride;
     }
 
     // Idempotency: if a game with this slug already exists, return it

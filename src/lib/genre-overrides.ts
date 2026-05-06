@@ -43,3 +43,28 @@ export const GENRE_OVERRIDES: Record<string, GameGenre> = {
 export function getGenreOverride(slug: string): GameGenre | undefined {
   return GENRE_OVERRIDES[slug];
 }
+
+/**
+ * Override de stopCount par slug — utile pour les fiches dont la zone
+ * est géographiquement maigre (Aegina, Brest...) où 8 stops walkables
+ * sont impossibles. Avec un stopCount plus bas, le pipeline étend
+ * automatiquement le rayon de recherche et la distance max inter-stop
+ * (cf. parcours-discovery.ts) — la DURÉE du jeu reste constante (~90 min)
+ * mais avec moins d'étapes plus espacées, fidèle au pitch "tour de
+ * ville en jouant".
+ *
+ * Map vide par défaut. Le pipeline reste sur body.stopCount tant qu'on
+ * n'ajoute pas d'entrée.
+ */
+export const STOPCOUNT_OVERRIDES: Record<string, number> = {
+  // Aegina Town — zone sparse (Temple Aphaia hors centre, peu de POIs
+  // intra-muros). 5 stops + hops étirés = 90 min de marche couvrant
+  // l'île plutôt que 8 stops infaisables.
+  "les-tortues-d-argent": 5,
+};
+
+/** Récupère un override de stopCount pour un slug. Retourne undefined
+ *  si aucun override actif. */
+export function getStopCountOverride(slug: string): number | undefined {
+  return STOPCOUNT_OVERRIDES[slug];
+}

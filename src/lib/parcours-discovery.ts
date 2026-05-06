@@ -45,25 +45,55 @@ import {
   type NearbyCandidate,
 } from "./geocode";
 
-/** Rayon maximal autour du startPoint dans lequel les landmarks sont
- *  acceptés. 2 km = ~25 min de marche depuis le centre, donc le stop
- *  le plus excentré reste à portée pour un escape game qui dure 1h30-2h.
- *  Au-delà, le parcours n'est plus marchable depuis le point de départ
- *  choisi par l'opérateur. */
-const RADIUS_AROUND_START_M = 2_000;
-
-/** Distance maximale autorisée entre deux stops consécutifs après le
- *  NN reorder. 1500m ≈ 18 min de marche, qui reste acceptable pour un
- *  escape game outdoor (pause narrative entre énigmes). Au-delà, le
- *  joueur perd vraiment le rythme.
+/**
+ * Rayon de recherche autour du startPoint, ADAPTATIF au stopCount.
  *
- *  Historique : démarré à 1000m (test Clervaux). Test Rothenburg a
- *  rejeté avec 1330m > 1000m parce que la ville fortifiée a 2 ponts
- *  de la vallée parmi ses POIs touristiques, à 600-800m sous le
- *  rocher. Aligner sur 1500m permet de publier ces parcours qui sont
- *  marchables même si tendus, et n'introduit rien d'absurde côté UX
- *  (18 min entre stops = pause narrative + photo + repos boisson). */
-const MAX_INTER_STOP_M = 1_500;
+ * Logique : on vend une DURÉE (~90 min), pas un nombre de stops fixe.
+ * Quand stopCount baisse, on doit étendre le rayon pour que la marche
+ * cumulée reste équivalente — sinon un jeu de 4 stops dans 2 km tient
+ * en 30 min et ne respecte pas le pitch "tour de ville en jouant".
+ *
+ *   stopCount = 8 → 2 km   (current, ~750m moyen entre stops)
+ *   stopCount = 7 → 2.2 km
+ *   stopCount = 6 → 2.5 km
+ *   stopCount = 5 → 2.8 km
+ *   stopCount = 4 → 3.2 km
+ *   stopCount ≤ 3 → 3.5 km (extreme spread, tour large d'une ville)
+ */
+function radiusForStopCount(stopCount: number): number {
+  if (stopCount >= 8) return 2_000;
+  if (stopCount === 7) return 2_200;
+  if (stopCount === 6) return 2_500;
+  if (stopCount === 5) return 2_800;
+  if (stopCount === 4) return 3_200;
+  return 3_500; // stopCount ≤ 3
+}
+
+/**
+ * Distance MAX entre deux stops consécutifs, ADAPTATIVE au stopCount.
+ * Même logique que le radius : moins de stops = hops plus longs pour
+ * tenir la durée totale (~6 km cumulés = ~75 min de marche).
+ *
+ *   stopCount = 8 → 1500m   (current floor, ~18 min)
+ *   stopCount = 7 → 1700m
+ *   stopCount = 6 → 1900m
+ *   stopCount = 5 → 2200m
+ *   stopCount = 4 → 2600m
+ *   stopCount ≤ 3 → 3000m   (~36 min de marche entre 2 stops, tolérable
+ *                            sur un parcours short et touristique)
+ *
+ * On reste sous le seuil "trop dispersé" (4 km) qui casserait la
+ * cohérence narrative — au-delà, le joueur oublie ce qu'il vient de
+ * résoudre.
+ */
+function maxInterStopFor(stopCount: number): number {
+  if (stopCount >= 8) return 1_500;
+  if (stopCount === 7) return 1_700;
+  if (stopCount === 6) return 1_900;
+  if (stopCount === 5) return 2_200;
+  if (stopCount === 4) return 2_600;
+  return 3_000; // stopCount ≤ 3
+}
 
 /**
  * Plancher en dessous duquel on rejette le jeu, ADAPTATIF au stopCount
@@ -202,9 +232,14 @@ export async function discoverParcours(
   // Plancher dérivé du stopCount demandé (cf. minStopsForPublish).
   // stopCount=8 → 6 ; stopCount=5 → 3 ; stopCount=4 → 3.
   const minStops = minStopsForPublish(params.stopCount);
+  // Walkability adaptative : moins de stops = hops plus longs + zone plus
+  // large, pour tenir la durée 90 min vendue indépendamment du nombre
+  // d'étapes. Cf. radiusForStopCount + maxInterStopFor.
+  const radiusM = radiusForStopCount(params.stopCount);
+  const maxInterStopM = maxInterStopFor(params.stopCount);
 
   console.log(
-    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops})`,
+    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m)`,
   );
 
   // ============================================
@@ -216,7 +251,7 @@ export async function discoverParcours(
   let googleCandidates: NearbyCandidate[] = [];
   try {
     googleCandidates = await discoverNearbyLandmarks(params.startPoint, {
-      radiusM: RADIUS_AROUND_START_M,
+      radiusM: radiusM,
       limit: 60,
     });
   } catch (err) {
@@ -226,7 +261,7 @@ export async function discoverParcours(
   }
 
   console.log(
-    `[discoverParcours] Google nearbysearch returned ${googleCandidates.length} candidate(s) within ${RADIUS_AROUND_START_M}m`,
+    `[discoverParcours] Google nearbysearch returned ${googleCandidates.length} candidate(s) within ${radiusM}m`,
   );
 
   // ============================================
@@ -258,7 +293,7 @@ export async function discoverParcours(
         // Contrainte walkability transmise EN AMONT à Claude pour
         // qu'il choisisse un cluster cohérent dès le départ — au
         // lieu qu'on filtre après et perde des stops.
-        maxInterStopM: MAX_INTER_STOP_M,
+        maxInterStopM: maxInterStopM,
         // Distance MIN entre stops — évite les "twins" type Bibliothèque
         // + Centro Cultural à 16m sur Los Cristianos qui faisaient
         // doublon dans les 5 stops vendus.
@@ -366,7 +401,7 @@ export async function discoverParcours(
           params.country,
           {
             referencePoint: params.startPoint,
-            maxDistanceM: RADIUS_AROUND_START_M,
+            maxDistanceM: radiusM,
           },
         );
 
@@ -535,7 +570,7 @@ export async function discoverParcours(
   // immédiats), puis on re-NN.
   while (
     ordered.length > minStops &&
-    maxInterStopJump(ordered) > MAX_INTER_STOP_M
+    maxInterStopJump(ordered) > maxInterStopM
   ) {
     let worstIdx = -1;
     let worstScore = -1;
@@ -561,7 +596,7 @@ export async function discoverParcours(
     const [dropped] = ordered.splice(worstIdx, 1);
     rejected.push({
       name: dropped.name,
-      reason: `inter-stop jump > ${MAX_INTER_STOP_M}m, dropped during walkability pruning`,
+      reason: `inter-stop jump > ${maxInterStopM}m, dropped during walkability pruning`,
     });
     console.warn(
       `[discoverParcours] DROP "${dropped.name}" — too far from neighbors, ${ordered.length} remaining`,
@@ -579,9 +614,9 @@ export async function discoverParcours(
   // achat échouer.
   //
   // Algorithme : pour chaque stop, on calcule combien d'autres stops
-  // sont à ≤ MAX_INTER_STOP_M de lui (cluster size autour de ce point).
+  // sont à ≤ maxInterStopM de lui (cluster size autour de ce point).
   // On garde le cluster max, qui définit le sous-ensemble walkable.
-  if (maxInterStopJump(ordered) > MAX_INTER_STOP_M) {
+  if (maxInterStopJump(ordered) > maxInterStopM) {
     console.warn(
       `[discoverParcours] After pruning, max jump still ${Math.round(maxInterStopJump(ordered))}m. Attempting cluster-densest fallback...`,
     );
@@ -597,7 +632,7 @@ export async function discoverParcours(
           { lat: ordered[i].lat, lon: ordered[i].lon },
           { lat: ordered[j].lat, lon: ordered[j].lon },
         );
-        if (d <= MAX_INTER_STOP_M) clusterMembers.push(j);
+        if (d <= maxInterStopM) clusterMembers.push(j);
       }
       if (clusterMembers.length > bestClusterSize) {
         bestClusterSize = clusterMembers.length;
@@ -616,7 +651,7 @@ export async function discoverParcours(
           },
           { lat: ordered[j].lat, lon: ordered[j].lon },
         );
-        if (d <= MAX_INTER_STOP_M) clusterStops.push(ordered[j]);
+        if (d <= maxInterStopM) clusterStops.push(ordered[j]);
       }
 
       // Drop les outliers (non-cluster) avec un message clair
@@ -635,7 +670,7 @@ export async function discoverParcours(
       );
     } else {
       // Cluster fallback ÉCHOUE aussi (zone trop sparse pour minStops
-      // dans MAX_INTER_STOP_M). Là on rejette vraiment.
+      // dans maxInterStopM). Là on rejette vraiment.
       return {
         success: false,
         landmarks: [],
