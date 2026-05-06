@@ -34,7 +34,7 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
     riddleDirectives: `- TONE: documentary, grounded, evocative — like a passionate historian guide.
 - EACH STOP anchors on a real, datable, factual event tied to the location. If the building post-dates the theme, use the speculative-mode framing ("imagine — six centuries ago, on this very ground...").
 - MAGIC WORD STYLE: Latin words (VERITAS, FIDES, AURUM), 4-digit years (1789, 1944), Roman numerals (MCMXIV), single proper names from the era. Avoid invented runes / spy code names.
-- AR CHARACTER BIAS: monk, peasant, knight, sailor, soldier — pick what fits the era of the location. AVOID witch / princess / ghost / detective (off-genre).
+- AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Most stops stay "default" (OddballTrip neutral guide). Genre adds NO override. When (and only when) a slam-dunk thematic match exists, prefer monk / knight / sailor / soldier / peasant according to the era. Never push witch / princess / ghost / detective on a non-matching site just because the genre is historical.
 - ANECDOTE: stand-alone historical fact, MUST be cross-checkable. Cite era, dates, named persons.`,
     epilogueDirectives: `- FRAME: a long-kept historical revelation that ties all stops into one true story-arc the player just walked through.
 - TONE: erudite, warm, like a museum curator unveiling a rare archive document.`,
@@ -46,7 +46,7 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
     riddleDirectives: `- TONE: tense, noir, suspect-and-clue. The player is a detective on the case.
 - EACH STOP = a clue, a witness, a crime scene, a hideout, or a suspect's home. Reuse hotels / shops / offices WITHOUT FEAR — they ARE the polar grammar (a hotel is a witness, a café is a meeting point).
 - MAGIC WORD STYLE: dossier numbers (DOSSIER-7, M-12), suspect surnames (KOVAC, ROCHE, TANNER), evidence words (ALIBI, TÉMOIN, RANSOM, MOBILE). Latin / Roman numerals are OFF-genre — replace with case codes.
-- AR CHARACTER BIAS: detective ALWAYS for at least half the stops. Optionally ghost (the victim) or sailor (a witness from the docks).
+- AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Mystery does NOT entitle you to push detective on every stop. A modern art gallery, a museum, a generic civic building → "default" (OddballTrip guide), NOT detective. Only when a stop is a slam-dunk match (a 1850-1940 noir-coded site, a documented crime scene, a cemetery for the victim) do you pick a thematic; in that case, prefer detective for noir-era sites, ghost for victim-tied tombs/ruins.
 - ANECDOTE: a real local crime, smuggling tale, or fait-divers from this city if one fits; otherwise a real period detail (police-archive practice, contemporary criminology, cold case).`,
     epilogueDirectives: `- FRAME: the case is closed. Reveal who did it, why, and what each stop's clue meant in the chain of evidence.
 - TONE: detective wrap-up — the final monologue of a Maigret, a Sherlock, a Columbo. Calm, methodical, one human beat at the end.`,
@@ -58,7 +58,7 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
     riddleDirectives: `- TONE: epic, mythic, Tolkien/Narnia-coded. The city overlays a hidden magical realm visible only to the player.
 - EACH STOP = a magical site (a dragon's perch, a witch's lair, an elven gate, a cursed library, a forge of the dwarves). Recast the real building's function ("this museum is in fact the Hall of the Forgotten King").
 - MAGIC WORD STYLE: invented runes / elven words (1-2 syllables, evocative: AELRA, VORIN, MITHRAEL), names of magical beasts, single-word spells (LUMOS-style). Years and Latin are OFF-genre.
-- AR CHARACTER BIAS: knight, witch, princess — at least 4 of these distributed across the game. Avoid soldier / detective (off-genre).
+- AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Genre does NOT entitle you to push knight / witch / princess on every stop. Civic buildings, modern museums, plazas → "default". Only on a slam-dunk match (medieval castle = knight, witch-trial site = witch, royal palace = princess) do you swap.
 - ANECDOTE: a real local legend, folklore, or medieval superstition tied to this place — keep it factually framed ("locals from the 14th c. believed...").`,
     epilogueDirectives: `- FRAME: the prophecy is fulfilled. The hidden realm anchors back into the city as the player walks away.
 - TONE: bardic, lyrical, like a Celtic oral storyteller closing a saga around a fire.`,
@@ -70,7 +70,7 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
     riddleDirectives: `- TONE: lyrical, tender, period-romantic (Hugo, Rostand, Brontë). Two lovers' paths crossed at each stop.
 - EACH STOP = a place that witnessed a moment of the romance (the first glance, the secret letter, the duel, the elopement, the parting, the reunion).
 - MAGIC WORD STYLE: lover names (HÉLOÏSE, ABÉLARD), dates of meeting (1342, 1789), single evocative words (TOUJOURS, AMOR, FIDÈLE, JURÉ), or initials carved on a tree.
-- AR CHARACTER BIAS: princess, peasant, monk (the confessor) — at least 2 distinct lovers' archetypes used across the game.
+- AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Most stops stay "default" — a market square or a riverbank doesn't have a romance archetype in our catalogue. Only on slam-dunk matches do you swap: princess on a royal palace / ducal residence, monk on a chapel/church, peasant on a village mill.
 - ANECDOTE: a real local love story (verifiable couple, marriage record, novel set here) if one fits; else a romantic period-detail (love-letter customs, secret balcony codes, contraband marriages).`,
     epilogueDirectives: `- FRAME: the lovers' fate, told with elegance — reunited, parted, immortalised.
 - TONE: lyrical, like the closing pages of a 19th-c. classic novel; one tear, one breath.`,
@@ -82,7 +82,7 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
     riddleDirectives: `- TONE: chilling, whispered, candle-lit. The city is haunted; each stop has a presence.
 - EACH STOP = a haunting site — a death scene, a cursed house, a phantom's last appearance, a place where time slips.
 - MAGIC WORD STYLE: spirit names, whispered single words (REQUIESCAT, ANIMA, MANES, UMBRA), death dates (1721), or the ghost's first name in capital script.
-- AR CHARACTER BIAS: ghost ALWAYS for at least half the stops. Witch or monk as secondary. NEVER detective / sailor / soldier (breaks the mood).
+- AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Genre does NOT entitle you to put ghost on every stop. A modern shop, a gallery, a contemporary plaza → "default". Ghost is the natural pick on slam-dunk sites only: cemeteries, mausoleums, crypts, ruins, sites of documented tragic deaths. Witch is acceptable on documented persecution / occult-folklore sites.
 - ANECDOTE: a real local ghost story, suicide-archive, or supernatural folklore tied to this place — most cities have at least one, surface it.`,
     epilogueDirectives: `- FRAME: the spirit's truth is revealed; the haunting is explained, not exorcised. The city remains haunted but the player understands.
 - TONE: melancholic, gothic, like the closing of a M. R. James or Shirley Jackson tale.`,
@@ -94,7 +94,7 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
     riddleDirectives: `- TONE: cold, technical, late 20th-c. spy-thriller (le Carré, Deighton). Each stop = a tradecraft moment.
 - EACH STOP = a dead drop, a brush pass, a safehouse, a surveillance post, an exfiltration point. Hotels and cafés are CORE LOCATIONS — not to be filtered out.
 - MAGIC WORD STYLE: code names (FOX-7, NIGHTHAWK, BURNED), 4-digit cipher grids (4471, 0023), agent aliases (KOVAC, TANNER, ASSET-9). Latin / poetry are OFF-genre.
-- AR CHARACTER BIAS: detective and soldier preferred. Optionally sailor for cold-war port-city ops. AVOID witch / princess (off-genre).
+- AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Modern civic buildings, hotels-as-safehouses, generic plazas → "default" (OddballTrip guide). Only on slam-dunk matches do you swap: detective on a 1850-1940 noir-tied building, soldier on a documented military / intel / war-memorial site, sailor on a port that hosted real cold-war ops.
 - ANECDOTE: a real local cold-war episode, cipher-history detail, or military-intelligence tidbit — Berlin, Vienna, Lisbon, France's Atlantic ports all have rich material.`,
     epilogueDirectives: `- FRAME: the mission is closed. The agent's debrief reveals the operation's codename, the asset's fate, the geopolitical stakes.
 - TONE: clinical — like a declassified file's executive summary, with one human note at the end.`,
@@ -106,7 +106,7 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
     riddleDirectives: `- TONE: cinephile, fan-letter, with a wink at iconic films. Each stop = a shooting location or a referenced scene.
 - EACH STOP links to a real or plausibly-real film tied to this place. If you don't know one, invent a plausible homage ("imagine the camera tracking from this corner...").
 - MAGIC WORD STYLE: film titles (CASABLANCA, METROPOLIS), iconic lines (REDRUM, ROSEBUD), director surnames (HITCHCOCK, KUROSAWA), one evocative noun from the film. Latin / spy codes are OFF-genre.
-- AR CHARACTER BIAS: ghost (the auteur), detective (noir-genre films), princess (period-drama films) — vary across the genres of the films cited.
+- AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Cinema rarely produces a slam-dunk match — most stops stay "default". Only swap when the SITE itself fits an archetype (a cathedral filmed in a period drama → monk, a dock filmed in a noir → sailor). Don't pick ghost or detective just because a film of that genre was shot there.
 - ANECDOTE: a real local filming-history detail (which film, which director, which year) if you have one; else a real cultural film-fact about the city's cinema scene.`,
     epilogueDirectives: `- FRAME: the player has walked through a curated cinematic montage of the city. The credits roll.
 - TONE: enthusiastic film-archive curator's voice-over, with one final critical insight.`,
@@ -118,7 +118,7 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
     riddleDirectives: `- TONE: warm, child-friendly, magical, like Perrault or the Brothers Grimm. Each stop = a fairytale beat.
 - EACH STOP's site is reimagined as a fairytale element (a market = the kingdom's bazaar, a church = the cathedral of the prince, a park = the enchanted forest, a city wall = the dragon's keep).
 - MAGIC WORD STYLE: magical objects (SLIPPER, MIRROR, SPINDLE, ROSE), single magical names (RAPUNZEL, AURORA, MERLIN), or one evocative word (ENCHANTED, MIDNIGHT, CRYSTAL).
-- AR CHARACTER BIAS: princess, witch, knight — at least 3 distinct of these across the game. AVOID detective / soldier / ghost (off-genre, too dark for this register).
+- AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Genre does NOT entitle you to push princess / witch / knight on every stop. A market square or a generic park stays "default". Only on slam-dunk matches: princess on a royal palace, witch on a documented witch-trial / persecution site, knight on a medieval castle.
 - ANECDOTE: a real folkloric / fairytale connection of the place (originated a famous tale, inspired a Disney film, has a local legend); else a real history-fact framed warmly for a young audience.`,
     epilogueDirectives: `- FRAME: the moral of the tale, with the player as the hero who saw the kingdom from the inside.
 - TONE: a warm storytelling close, like a parent finishing a bedtime tale.`,
@@ -141,10 +141,15 @@ GENRE: ${t.label} — ${t.promise}
 ═══════════════════════════════════════════════════════════════════════
 ${t.riddleDirectives}
 
-These genre directives apply to riddle_text, answer_text, ar_character_type,
-ar_character_dialogue, ar_facade_text, ar_treasure_reward, and anecdote.
-They override the historical-default tone hints in the detailed rules below
-when there is a conflict (e.g. magic word style, AR character bias).
+These genre directives apply to: riddle_text, answer_text, ar_character_dialogue,
+ar_facade_text, ar_treasure_reward, and anecdote — they shape TONE and CONTENT
+of those fields.
+
+CRITICAL EXCEPTION — ar_character_type: the genre does NOT override the
+slam-dunk DEFAULT-FIRST rule documented below. "default" remains the policy
+for any non-matching site, regardless of genre. The genre only nudges
+WHICH thematic to prefer when a slam-dunk match already exists. Never
+swap "default" → thematic just because the genre says so.
 ═══════════════════════════════════════════════════════════════════════
 `;
 }
