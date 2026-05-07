@@ -42,11 +42,77 @@ export function isValidGenre(value: unknown): value is GameGenre {
   );
 }
 
-/** Parse une valeur d'entrée (body API typiquement) vers un GameGenre
- *  valide, fallback `historical` sinon. Idempotent et tolérant à la casse. */
+/** Strip les diacritiques pour normalisation tolérante :
+ *  "cinéma" → "cinema", "mystère" → "mystere", "conte de fées" → "conte de fees". */
+function stripDiacritics(s: string): string {
+  return s.normalize("NFD").replace(/[̀-ͯ]/g, "");
+}
+
+/**
+ * Table d'alias FR/EN/synonymes → clé canonique GameGenre.
+ *
+ * oddballtrip stocke ses `viable_genres` audit Gemini en français
+ * (`historique`, `polar`, `fantastique`...). Plutôt que de faire un
+ * massive UPDATE DB côté oddballtrip, on accepte les deux langues +
+ * synonymes courants ici. Côté pipeline c'est transparent : tout est
+ * normalisé vers la clé canonique anglaise utilisée par genre-templates.ts.
+ *
+ * Les clés de cette map sont déjà normalisées (lowercase + diacritiques
+ * stripés). Cf. `parseGenre()` pour le pipeline d'application.
+ */
+const GENRE_ALIASES: Record<string, GameGenre> = {
+  // === Canonical anglais (identité) ===
+  historical: "historical",
+  mystery: "mystery",
+  fantasy: "fantasy",
+  romance: "romance",
+  supernatural: "supernatural",
+  espionnage: "espionnage",
+  cinema: "cinema",
+  fairytale: "fairytale",
+
+  // === Aliases français (audit Gemini oddballtrip) ===
+  historique: "historical",
+  history: "historical",
+  polar: "mystery",
+  mystere: "mystery", // "mystère" après stripDiacritics
+  policier: "mystery",
+  fantastique: "fantasy",
+  fantastic: "fantasy",
+  romantique: "romance",
+  surnaturel: "supernatural",
+  paranormal: "supernatural",
+  fantome: "supernatural", // "fantôme"
+  fantomes: "supernatural",
+  espionage: "espionnage", // typo courant en EN
+  spy: "espionnage",
+  conte: "fairytale",
+  "conte de fees": "fairytale", // "conte de fées" après stripDiacritics
+  "conte-de-fees": "fairytale",
+  fairy: "fairytale",
+  "fairy-tale": "fairytale",
+};
+
+/**
+ * Parse une valeur d'entrée (body API ou viable_genres oddballtrip)
+ * vers un GameGenre canonique. Tolérant :
+ *   - case-insensitive ("HISTORIQUE" = "historique")
+ *   - accents stripés ("Cinéma" = "cinema")
+ *   - français + anglais + synonymes (cf. GENRE_ALIASES)
+ *
+ * Fallback `historical` si la valeur n'est pas reconnue (sécurise les
+ * cas Gemini-hallucinated comme "aventure" qui sortent du catalogue).
+ *
+ * Exemples :
+ *   parseGenre("polar")      → "mystery"
+ *   parseGenre("Historique") → "historical"
+ *   parseGenre("conte de fées") → "fairytale"
+ *   parseGenre("aventure")   → "historical" (inconnu, fallback)
+ *   parseGenre(null)         → "historical"
+ */
 export function parseGenre(value: unknown): GameGenre {
   if (typeof value !== "string") return DEFAULT_GENRE;
-  const lower = value.toLowerCase().trim();
-  if (isValidGenre(lower)) return lower;
+  const normalized = stripDiacritics(value.toLowerCase().trim());
+  if (normalized in GENRE_ALIASES) return GENRE_ALIASES[normalized];
   return DEFAULT_GENRE;
 }
