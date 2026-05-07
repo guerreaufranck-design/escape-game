@@ -145,21 +145,36 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ─── IDEMPOTENCY by orderId ──────────────────────────────────────
-    // Si oddballtrip retry (timeout HTTP, webhook Stripe re-envoyé) avec
-    // le même orderId pour le même jeu, on RENVOIE LE CODE EXISTANT au
-    // lieu d'en créer un nouveau. Évite les codes orphelins en DB.
+    // ─── IDEMPOTENCY ──────────────────────────────────────────────────
+    // Stratégie à 2 niveaux + bypass admin :
+    //   0. BYPASS : si body.forceNewCode === true, on skip toute idempotency
+    //      et on crée toujours un nouveau code. Utile pour les générations
+    //      MANUELLES depuis l'admin oddballtrip (pas de retour Stripe, pas
+    //      d'orderId stable, et tu veux pouvoir retester sans réutiliser
+    //      l'ancien code).
+    //   1. PRIMAIRE : orderId si fourni — la clé canonique. Si oddballtrip
+    //      retry (timeout HTTP, webhook Stripe re-envoyé) avec le même
+    //      orderId, on renvoie le code existant.
+    //   2. FALLBACK : si orderId absent (cas observé en prod 2026-05-07
+    //      où oddballtrip poll/retry sans orderId, créant 2-4 codes par
+    //      achat), on cherche un code récent (< 1h) sur (game_id, buyer_email).
+    //      Couvre 99 % des retries automatiques sans pénaliser les rachats
+    //      légitimes (un client qui rachète le même jeu plus d'1h après
+    //      reçoit un nouveau code).
     //
     // RÉSILIENCE : si la migration 022 (colonne order_id) n'est pas
-    // encore appliquée, le check idempotent ET l'insert avec order_id
-    // tombent en erreur "column does not exist". On catche
-    // silencieusement et on continue en mode legacy (nouveau code à
-    // chaque appel) jusqu'à l'application de la migration. Pas
-    // d'idempotence sans order_id, mais au moins le code est créé.
+    // appliquée, on tombe direct sur le fallback (game_id, buyer_email).
     let finalCode: string | null = null;
     let isIdempotentReturn = false;
+    let idempotencySource: "order_id" | "email_window" | null = null;
     let orderIdColumnAvailable = true;
-    if (orderId && typeof orderId === "string" && orderId.trim()) {
+    const forceNewCode = body.forceNewCode === true;
+    if (forceNewCode) {
+      console.log(
+        `[external/generate-code] forceNewCode=true — bypass idempotency, will create a fresh code (manual admin generation)`,
+      );
+    }
+    if (!forceNewCode && orderId && typeof orderId === "string" && orderId.trim()) {
       const { data: existing, error: lookupError } = await supabase
         .from("activation_codes")
         .select("code")
@@ -171,13 +186,43 @@ export async function POST(request: NextRequest) {
         // Migration 022 pas encore appliquée — fallback legacy
         orderIdColumnAvailable = false;
         console.warn(
-          `[external/generate-code] migration 022 not applied — column order_id missing, idempotency disabled. Apply ALTER TABLE activation_codes ADD COLUMN order_id TEXT;`,
+          `[external/generate-code] migration 022 not applied — column order_id missing. Falling back to (game_id, buyer_email) window.`,
         );
       } else if (existing?.code) {
         finalCode = existing.code;
         isIdempotentReturn = true;
+        idempotencySource = "order_id";
         console.log(
           `[external/generate-code] IDEMPOTENT return code=${finalCode} for orderId=${orderId} (already exists)`,
+        );
+      }
+    }
+
+    // FALLBACK idempotency : (game_id, buyer_email) avec fenêtre 1h.
+    // Ne s'active que si le check orderId n'a rien remonté ET que
+    // forceNewCode n'est pas activé.
+    if (!forceNewCode && !finalCode && buyerEmail) {
+      const FALLBACK_WINDOW_MS = 60 * 60 * 1000; // 1h
+      const since = new Date(Date.now() - FALLBACK_WINDOW_MS).toISOString();
+      const { data: recent, error: fallbackError } = await supabase
+        .from("activation_codes")
+        .select("code, created_at")
+        .eq("game_id", gameId)
+        .eq("buyer_email", buyerEmail)
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (fallbackError) {
+        console.warn(
+          `[external/generate-code] fallback idempotency lookup failed: ${fallbackError.message} — proceeding with new code`,
+        );
+      } else if (recent?.code) {
+        finalCode = recent.code;
+        isIdempotentReturn = true;
+        idempotencySource = "email_window";
+        console.log(
+          `[external/generate-code] IDEMPOTENT FALLBACK code=${finalCode} for game=${gameId.slice(0, 8)} email=${buyerEmail} (recent code from ${recent.created_at}). orderId was ${orderId || "MISSING — oddballtrip should send a stable orderId to avoid relying on this fallback"}.`,
         );
       }
     }
