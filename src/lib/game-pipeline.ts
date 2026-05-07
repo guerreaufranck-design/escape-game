@@ -318,32 +318,85 @@ export async function generateGameFromTemplate(
     );
 
     // ============================================
-    // STEP 0 : Résoudre le point de départ
+    // STEP 0 : Résoudre + AUTO-CORRIGER le point de départ
     // ============================================
-    let startPoint = template.startPoint;
-    if (!startPoint) {
-      console.warn(
-        `[Pipeline] ⚠ MISSING template.startPoint — falling back to city center geocode (less precise for big cities, oddballtrip should transmit startPoint)`,
-      );
+    // Stratégie défensive (2026-05-07) : on géocode le `city` envoyé
+    // par oddballtrip et on l'utilise comme source de vérité. Si le
+    // body.startPoint est fourni mais s'écarte de plus de 20 km du
+    // centre géocodé du city, on l'OVERRIDE par le centre géocodé.
+    //
+    // Pourquoi : le pattern observé en prod (Cluny → Brionnais à 26km,
+    // Garachico → 50km) est un upstream bug oddballtrip qui livrait des
+    // startPoints corrompus post-refonte Phase 12. Plutôt que de flagger
+    // sans corriger (ce qui obligeait à intervenir manuellement par jeu),
+    // on fait confiance au `city` (qui est le PRODUIT vendu au client)
+    // et on aligne le startPoint sur lui automatiquement.
+    //
+    // Conséquence : le jeu publie au BON endroit, peu importe la qualité
+    // du startPoint envoyé. needs_review reste TRUE pour signaler
+    // l'anomalie upstream à l'opérateur, mais le client peut jouer.
+    //
+    // Les rares cas légitimes "label SEO ≠ play-zone" (ex. "Brest" vendu
+    // mais jeu à Pointe Saint-Mathieu) sont aussi auto-overridés vers
+    // le centre du city — l'opérateur peut alors lever needs_review
+    // après vérif si le résultat lui convient quand même.
+    const CITY_STARTPOINT_DRIFT_M = 20_000;
+    const cityToGeocode = template.city.split(/\s*[·,]\s*/)[0].trim();
+    let cityCenter: { lat: number; lon: number } | null = null;
+    try {
       const cityGeo = await geocodeLocation(
-        `${template.city}, ${template.country}`,
-        template.city,
+        cityToGeocode,
+        cityToGeocode,
         template.country,
       );
-      if (!cityGeo) {
+      if (cityGeo) cityCenter = { lat: cityGeo.lat, lon: cityGeo.lon };
+    } catch (err) {
+      console.warn(
+        `[Pipeline] City geocode threw (non-blocking): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
+    let startPoint = template.startPoint;
+    let startPointAutoCorrected: {
+      from: { lat: number; lon: number };
+      to: { lat: number; lon: number };
+      driftKm: number;
+    } | null = null;
+    if (!startPoint) {
+      // Pas de startPoint envoyé — fallback obligatoire vers cityCenter.
+      if (!cityCenter) {
         const err = new Error(
           `INTERNAL_ERROR: cannot geocode city center as fallback startPoint for "${template.city}, ${template.country}"`,
         ) as Error & { code?: PipelineErrorCode };
         err.code = "INTERNAL_ERROR";
         throw err;
       }
-      startPoint = { lat: cityGeo.lat, lon: cityGeo.lon };
-      console.log(
-        `[Pipeline] Fallback startPoint = city center ${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)}`,
+      console.warn(
+        `[Pipeline] ⚠ MISSING template.startPoint — using geocoded city center ${cityCenter.lat.toFixed(4)},${cityCenter.lon.toFixed(4)}`,
       );
+      startPoint = cityCenter;
+    } else if (cityCenter) {
+      // body.startPoint fourni ET cityCenter dispo → on vérifie le drift.
+      const drift = haversineMeters(cityCenter, startPoint);
+      if (drift > CITY_STARTPOINT_DRIFT_M) {
+        console.warn(
+          `[Pipeline] ⚠ AUTO-CORRECT startPoint: city "${cityToGeocode}" geocoded at ${cityCenter.lat.toFixed(4)},${cityCenter.lon.toFixed(4)} but body.startPoint was ${(drift / 1000).toFixed(1)}km away (${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)}). Overriding to city center.`,
+        );
+        startPointAutoCorrected = {
+          from: { lat: startPoint.lat, lon: startPoint.lon },
+          to: { lat: cityCenter.lat, lon: cityCenter.lon },
+          driftKm: Math.round((drift / 1000) * 10) / 10,
+        };
+        startPoint = cityCenter;
+      } else {
+        console.log(
+          `[Pipeline] startPoint from operator: ${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)} — drift ${Math.round(drift)}m from city center, OK`,
+        );
+      }
     } else {
+      // body.startPoint fourni mais cityCenter indispo → trust body.
       console.log(
-        `[Pipeline] startPoint from operator: ${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)}`,
+        `[Pipeline] startPoint from operator: ${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)} (city geocode unavailable, no validation)`,
       );
     }
 
@@ -471,60 +524,18 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
-    // STEP 1.6 : Sanity-check city ↔ startPoint
+    // STEP 1.6 : Flag needs_review si auto-correction startPoint
     // ============================================
-    // 2e couche de défense : géocode le `city` indépendamment et compare
-    // au body.startPoint. Détecte le pattern Cluny / Garachico où
-    // oddballtrip envoie une ville donnée mais un startPoint qui pointe
-    // ailleurs (~30 km au sud de Cluny dans le Brionnais ; ~50 km à l'est
-    // de Garachico). Le centroid check ne capte pas ce cas car les stops
-    // sont spread autour du startPoint (mauvais), donc centroid = startPoint.
-    //
-    // 20 km de drift = seuil raisonnable :
-    //   - Brest (Pointe Saint-Mathieu legitimately à 22 km de Brest centre)
-    //     déclenche le flag → opérateur inspecte, valide manuellement
-    //   - Cluny mauvais startPoint à 30 km dans le Brionnais → flag
-    //   - Garachico mauvais startPoint à 50 km → flag
-    //   - Cas normaux (city ≈ startPoint à <5 km) → pas de flag
-    //
-    // Non-bloquant : le jeu publie, l'opérateur inspecte avant émission code.
-    const CITY_STARTPOINT_DRIFT_M = 20_000;
-    try {
-      // Garde le 1er token avant " · " ou ", " — typique des labels
-      // composés ("Cluny, Saône-et-Loire" → "Cluny" ;
-      //  "Brest · Tour Tanguy" → "Brest").
-      const cityToGeocode = template.city.split(/\s*[·,]\s*/)[0].trim();
-      const cityGeo = await geocodeLocation(
-        cityToGeocode,
-        cityToGeocode,
-        template.country,
-      );
-      if (cityGeo) {
-        const cityDrift = haversineMeters(
-          { lat: cityGeo.lat, lon: cityGeo.lon },
-          { lat: startPoint.lat, lon: startPoint.lon },
-        );
-        if (cityDrift > CITY_STARTPOINT_DRIFT_M) {
-          needsReview = true;
-          const cityReason = `city "${cityToGeocode}" geocodes at ${cityGeo.lat.toFixed(4)},${cityGeo.lon.toFixed(4)} but body.startPoint is ${(cityDrift / 1000).toFixed(1)} km away. Either the city label is SEO-only and the startPoint targets a separate play-zone (legitimate, e.g. Brest → Pointe Saint-Mathieu) — OR oddballtrip sent the wrong startPoint (bug, e.g. Cluny → Brionnais). Inspect via dump-game before releasing the activation code.`;
-          reviewReason = reviewReason
-            ? `${reviewReason} | ${cityReason}`
-            : cityReason;
-          console.warn(`[Pipeline] ⚠ city/startPoint mismatch — ${cityReason}`);
-        } else {
-          console.log(
-            `[Pipeline] City sanity-check OK — "${cityToGeocode}" at ${cityGeo.lat.toFixed(4)},${cityGeo.lon.toFixed(4)} drift ${Math.round(cityDrift)}m < ${CITY_STARTPOINT_DRIFT_M}m from startPoint`,
-          );
-        }
-      } else {
-        console.warn(
-          `[Pipeline] City "${cityToGeocode}" failed to geocode — skipping city/startPoint sanity-check`,
-        );
-      }
-    } catch (err) {
-      console.warn(
-        `[Pipeline] City sanity-check threw (non-blocking): ${err instanceof Error ? err.message : err}`,
-      );
+    // L'auto-correction startPoint en STEP 0 a peut-être kické si oddballtrip
+    // envoyait un startPoint à >20km de la ville géocodée. Dans ce cas
+    // le jeu est publié au BON endroit (city center), mais on flag pour
+    // que l'opérateur sache qu'oddballtrip a un bug à fixer upstream.
+    if (startPointAutoCorrected) {
+      needsReview = true;
+      const correctReason = `body.startPoint auto-corrected: was ${startPointAutoCorrected.from.lat.toFixed(4)},${startPointAutoCorrected.from.lon.toFixed(4)} (${startPointAutoCorrected.driftKm}km from city "${cityToGeocode}"), overridden to ${startPointAutoCorrected.to.lat.toFixed(4)},${startPointAutoCorrected.to.lon.toFixed(4)} (geocoded city center). Game IS playable at the correct location. UPSTREAM BUG: oddballtrip should fix the stored startPoint for slug "${template.slug}".`;
+      reviewReason = reviewReason
+        ? `${reviewReason} | ${correctReason}`
+        : correctReason;
     }
 
     // ============================================
