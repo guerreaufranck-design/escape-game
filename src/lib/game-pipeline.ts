@@ -285,6 +285,54 @@ export interface PipelineResult {
 const MIN_STOPS_TO_PUBLISH = 6;
 
 /**
+ * Validation Roman numerals — détecte les hallucinations Claude type
+ * MCCXXXI (=1231) au lieu de MCCLXXXI (=1281). Utilisé en post-process
+ * generateGameSteps pour flagger needs_review si écart > 100 ans entre
+ * la valeur décodée et l'année probable mentionnée dans le riddle/anecdote.
+ *
+ * Cas observé prod 2026-05-07 (Hakata) : answer_text="MCCXXXI" alors que
+ * riddle parlait clairement de 1281 (Mongol invasion). Bug récurrent
+ * Claude sur les conversions int → Roman manuelles.
+ */
+function isRomanNumeral(s: string): boolean {
+  // Strict pattern : que des caractères Roman, longueur 1-15
+  return /^[MDCLXVI]+$/.test(s) && s.length <= 15;
+}
+
+function decodeRoman(s: string): number | null {
+  const values: Record<string, number> = {
+    M: 1000, D: 500, C: 100, L: 50, X: 10, V: 5, I: 1,
+  };
+  let total = 0;
+  let prev = 0;
+  for (let i = s.length - 1; i >= 0; i--) {
+    const v = values[s[i]];
+    if (!v) return null;
+    total += v < prev ? -v : v;
+    prev = v;
+  }
+  return total;
+}
+
+function encodeRoman(n: number): string {
+  if (n <= 0 || n >= 4000) return String(n);
+  const lookup: Array<[number, string]> = [
+    [1000, "M"], [900, "CM"], [500, "D"], [400, "CD"],
+    [100, "C"], [90, "XC"], [50, "L"], [40, "XL"],
+    [10, "X"], [9, "IX"], [5, "V"], [4, "IV"], [1, "I"],
+  ];
+  let result = "";
+  let remainder = n;
+  for (const [value, symbol] of lookup) {
+    while (remainder >= value) {
+      result += symbol;
+      remainder -= value;
+    }
+  }
+  return result;
+}
+
+/**
  * Distance maximale autorisée entre deux stops consécutifs après le greedy
  * nearest-neighbor reorder, en mètres. Au-delà, le parcours impose une
  * marche absurde au joueur (ex. Saint-Joseph Clervaux à 2 200 m du stop
@@ -774,6 +822,57 @@ export async function generateGameFromTemplate(
         );
         steps[i].answer_text = fallbackAnswer;
         steps[i].ar_facade_text = fallbackAnswer;
+      }
+    }
+
+    // ============================================
+    // STEP 4.5 : Roman numeral sanity-check
+    // ============================================
+    // Bug observé en prod (Hakata 2026-05-07) : Claude a généré
+    // answer_text="MCCXXXI" (=1231) alors que le riddle parlait de 1281
+    // (Mongol invasion year). MCCXXXI est un roman numeral VALIDE mais
+    // FAUX pour la date documentée. L'épilogue a même cité un autre roman
+    // ("MCMLXXXI"=1981) — triple incohérence visible par tout joueur féru.
+    //
+    // Stratégie : on détecte les roman numerals dans answer_text, on les
+    // décode, puis on cherche dans le riddle/anecdote la VRAIE date qui
+    // a probablement été visée par Claude. Si écart > 100 ans → on log
+    // un WARNING (le bug est documenté côté review_reason → opérateur
+    // peut décider de fix manuellement via edit-step).
+    //
+    // On NE corrige PAS automatiquement parce que :
+    //   - On ne peut pas garantir laquelle des dates dans le riddle est
+    //     la "bonne" (il peut y en avoir plusieurs)
+    //   - Modifier answer_text sans modifier le riddle/anecdote en cohérence
+    //     créerait d'autres incohérences narratives
+    //   - Le bon réflexe est de re-prompt Claude sur ce step → mais c'est
+    //     un POST-process qui peut échouer en boucle
+    // → On préfère LOG + flag needs_review pour intervention humaine ciblée.
+    for (let i = 0; i < steps.length; i++) {
+      const ans = steps[i].answer_text?.trim() ?? "";
+      if (!isRomanNumeral(ans)) continue;
+      const decoded = decodeRoman(ans);
+      if (decoded === null) continue;
+      // Cherche les années 4-digit dans riddle + anecdote
+      const allText = `${steps[i].riddle_text ?? ""} ${steps[i].anecdote ?? ""}`;
+      const yearMatches = [...allText.matchAll(/\b(1[0-9]{3}|20[0-2][0-9])\b/g)]
+        .map((m) => parseInt(m[1], 10));
+      if (yearMatches.length === 0) continue;
+      // Cherche la date la plus proche du decoded
+      const closestYear = yearMatches.reduce((closest, y) =>
+        Math.abs(y - decoded) < Math.abs(closest - decoded) ? y : closest,
+      yearMatches[0]);
+      const drift = Math.abs(closestYear - decoded);
+      if (drift > 100) {
+        console.warn(
+          `[Pipeline] ⚠ ROMAN NUMERAL DRIFT step ${i + 1}: answer="${ans}" decodes to ${decoded}, but riddle/anecdote mentions years [${yearMatches.join(", ")}], closest is ${closestYear} (drift ${drift}y). Likely Claude hallucination. Correct value would be "${encodeRoman(closestYear)}". Flagging needs_review for inspection.`,
+        );
+        // Flag + add reason. Don't auto-correct — operator decides.
+        needsReview = true;
+        const romanReason = `Step ${i + 1}: roman numeral "${ans}" decodes to ${decoded}, but the riddle/anecdote mentions year ${closestYear} (likely intended). Recommended correction: "${encodeRoman(closestYear)}". Inspect via dump-game + edit-step if needed.`;
+        reviewReason = reviewReason
+          ? `${reviewReason} | ${romanReason}`
+          : romanReason;
       }
     }
 
