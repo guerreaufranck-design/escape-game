@@ -575,3 +575,204 @@ The "name" field MUST be in a form Google Maps can geocode (real name + city). T
   );
   return candidates;
 }
+
+/**
+ * Deep Research thématique structuré pour ENRICHIR la generation Claude.
+ *
+ * Bug observé en prod (Hakata 2026-05-07) : Claude génère un parcours
+ * "Mongol invasion" mais ignore le vrai mur Genkō Bōrui, invente un
+ * "master strategist" fictionnel, et cite une fausse Roman numeral
+ * (MCCXXXI = 1231 alors que l'invasion fut en 1281).
+ *
+ * Solution : avant de demander à Claude de générer, on appelle Perplexity
+ * Sonar Deep Research pour obtenir des FACTS VÉRIFIÉS sourcés (Wikipedia,
+ * Britannica, sites patrimoniaux). Puis Claude utilise ces facts comme
+ * ANCHORS dans les anecdotes — le riddle reste fictionnel mais l'anecdote
+ * cite les vrais personnages, dates, événements documentés.
+ *
+ * Coût : ~$0.40-0.50 par jeu (Sonar Deep Research). Compensé par le
+ * switch ElevenLabs Flash qui économise $0.85 — net économie + qualité.
+ */
+export interface VerifiedThemeContext {
+  /** Sites historiquement iconiques liés au thème — Claude curation
+   *  les utilise pour prioriser dans la sélection POI Google. */
+  iconicSites: Array<{
+    name: string;
+    /** Indication géo verbale, pas GPS ("centre historique", "côte ouest"). */
+    locationHint?: string;
+    significance: string;
+    sources: string[];
+  }>;
+  /** Personnages historiques RÉELS attachés au lieu/thème, pour citation
+   *  factuelle dans l'anecdote (jamais comme protagoniste fictif). */
+  realFigures: Array<{
+    name: string;
+    role: string;
+    lifespan?: string;
+    sources: string[];
+  }>;
+  /** Événements précis avec date — privilégier ces dates pour magic words. */
+  events: Array<{
+    /** Date la plus précise possible : "1281-08-14" / "1281" / "13e siècle". */
+    date: string;
+    description: string;
+    sources: string[];
+  }>;
+  /** Traditions / coutumes / légendes locales documentées. */
+  localTraditions: Array<{
+    description: string;
+    sources: string[];
+  }>;
+  /** Résumé brut Perplexity pour fallback / debug. */
+  rawSummary: string;
+}
+
+const EMPTY_CONTEXT: VerifiedThemeContext = {
+  iconicSites: [],
+  realFigures: [],
+  events: [],
+  localTraditions: [],
+  rawSummary: "",
+};
+
+export async function deepResearchTheme(params: {
+  city: string;
+  country: string;
+  theme: string;
+  themeDescription: string;
+  narrative: string;
+}): Promise<VerifiedThemeContext> {
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) {
+    console.warn("[deepResearchTheme] PERPLEXITY_API_KEY missing — returning empty context");
+    return EMPTY_CONTEXT;
+  }
+
+  const researchPrompt = `Conduct deep research on the following theme for a tourist outdoor walking experience in ${params.city}, ${params.country}.
+
+THEME: ${params.theme}
+PITCH: ${params.themeDescription}
+NARRATIVE CONTEXT: ${params.narrative}
+
+I need you to find AUTHORITATIVE, SOURCED information about this theme. Your output will be used to anchor the factual content of an outdoor walking game — accuracy is critical.
+
+Please research and return:
+
+1. **ICONIC SITES**: 5-8 historically documented sites in ${params.city} directly related to this theme (e.g. for "Mongol invasion at Hakata" → Genkō Bōrui defensive wall, Hakozaki-gū shrine, Imazu beach). Include WHY each is significant.
+
+2. **REAL HISTORICAL FIGURES**: 3-6 named individuals with documented connection to this theme/place (e.g. for Mongol invasion → Hōjō Tokimune the regent, Suketomo the general, etc.). Include their role and lifespan when known.
+
+3. **DATED EVENTS**: 4-8 specific events with exact or approximate dates (year-month-day if possible) tied to this theme.
+
+4. **LOCAL TRADITIONS**: 2-4 still-living traditions, customs, or commemorations related to this theme.
+
+For EACH item, cite at least 1 source URL (Wikipedia, official heritage sites, encyclopedias, museums).
+
+Be especially attentive to ICONIC sites that an outdoor escape game MUST include — the most famous landmarks tied to the theme. If the theme mentions "stone wall" / "fortress" / "tomb" / "abbey", prioritize the actual physical site.
+
+Output: a structured research report with clear sections. URL citations matter.`;
+
+  let researchText: string;
+  try {
+    researchText = await callPerplexity(
+      [
+        {
+          role: "system",
+          content:
+            "You are a meticulous historian and tour-guide researcher. Cite verifiable sources for every fact. Prefer Wikipedia / Britannica / official heritage sites / museums over blog posts. Note explicitly when something is legend vs documented history.",
+        },
+        { role: "user", content: researchPrompt },
+      ],
+      "sonar-deep-research",
+    );
+    console.log(
+      `[deepResearchTheme] Perplexity returned ${researchText.length} chars of research for "${params.theme}" in ${params.city}`,
+    );
+  } catch (err) {
+    console.warn(
+      `[deepResearchTheme] Perplexity failed: ${err instanceof Error ? err.message : err}. Returning empty context.`,
+    );
+    return EMPTY_CONTEXT;
+  }
+
+  // Use Claude to extract structured JSON from the research report.
+  // Claude is more reliable than Perplexity for structured extraction.
+  const Anthropic = (await import("@anthropic-ai/sdk")).default;
+  const anthropicKey = process.env.ANTHROPIC_API_KEY;
+  if (!anthropicKey) {
+    console.warn("[deepResearchTheme] ANTHROPIC_API_KEY missing — returning rawSummary only");
+    return { ...EMPTY_CONTEXT, rawSummary: researchText };
+  }
+  const client = new Anthropic({ apiKey: anthropicKey });
+
+  try {
+    const message = await client.messages.create({
+      model: "claude-sonnet-4-20250514",
+      max_tokens: 4096,
+      temperature: 0,
+      messages: [
+        {
+          role: "user",
+          content: `Extract structured JSON from this research report on ${params.theme} in ${params.city}.
+
+RESEARCH:
+${researchText.slice(0, 12000)}
+
+Return STRICT JSON in this shape (no markdown, no commentary):
+{
+  "iconicSites": [
+    { "name": "string", "locationHint": "string|null", "significance": "string", "sources": ["url1", "url2"] }
+  ],
+  "realFigures": [
+    { "name": "string", "role": "string", "lifespan": "string|null", "sources": ["url1"] }
+  ],
+  "events": [
+    { "date": "string (YYYY-MM-DD or YYYY or '13th century')", "description": "string", "sources": ["url1"] }
+  ],
+  "localTraditions": [
+    { "description": "string", "sources": ["url1"] }
+  ]
+}
+
+Rules:
+- Each array max 8 items
+- Sources MUST be full URLs (https://...)
+- Only include items with at least 1 cited source
+- For events, prefer specific dates (1281-08-14) over centuries
+- Return ONLY the JSON object`,
+        },
+      ],
+    });
+
+    const responseText =
+      message.content[0].type === "text" ? message.content[0].text : "";
+    const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn("[deepResearchTheme] Claude did not return valid JSON — using rawSummary only");
+      return { ...EMPTY_CONTEXT, rawSummary: researchText };
+    }
+    const parsed = JSON.parse(jsonMatch[0]) as Partial<VerifiedThemeContext>;
+    const ctx: VerifiedThemeContext = {
+      iconicSites: Array.isArray(parsed.iconicSites)
+        ? parsed.iconicSites.slice(0, 8)
+        : [],
+      realFigures: Array.isArray(parsed.realFigures)
+        ? parsed.realFigures.slice(0, 8)
+        : [],
+      events: Array.isArray(parsed.events) ? parsed.events.slice(0, 8) : [],
+      localTraditions: Array.isArray(parsed.localTraditions)
+        ? parsed.localTraditions.slice(0, 8)
+        : [],
+      rawSummary: researchText.slice(0, 4000),
+    };
+    console.log(
+      `[deepResearchTheme] Extracted ${ctx.iconicSites.length} sites, ${ctx.realFigures.length} figures, ${ctx.events.length} events, ${ctx.localTraditions.length} traditions`,
+    );
+    return ctx;
+  } catch (err) {
+    console.warn(
+      `[deepResearchTheme] Claude extraction failed: ${err instanceof Error ? err.message : err}. Falling back to rawSummary only.`,
+    );
+    return { ...EMPTY_CONTEXT, rawSummary: researchText };
+  }
+}

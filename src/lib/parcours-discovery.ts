@@ -36,7 +36,11 @@
  *   - Aucun saut > 1 km entre stops consécutifs après NN reorder.
  */
 
-import { discoverThematicLandmarks } from "./perplexity";
+import {
+  discoverThematicLandmarks,
+  deepResearchTheme,
+  type VerifiedThemeContext,
+} from "./perplexity";
 import { pickThematicLandmarksFromList } from "./anthropic";
 import {
   discoverNearbyLandmarks,
@@ -235,6 +239,13 @@ export interface DiscoverParcoursResult {
     | "TOO_FEW_LANDMARKS"
     | "PARCOURS_TOO_DISPERSED";
   error?: string;
+  /**
+   * Contexte vérifié sourcé via Perplexity Deep Research. Passé à Claude
+   * generateGameSteps comme ANCHORS factuels — vrais personnages, vraies
+   * dates, sites iconiques, traditions documentées avec citations URL.
+   * Vide si Perplexity API absente ou échec.
+   */
+  verifiedContext?: VerifiedThemeContext;
 }
 
 /**
@@ -270,26 +281,54 @@ export async function discoverParcours(
   );
 
   // ============================================
-  // PHASE 1 : Google Places nearbysearch
+  // PHASE 1 : Google Places + Perplexity Deep Research (parallèle)
   // ============================================
-  // Source de vérité géographique. Tous les candidats retournés sont
-  // RÉELS, géocodés sub-10m, et dans le rayon. Multi-types pour
-  // maximiser la couverture (urban + heritage + religious + cultural).
+  // Google = source de vérité GÉOGRAPHIQUE (POIs walkables géocodés sub-10m).
+  // Perplexity Deep Research = source de vérité FACTUELLE thématique
+  // (sites iconiques, vrais personnages, vraies dates, traditions documentées
+  // avec citations URL). Lancés en PARALLÈLE pour ne pas séquentialiser.
+  //
+  // Bug observé en prod sans Perplexity DR : Hakata "Mongol invasion" ignorait
+  // le vrai mur Genkō Bōrui ; La Laguna ignorait Amaro Pargo ; Cluny inventait
+  // un faux dernier abbé. Perplexity DR fournit ces ANCHORS factuels à Claude
+  // pour qu'il les tisse dans les anecdotes (sites cités, sources URL).
+  const [googleResult, verifiedCtxResult] = await Promise.allSettled([
+    discoverNearbyLandmarks(params.startPoint, { radiusM: radiusM, limit: 60 }),
+    deepResearchTheme({
+      city: params.city,
+      country: params.country,
+      theme: params.theme,
+      themeDescription: params.themeDescription,
+      narrative: params.narrative,
+    }),
+  ]);
+
   let googleCandidates: NearbyCandidate[] = [];
-  try {
-    googleCandidates = await discoverNearbyLandmarks(params.startPoint, {
-      radiusM: radiusM,
-      limit: 60,
-    });
-  } catch (err) {
+  if (googleResult.status === "fulfilled") {
+    googleCandidates = googleResult.value;
+  } else {
     console.warn(
-      `[discoverParcours] Google nearbysearch threw: ${err instanceof Error ? err.message : err}`,
+      `[discoverParcours] Google nearbysearch threw: ${googleResult.reason instanceof Error ? googleResult.reason.message : googleResult.reason}`,
+    );
+  }
+
+  let verifiedContext: VerifiedThemeContext | undefined;
+  if (verifiedCtxResult.status === "fulfilled") {
+    verifiedContext = verifiedCtxResult.value;
+  } else {
+    console.warn(
+      `[discoverParcours] Perplexity Deep Research threw: ${verifiedCtxResult.reason instanceof Error ? verifiedCtxResult.reason.message : verifiedCtxResult.reason} — pipeline continues without verified context`,
     );
   }
 
   console.log(
     `[discoverParcours] Google nearbysearch returned ${googleCandidates.length} candidate(s) within ${radiusM}m`,
   );
+  if (verifiedContext) {
+    console.log(
+      `[discoverParcours] Perplexity Deep Research: ${verifiedContext.iconicSites.length} iconic sites, ${verifiedContext.realFigures.length} figures, ${verifiedContext.events.length} events, ${verifiedContext.localTraditions.length} traditions`,
+    );
+  }
 
   // ============================================
   // PHASE 2 : Curation thématique par Claude
@@ -771,6 +810,7 @@ export async function discoverParcours(
     success: true,
     landmarks: ordered,
     rejected,
+    verifiedContext,
   };
 }
 

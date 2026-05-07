@@ -764,6 +764,7 @@ export async function generateGameFromTemplate(
       effectiveDifficulty,
       verifiedLocations,
       genre,
+      discovery.verifiedContext,
     );
 
     // Garde anti-AUTO leak : si Claude a renvoyé le placeholder "AUTO"

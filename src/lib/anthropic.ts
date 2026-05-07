@@ -4,7 +4,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
-import type { ResearchedLocation } from "./perplexity";
+import type { ResearchedLocation, VerifiedThemeContext } from "./perplexity";
 import { getRelevantNegativeFeedback, formatFeedbackForPrompt } from "./feedback-memory";
 import { buildCharacterSelectionGuidance } from "./ar-sprites";
 import { type GameGenre, DEFAULT_GENRE } from "./game-genres";
@@ -71,6 +71,7 @@ export async function generateGameSteps(
   difficulty: number,
   locations: ResearchedLocation[],
   genre: GameGenre = DEFAULT_GENRE,
+  verifiedContext?: VerifiedThemeContext,
 ): Promise<GeneratedStep[]> {
   // RAG: pull lessons from past admin thumbs-down feedback on similar contexts
   let feedbackBlock = "";
@@ -109,7 +110,69 @@ export async function generateGameSteps(
 
   const genreOverlay = buildGenreRiddleOverlay(genre);
 
-  const prompt = `${genreOverlay}You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
+  // Build verified-facts block from Perplexity Deep Research, if available.
+  // These facts MUST be cited in anecdotes (real figures, real dates,
+  // sourced URLs). Riddle protagonists stay FICTIONAL ANONYMOUS.
+  const verifiedFactsBlock = (() => {
+    if (!verifiedContext) return "";
+    const hasContent =
+      verifiedContext.iconicSites.length > 0 ||
+      verifiedContext.realFigures.length > 0 ||
+      verifiedContext.events.length > 0 ||
+      verifiedContext.localTraditions.length > 0;
+    if (!hasContent) return "";
+    const sites = verifiedContext.iconicSites
+      .map(
+        (s, i) =>
+          `  ${i + 1}. **${s.name}**${s.locationHint ? ` (${s.locationHint})` : ""} — ${s.significance}\n     Sources: ${s.sources.join(", ")}`,
+      )
+      .join("\n");
+    const figures = verifiedContext.realFigures
+      .map(
+        (f, i) =>
+          `  ${i + 1}. **${f.name}**${f.lifespan ? ` (${f.lifespan})` : ""} — ${f.role}\n     Sources: ${f.sources.join(", ")}`,
+      )
+      .join("\n");
+    const events = verifiedContext.events
+      .map(
+        (e, i) =>
+          `  ${i + 1}. **${e.date}** — ${e.description}\n     Sources: ${e.sources.join(", ")}`,
+      )
+      .join("\n");
+    const traditions = verifiedContext.localTraditions
+      .map((t, i) => `  ${i + 1}. ${t.description}\n     Sources: ${t.sources.join(", ")}`)
+      .join("\n");
+    return `
+═══════════════════════════════════════════════════════════════════════
+VERIFIED FACTS (from Perplexity Deep Research, with source URLs)
+═══════════════════════════════════════════════════════════════════════
+You MUST use these facts as ANCHORS for the anecdote field. Cite them
+explicitly. They are documented and verifiable. Riddle protagonists
+stay FICTIONAL ANONYMOUS, but anecdotes anchor on these real facts.
+
+ICONIC SITES (prioritize these in your stop selection if they match the input locations):
+${sites || "  (none)"}
+
+REAL HISTORICAL FIGURES (mention by name in anecdote field; NEVER as riddle protagonist with fictional dialogue):
+${figures || "  (none)"}
+
+DATED EVENTS (prefer these years for magic_word/answer_text when using year/Roman numeral):
+${events || "  (none)"}
+
+LOCAL TRADITIONS (mention in anecdote when relevant):
+${traditions || "  (none)"}
+
+USAGE RULES:
+- The anecdote field MUST mention at least one verified fact (figure name, exact date, iconic site) when relevant.
+- The riddle protagonist remains FICTIONAL ANONYMOUS ("the watchman who saw it", "the merchant's daughter") — NEVER attribute fictional dialogue to a real named person.
+- For magic_word using a year, use the EXACT year from the events list. Encode Roman numerals correctly (e.g. 1281 = MCCLXXXI, NOT MCCXXXI).
+- Cite the source URL footnote-style at the end of the anecdote when possible: "(Source: Wikipedia)".
+═══════════════════════════════════════════════════════════════════════
+
+`;
+  })();
+
+  const prompt = `${genreOverlay}${verifiedFactsBlock}You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
 
 I am giving you ${locations.length} researched locations. Your job is to select the best ${stepCount} that form a SAFE WALKING ROUTE (no major roads to cross, all stops within ~10 minutes' walk of each other, ideally a coherent neighbourhood) and craft a single coherent narrative around them.
 
