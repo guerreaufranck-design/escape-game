@@ -403,6 +403,13 @@ export async function discoverParcours(
     console.log(
       `[discoverParcours] Need ${stillNeeded} more stops — querying Perplexity for sub-monuments`,
     );
+    // Compteur narrative : les stops qui ne se géocodent pas sont
+    // anchored à des coords offset autour du startPoint (cf. NARRATIVE_OFFSET_M)
+    // pour ne pas tous se superposer au même point. Sinon le hard-floor
+    // 100m les massacre tous (cas Garachico où 4 stops Perplexity ont
+    // tous échoué le geocode et ont collisé à 0m du startPoint).
+    let narrativeIndex = 0;
+    const NARRATIVE_OFFSET_M = 350; // Distance des stops narrative au startPoint
     try {
       const usedNames = new Set(claudePicks.map((p) => p.name.toLowerCase()));
       const perplexityCandidates = await discoverThematicLandmarks({
@@ -459,17 +466,36 @@ export async function discoverParcours(
             `[discoverParcours] Perplexity radar pick: "${cand.name}" → ${geo.lat.toFixed(6)},${geo.lon.toFixed(6)}`,
           );
         } else {
-          // Non géocodé : mode narrative ancré sur le startPoint avec
-          // hint de navigation. Le joueur recevra une indication
-          // textuelle "Find the Library of Celsus, then open AR".
+          // Non géocodé : mode narrative spread en cercle autour du
+          // startPoint. Avant 2026-05-07, tous les stops narrative
+          // partageaient lat/lon = startPoint → tous à 0m du premier →
+          // hard-floor 100m les massacrait (cas Garachico). Maintenant
+          // chaque stop narrative est placé à un angle différent à
+          // NARRATIVE_OFFSET_M (350m) du startPoint. Le radar pointe
+          // vers une zone autour, le navigationHint guide le joueur
+          // vers le vrai bâtiment depuis cette zone.
+          //
+          // 6 angles à 60° d'écart suffisent pour stopCount jusqu'à 8 :
+          //   index 0 = N (0°), 1 = NE (60°), 2 = SE (120°), 3 = S (180°),
+          //   4 = SW (240°), 5 = NW (300°), 6+ wrap autour.
+          const angleRad = (narrativeIndex * Math.PI) / 3; // 60° par stop
+          const dLat = (NARRATIVE_OFFSET_M / 111_000) * Math.cos(angleRad);
+          const dLon =
+            (NARRATIVE_OFFSET_M /
+              (111_000 *
+                Math.max(0.01, Math.cos((params.startPoint.lat * Math.PI) / 180)))) *
+            Math.sin(angleRad);
+          narrativeIndex++;
+          const narrativeLat = params.startPoint.lat + dLat;
+          const narrativeLon = params.startPoint.lon + dLon;
           claudePicks.push({
             name: cand.name,
             description: cand.description,
             source: cand.source,
-            lat: params.startPoint.lat,
-            lon: params.startPoint.lon,
+            lat: narrativeLat,
+            lon: narrativeLon,
             placeId: `narrative:${cand.name}`,
-            distanceFromStartM: 0,
+            distanceFromStartM: NARRATIVE_OFFSET_M,
             stopMode: "narrative",
             navigationHint: `Walk through the site until you reach the ${cand.name}. Once you stand before it, open the AR camera.`,
           });
@@ -526,8 +552,21 @@ export async function discoverParcours(
   const dedupedOrder: DiscoveredStop[] = [];
   const softDropped: DiscoveredStop[] = []; // restaurables si nécessaire
   for (const stop of ordered) {
+    // EXEMPTION narrative-mode (cf. fix Garachico 2026-05-07) : les
+    // stops narrative ne sont PAS au "même endroit physique" — ils sont
+    // anchored sur des coords offset autour du startPoint pour des sites
+    // archéologiques où le radar ne peut pas pointer un sub-monument
+    // précis. Le hard-floor 100m a été conçu pour les VRAIS doublons de
+    // bâtiments (Aphaia/Museum à 73m). On ne l'applique pas aux stops
+    // narrative, ni quand on les compare à un stop kept narrative.
+    if (stop.stopMode === "narrative") {
+      dedupedOrder.push(stop);
+      continue;
+    }
     let conflict: { kept: DiscoveredStop; distance: number } | null = null;
     for (const kept of dedupedOrder) {
+      // Skip comparison contre un kept narrative — pour la même raison.
+      if (kept.stopMode === "narrative") continue;
       const d = haversineMeters(
         { lat: stop.lat, lon: stop.lon },
         { lat: kept.lat, lon: kept.lon },
