@@ -29,11 +29,6 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPipelineFailureAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
-import {
-  getGenreOverride,
-  getStopCountOverride,
-  getStartPointOverride,
-} from "@/lib/genre-overrides";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
 export const maxDuration = 600; // 10 minutes max
@@ -104,10 +99,9 @@ export async function POST(request: NextRequest) {
 
     // Point de départ du parcours. CONTRAT: oddballtrip dispose du
     // startPoint dans chaque fiche de jeu et DOIT le transmettre.
-    // C'est ce point qui sert de référence au filtre 1.5 km, à l'auto-
-    // discovery et au NN reorder. Sans lui, on retombe sur le 1er stop
-    // géocodé (heuristique correcte mais moins fiable, surtout pour les
-    // grandes villes où le parcours peut être dans un quartier).
+    // Post-refonte Phase 12 (2026-05-07), TOUTES les fiches DB ont un
+    // startPoint correct géocodé sub-degré. La validation ci-dessous
+    // rejette précocement les payloads malformés.
     //
     // Accepte plusieurs formats au cas où l'amont varie :
     //   { lat, lon } | { latitude, longitude } | { lat, lng }
@@ -117,6 +111,29 @@ export async function POST(request: NextRequest) {
       const lat = typeof sp.lat === "number" ? sp.lat : typeof sp.latitude === "number" ? sp.latitude : null;
       const lon = typeof sp.lon === "number" ? sp.lon : typeof sp.longitude === "number" ? sp.longitude : typeof sp.lng === "number" ? sp.lng : null;
       if (lat !== null && lon !== null) {
+        // Validation pre-discovery : reject 400 sur lat/lon hors range
+        // ou null-island absurde (lat=0,lon=0 hors zone Greenwich).
+        // Coupe net les payloads cassés AVANT de payer Perplexity/Claude.
+        const isPrimeMeridianGreenwich =
+          lon === 0 && lat >= 51.45 && lat <= 51.5;
+        if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+          return NextResponse.json(
+            {
+              error: "Invalid startPoint coords (lat or lon out of range)",
+              startPoint: { lat, lon },
+            },
+            { status: 400 },
+          );
+        }
+        if ((lat === 0 || lon === 0) && !isPrimeMeridianGreenwich) {
+          return NextResponse.json(
+            {
+              error: "Invalid startPoint coords (null-island 0,0 likely a bug — only Greenwich Royal Observatory is allowed at lon=0)",
+              startPoint: { lat, lon },
+            },
+            { status: 400 },
+          );
+        }
         startPoint = { lat, lon };
       } else {
         console.warn(
@@ -177,44 +194,12 @@ export async function POST(request: NextRequest) {
       genre: parseGenre(body.genre),
     };
 
-    // Override de genre par slug — harness de test MVP. Permet de forcer
-    // un genre sur une fiche EXISTANTE d'oddballtrip sans changer l'appel
-    // côté oddballtrip. Si une entrée existe pour ce slug, l'override
-    // gagne sur body.genre. Cf. src/lib/genre-overrides.ts.
-    const slugGenreOverride = getGenreOverride(template.slug);
-    if (slugGenreOverride && slugGenreOverride !== template.genre) {
-      console.log(
-        `[GenerateGame] Genre override by slug "${template.slug}": ${template.genre} → ${slugGenreOverride}`,
-      );
-      template.genre = slugGenreOverride;
-    }
-
-    // Override de stopCount par slug — pour les fiches géographiquement
-    // maigres. Réduire le stopCount déclenche l'adaptatif inter-stop /
-    // radius dans parcours-discovery (hops plus longs, zone plus large)
-    // → durée constante mais moins d'étapes.
-    const slugStopCountOverride = getStopCountOverride(template.slug);
-    if (
-      typeof slugStopCountOverride === "number" &&
-      slugStopCountOverride !== template.stopCount
-    ) {
-      console.log(
-        `[GenerateGame] StopCount override by slug "${template.slug}": ${template.stopCount} → ${slugStopCountOverride}`,
-      );
-      template.stopCount = slugStopCountOverride;
-    }
-
-    // Override du startPoint par slug — pour les fiches dont le label
-    // de vente diffère de la zone-jeu réelle (ex. "Brest" vendu, jeu
-    // à Pointe Saint-Mathieu à 22 km). Le pipeline utilise alors les
-    // coords overrides plutôt que celles transmises par oddballtrip.
-    const slugStartPointOverride = getStartPointOverride(template.slug);
-    if (slugStartPointOverride) {
-      console.log(
-        `[GenerateGame] StartPoint override by slug "${template.slug}": ${template.startPoint?.lat.toFixed(4)},${template.startPoint?.lon.toFixed(4)} → ${slugStartPointOverride.lat.toFixed(4)},${slugStartPointOverride.lon.toFixed(4)}`,
-      );
-      template.startPoint = slugStartPointOverride;
-    }
+    // Note (2026-05-07) : les 3 maps d'override hardcodées (genre,
+    // stopCount, startPoint) ont été supprimées suite à la refonte
+    // Phase 12 d'oddballtrip qui produit désormais des fiches avec
+    // les bons champs. La validation runtime (cluster centroid post-
+    // discovery) attrape les cas exceptionnels en posant le flag
+    // `games.needs_review` plutôt qu'en patchant à l'aveugle.
 
     // Idempotency: if a game with this slug already exists, return it
     const supabase = createAdminClient();
@@ -276,6 +261,14 @@ export async function POST(request: NextRequest) {
               gameId: result.gameId,
               slug: body.slug || template.slug,
               stepsCount: result.steps,
+              // Flag de review : posé par le pipeline quand la sanity-
+              // check post-discovery détecte une anomalie (cluster
+              // centroid > 5 km du startPoint). oddballtrip DOIT tenir
+              // l'envoi du code activation au client tant que l'opérateur
+              // n'a pas inspecté/corrigé via dump-game + edit-step.
+              ...(result.needsReview
+                ? { needsReview: true, reviewReason: result.reviewReason }
+                : {}),
               // CANONIQUE intent-first : la liste des landmarks réels
               // qui ont été utilisés pour générer le jeu (issue de
               // Perplexity + Google Places, sub-10m). oddballtrip DOIT
@@ -358,6 +351,9 @@ export async function POST(request: NextRequest) {
           researchDurationMs: result.researchDurationMs,
           creationDurationMs: result.creationDurationMs,
           message: `Game "${theme}" in ${city} created successfully`,
+          ...(result.needsReview
+            ? { needsReview: true, reviewReason: result.reviewReason }
+            : {}),
           ...(result.droppedStops?.length
             ? { droppedStops: result.droppedStops }
             : {}),

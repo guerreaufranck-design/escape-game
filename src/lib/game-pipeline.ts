@@ -221,6 +221,16 @@ export interface PipelineResult {
   error?: string;
   /** Structured failure category for callers to switch on. */
   errorCode?: PipelineErrorCode;
+  /**
+   * TRUE quand la sanity-check post-discovery a détecté une anomalie
+   * (typiquement centroïde des stops > 5 km du body.startPoint = signal
+   * "label SEO pris pour zone-jeu" type Brest centre vs. Pointe Saint-
+   * Mathieu). Le jeu est tout de même publié, mais oddballtrip DOIT
+   * tenir l'envoi du code activation au client jusqu'à inspection.
+   */
+  needsReview?: boolean;
+  /** Message human-readable expliquant pourquoi `needsReview=true`. */
+  reviewReason?: string;
   /** When errorCode === "GEOCODING_FAILED" / "DISCOVERY_FAILED": the
    *  list of landmark names the pipeline could not use. Useful for
    *  audit / debugging — not actionable by oddballtrip in the
@@ -424,6 +434,40 @@ export async function generateGameFromTemplate(
       console.warn(
         `[Pipeline] Widening triggered (${usedWidening.label}, ${usedWidening.multiplier}x) — auto-bumping difficulty ${template.difficulty} → 5/5 (longues marches entre stops, parcours costaud)`,
       );
+    }
+
+    // ============================================
+    // STEP 1.5 : Sanity-check cluster centroid
+    // ============================================
+    // Calcule le centroïde des stops découverts et compare au startPoint.
+    // Si > CENTROID_DRIFT_M, c'est le signal type Brest : startPoint
+    // pointe sur le label SEO (Brest centre) mais le parcours réel est
+    // ailleurs (Pointe Saint-Mathieu à 22 km). Le widening + curation
+    // Claude ont fait au mieux avec ce qu'ils avaient — mais on flag
+    // le jeu pour review humaine avant émission du code activation.
+    //
+    // Non-bloquant : le jeu publie quand même (mieux qu'un rejet hard),
+    // mais needs_review=true invite l'opérateur à inspecter.
+    const CENTROID_DRIFT_M = 5_000;
+    let needsReview = false;
+    let reviewReason: string | undefined;
+    {
+      const n = discovery.landmarks.length;
+      const cx = discovery.landmarks.reduce((s, l) => s + l.lat, 0) / n;
+      const cy = discovery.landmarks.reduce((s, l) => s + l.lon, 0) / n;
+      const drift = haversineMeters(
+        { lat: cx, lon: cy },
+        { lat: startPoint.lat, lon: startPoint.lon },
+      );
+      if (drift > CENTROID_DRIFT_M) {
+        needsReview = true;
+        reviewReason = `Cluster centroid is ${Math.round(drift / 100) / 10} km from body.startPoint (threshold ${CENTROID_DRIFT_M / 1000} km) — likely the body.startPoint targets a SEO label rather than the actual play zone. Inspect via dump-game before releasing the activation code.`;
+        console.warn(`[Pipeline] ⚠ needs_review=true — ${reviewReason}`);
+      } else {
+        console.log(
+          `[Pipeline] Cluster sanity-check OK — centroid drift ${Math.round(drift)}m < ${CENTROID_DRIFT_M}m`,
+        );
+      }
     }
 
     // ============================================
@@ -686,6 +730,8 @@ export async function generateGameFromTemplate(
       [],
       epilogue,
       verifiedLocations,
+      needsReview,
+      reviewReason,
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
@@ -760,6 +806,7 @@ export async function generateGameFromTemplate(
       creationDurationMs,
       landmarks,
       adaptedNarrative,
+      ...(needsReview ? { needsReview: true, reviewReason } : {}),
       // droppedStops exposé seulement si la discovery a rejeté des
       // candidats (pour audit côté oddballtrip — non actionnable, juste
       // informatif sur la qualité Perplexity).
@@ -810,6 +857,11 @@ async function insertGameIntoDatabase(
   // the GPS-first flow: we copy lat/lon from here verbatim into the DB
   // and never trust whatever Claude returned for that field.
   verifiedLocations: ResearchedLocation[] = [],
+  // Flag posé par la sanity-check post-discovery (cluster centroid drift).
+  // Quand true, le jeu publie quand même mais oddballtrip retient le code
+  // activation jusqu'à inspection humaine.
+  needsReview: boolean = false,
+  reviewReason: string | undefined = undefined,
 ): Promise<string> {
   const supabase = createAdminClient();
   const gameId = uuidv4();
@@ -836,6 +888,10 @@ async function insertGameIntoDatabase(
     // Narrative epilogue (English only here — translated on demand like other fields)
     epilogue_title: epilogue?.title ?? null,
     epilogue_text: epilogue?.text ?? null,
+    // Review flag — needs_review=true tient le code activation côté
+    // oddballtrip jusqu'à inspection humaine (cf. migration 023).
+    needs_review: needsReview,
+    review_reason: reviewReason ?? null,
   });
 
   if (gameError) {
