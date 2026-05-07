@@ -12,7 +12,12 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
-const MODEL_ID = "eleven_multilingual_v2";
+// Flash 2.5 multilingual : 0.5 credit/char (vs 1.0 sur V2). Qualité très
+// proche de V2 sur narration courte (riddle 1-2 phrases, anecdote 3-4,
+// dialogue 1-2). Switch décidé 2026-05-07 pour économiser 50% sur le poste
+// TTS sans dégradation perceptible côté joueur.
+// Fallback V2 si Flash refuse une voix : `eleven_multilingual_v2`.
+const MODEL_ID = "eleven_v2_5_flash_multilingual";
 const STORAGE_BUCKET = "audio";
 
 /**
