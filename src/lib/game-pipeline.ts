@@ -567,18 +567,52 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
-    // STEP 1.6 : Flag needs_review si auto-correction startPoint
+    // STEP 1.6 : Flag needs_review CONDITIONNEL
     // ============================================
-    // L'auto-correction startPoint en STEP 0 a peut-être kické si oddballtrip
-    // envoyait un startPoint à >20km de la ville géocodée. Dans ce cas
-    // le jeu est publié au BON endroit (city center), mais on flag pour
-    // que l'opérateur sache qu'oddballtrip a un bug à fixer upstream.
+    // Stratégie autonomy-first (2026-05-07) : la pipeline doit publier
+    // sans intervention humaine sur 95%+ des achats. On NE flag QUE les
+    // cas où la confiance est dégradée :
+    //
+    //   ✓ AUTO-PUBLISH (no flag) :
+    //     - Auto-correct via startPointText géocodé (~5-30m précision,
+    //       le pattern "Cluny → Brionnais corrigé via texte précis"
+    //       que tu viens de tester)
+    //     - body.startPoint cohérent avec city/textGeo (cas standard)
+    //
+    //   ⚠ FLAG needs_review :
+    //     - Auto-correct via cityCenter SEUL (~500m précision, moins fiable)
+    //     - Widening 2.5x triggered (zone sparse, content quality at risk)
+    //     - (le centroid drift check post-discovery flag aussi indépendamment)
+    //
+    // Le marché global impose : un acheteur à 3h du matin doit recevoir
+    // son code dans les 5-7 min sans qu'un humain le valide. Les rares
+    // cas flaggés sont les vraies anomalies qui méritent inspection.
     if (startPointAutoCorrected) {
+      if (startPointAutoCorrected.source === "startPointText") {
+        // Haute précision : auto-correct via le texte géocodé. Pas de flag.
+        // On log juste pour traçabilité — utile pour identifier les
+        // fiches oddballtrip à corriger upstream à un autre moment.
+        console.log(
+          `[Pipeline] AUTO-PUBLISH after correction via startPointText (high precision, no review needed). UPSTREAM BUG to fix later: oddballtrip should fix stored startPoint for slug "${template.slug}" (was ${startPointAutoCorrected.driftKm}km off).`,
+        );
+      } else {
+        // Précision dégradée (cityCenter ~500m) : on flag pour review
+        needsReview = true;
+        const correctReason = `body.startPoint auto-corrected to CITY CENTER (less precise than startPointText would be). Was ${startPointAutoCorrected.driftKm}km off. Game playable at city level but checkpoint precision is ~500m. oddballtrip should provide startPointText for this slug to enable auto-publish next time.`;
+        reviewReason = reviewReason
+          ? `${reviewReason} | ${correctReason}`
+          : correctReason;
+      }
+    }
+
+    // Widening 2.5x = zone géographiquement extreme. La qualité des
+    // stops trouvés peut être limite — on flag pour double-check humain.
+    if (usedWidening.multiplier >= 2.5) {
       needsReview = true;
-      const correctReason = `body.startPoint auto-corrected: was ${startPointAutoCorrected.from.lat.toFixed(4)},${startPointAutoCorrected.from.lon.toFixed(4)} (${startPointAutoCorrected.driftKm}km from ${startPointAutoCorrected.source}), overridden to ${startPointAutoCorrected.to.lat.toFixed(4)},${startPointAutoCorrected.to.lon.toFixed(4)}. Game IS playable at the correct location. UPSTREAM BUG: oddballtrip should fix the stored startPoint for slug "${template.slug}".`;
+      const wideningReason = `Discovery widened to ${usedWidening.label} (radius/maxHop × ${usedWidening.multiplier}) to find ≥5 walkable stops. Zone is sparse — verify the parcours quality is acceptable before releasing.`;
       reviewReason = reviewReason
-        ? `${reviewReason} | ${correctReason}`
-        : correctReason;
+        ? `${reviewReason} | ${wideningReason}`
+        : wideningReason;
     }
 
     // ============================================
