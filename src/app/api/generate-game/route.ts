@@ -146,6 +146,24 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Description textuelle du checkpoint envoyée par oddballtrip — accepte
+    // plusieurs noms de champs pour robustesse (en attendant un contrat
+    // unifié). Le pipeline géocode ce texte comme source d'autorité PRÉCISE
+    // (parvis, fontaine, place exacte) avant de tomber sur le city center.
+    const startPointText: string | undefined = (() => {
+      const candidates = [
+        body.startPointText,
+        body.startPointDescription,
+        body.meetingPoint,
+        body.checkpoint,
+        body.meetingLocation,
+      ];
+      for (const c of candidates) {
+        if (typeof c === "string" && c.trim().length > 0) return c.trim();
+      }
+      return undefined;
+    })();
+
     const template: GameTemplate = {
       slug:
         body.slug ||
@@ -158,6 +176,7 @@ export async function POST(request: NextRequest) {
       difficulty: body.difficulty || 3,
       estimatedDurationMin: body.estimatedDuration || body.estimatedDurationMin || 90,
       coverImage: body.coverImage || null,
+      startPointText,
       // body.stops est silencieusement ignoré par le pipeline intent-first
       // (cf. game-pipeline.ts) — on le passe quand même au template pour
       // que le log "ignored" se déclenche dans la pipeline et que oddballtrip
