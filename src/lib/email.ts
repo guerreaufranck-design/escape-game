@@ -50,6 +50,11 @@ export async function sendPipelineFailureAlert(params: {
   durationSeconds?: number;
   buyerEmail?: string;
   orderId?: string;
+  /** StartPoint reçu d'oddballtrip dans le body. Affiché dans l'email
+   *  + lien Google Maps cliquable pour vérifier les coords visuellement.
+   *  Critique pour diagnostiquer les TOO_FEW_LANDMARKS / GEOCODING_FAILED. */
+  startPoint?: { lat: number; lon: number };
+  stopCount?: number;
 }): Promise<void> {
   const client = getResendClient();
   if (!client) return;
@@ -67,6 +72,8 @@ export async function sendPipelineFailureAlert(params: {
     durationSeconds,
     buyerEmail,
     orderId,
+    startPoint,
+    stopCount,
   } = params;
 
   // Build recipient list: escape-game admin always; oddballtrip team
@@ -129,6 +136,12 @@ export async function sendPipelineFailureAlert(params: {
             <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Slug</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;"><code>${slug}</code></td></tr>
             ${errorCode ? `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Code</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;"><code>${errorCode}</code></td></tr>` : ""}
             <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Erreur</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; color: #dc2626;">${error}</td></tr>
+            ${
+              startPoint
+                ? `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">StartPoint reçu</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-family: monospace;">${startPoint.lat.toFixed(6)}, ${startPoint.lon.toFixed(6)} <a href="https://www.google.com/maps/@${startPoint.lat},${startPoint.lon},18z" style="color: #2563eb; margin-left: 8px;">📍 Voir sur Google Maps</a></td></tr>`
+                : `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">StartPoint reçu</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; color: #dc2626;"><strong>MISSING</strong> — oddballtrip n'a pas transmis body.startPoint</td></tr>`
+            }
+            ${typeof stopCount === "number" ? `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">StopCount demandé</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${stopCount}</td></tr>` : ""}
             ${durationSeconds ? `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Durée</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${durationSeconds}s</td></tr>` : ""}
             ${buyerEmail ? `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Email client</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;"><a href="mailto:${buyerEmail}">${buyerEmail}</a></td></tr>` : ""}
             ${orderId ? `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Commande</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${orderId}</td></tr>` : ""}

@@ -406,6 +406,8 @@ export async function POST(request: NextRequest) {
         durationSeconds: Math.round((result.durationMs || 0) / 1000),
         buyerEmail: body.buyerEmail,
         orderId: body.orderId,
+        startPoint: template.startPoint,
+        stopCount: template.stopCount,
       });
 
       // Send failure callback to OddballTrip so it can handle the
