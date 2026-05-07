@@ -195,6 +195,89 @@ export async function sendPipelineFailureAlert(params: {
 }
 
 /**
+ * Send alert when a generated game has been flagged needs_review=true
+ * by the pipeline sanity-check (cluster centroid drift > 5 km from
+ * body.startPoint, etc.). Le jeu EST publié — c'est juste un avertissement
+ * pour que l'opérateur inspecte AVANT que le code activation parte au
+ * client. Sans cet email, le flag dort en DB et l'opérateur peut rater
+ * un jeu à problème.
+ */
+export async function sendNeedsReviewAlert(params: {
+  gameId: string;
+  slug: string;
+  city: string;
+  theme: string;
+  reviewReason: string;
+  buyerEmail?: string;
+  orderId?: string;
+}): Promise<void> {
+  const client = getResendClient();
+  if (!client) return;
+
+  const { gameId, slug, city, theme, reviewReason, buyerEmail, orderId } = params;
+
+  // Recipient list : admin escape-game + ops oddballtrip si configurée.
+  const to = ODDBALLTRIP_ALERT_EMAIL
+    ? [ADMIN_EMAIL, ODDBALLTRIP_ALERT_EMAIL]
+    : [ADMIN_EMAIL];
+
+  try {
+    await client.emails.send({
+      from: FROM_EMAIL,
+      to,
+      subject: `🟠 Jeu à reviewer — ${city} (${slug})`,
+      html: `
+        <div style="font-family: system-ui, sans-serif; max-width: 640px; margin: 0 auto;">
+          <h2 style="color: #d97706;">🟠 Sanity-check : jeu publié mais à reviewer</h2>
+
+          <p>
+            Un jeu vient d'être généré et a été flaggé par la sanity-check post-discovery.
+            Le jeu <strong>est en DB et publié</strong>, mais avant que le code activation
+            soit envoyé au client, il faut inspecter le contenu et corriger si besoin.
+          </p>
+
+          <table style="width: 100%; border-collapse: collapse; margin: 16px 0;">
+            <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Slug</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;"><code>${slug}</code></td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Game ID</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;"><code>${gameId}</code></td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Ville</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${city}</td></tr>
+            <tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Thème</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${theme}</td></tr>
+            ${buyerEmail ? `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Client</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;"><a href="mailto:${buyerEmail}">${buyerEmail}</a></td></tr>` : ""}
+            ${orderId ? `<tr><td style="padding: 8px; border-bottom: 1px solid #e5e7eb; font-weight: 600;">Commande</td><td style="padding: 8px; border-bottom: 1px solid #e5e7eb;">${orderId}</td></tr>` : ""}
+          </table>
+
+          <div style="background: #fef3c7; border-left: 4px solid #d97706; padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
+            <strong>Raison du flag :</strong><br>
+            <span style="color: #92400e;">${reviewReason}</span>
+          </div>
+
+          <h3 style="margin-top: 24px; color: #1f2937;">⚡ Procédure de release</h3>
+          <ol style="line-height: 1.8;">
+            <li>Inspecter le contenu :<br><code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">npx tsx scripts/dump-game.ts ${slug}</code></li>
+            <li>Si correction nécessaire :<br><code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">npx tsx scripts/edit-step.ts &lt;step-id&gt; &lt;field&gt; "&lt;value&gt;"</code></li>
+            <li>Re-pré-générer audios après éditions :<br><code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">npx tsx scripts/republish-game.ts ${slug} --language=fr</code></li>
+            <li>Lever le flag pour libérer l'envoi du code :<br><code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px;">npx tsx scripts/release-game.ts ${slug}</code></li>
+          </ol>
+
+          <p style="background: #fee2e2; border: 1px solid #ef4444; border-radius: 8px; padding: 12px; margin-top: 24px;">
+            <strong>⚠️ Côté oddballtrip :</strong> tant que <code>needs_review=true</code> en DB
+            escape-game, oddballtrip retient l'envoi du code activation au client.
+            Le client ne reçoit RIEN tant que le flag n'est pas levé.
+          </p>
+
+          <p style="color: #6b7280; font-size: 12px; margin-top: 24px;">
+            Timestamp: ${new Date().toISOString()}<br>
+            Escape Game Pipeline — sanity-check post-discovery
+          </p>
+        </div>
+      `,
+    });
+    console.log(`[Email] needs_review alert sent to ${to.join(", ")} for slug=${slug}`);
+  } catch (err) {
+    console.error(`[Email] Failed to send needs_review alert: ${err instanceof Error ? err.message : err}`);
+  }
+}
+
+/**
  * Send alert when code generation fails after a purchase
  */
 export async function sendCodeGenerationFailureAlert(params: {

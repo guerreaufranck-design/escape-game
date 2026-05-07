@@ -27,7 +27,7 @@ import {
   type GameTemplate,
 } from "@/lib/game-pipeline";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendPipelineFailureAlert } from "@/lib/email";
+import { sendPipelineFailureAlert, sendNeedsReviewAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
@@ -299,6 +299,27 @@ export async function POST(request: NextRequest) {
           console.log(`[GenerateGame] Callback response: ${cbRes.status} ${cbRes.statusText}`);
         } catch (err) {
           console.error(`[GenerateGame] Callback failed: ${err instanceof Error ? err.message : err}`);
+        }
+      }
+
+      // Alerte needs_review : si la sanity-check post-discovery a flaggé
+      // ce jeu, on prévient l'opérateur AVANT que le code activation
+      // soit envoyé au client. Email non-bloquant.
+      if (result.needsReview && result.gameId && result.reviewReason) {
+        try {
+          await sendNeedsReviewAlert({
+            gameId: result.gameId,
+            slug: template.slug,
+            city: template.city,
+            theme: template.theme,
+            reviewReason: result.reviewReason,
+            buyerEmail: body.buyerEmail,
+            orderId: body.orderId,
+          });
+        } catch (alertErr) {
+          console.error(
+            `[GenerateGame] needs_review alert failed: ${alertErr instanceof Error ? alertErr.message : alertErr}`,
+          );
         }
       }
 
