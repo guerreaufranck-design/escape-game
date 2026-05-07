@@ -471,6 +471,63 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
+    // STEP 1.6 : Sanity-check city ↔ startPoint
+    // ============================================
+    // 2e couche de défense : géocode le `city` indépendamment et compare
+    // au body.startPoint. Détecte le pattern Cluny / Garachico où
+    // oddballtrip envoie une ville donnée mais un startPoint qui pointe
+    // ailleurs (~30 km au sud de Cluny dans le Brionnais ; ~50 km à l'est
+    // de Garachico). Le centroid check ne capte pas ce cas car les stops
+    // sont spread autour du startPoint (mauvais), donc centroid = startPoint.
+    //
+    // 20 km de drift = seuil raisonnable :
+    //   - Brest (Pointe Saint-Mathieu legitimately à 22 km de Brest centre)
+    //     déclenche le flag → opérateur inspecte, valide manuellement
+    //   - Cluny mauvais startPoint à 30 km dans le Brionnais → flag
+    //   - Garachico mauvais startPoint à 50 km → flag
+    //   - Cas normaux (city ≈ startPoint à <5 km) → pas de flag
+    //
+    // Non-bloquant : le jeu publie, l'opérateur inspecte avant émission code.
+    const CITY_STARTPOINT_DRIFT_M = 20_000;
+    try {
+      // Garde le 1er token avant " · " ou ", " — typique des labels
+      // composés ("Cluny, Saône-et-Loire" → "Cluny" ;
+      //  "Brest · Tour Tanguy" → "Brest").
+      const cityToGeocode = template.city.split(/\s*[·,]\s*/)[0].trim();
+      const cityGeo = await geocodeLocation(
+        cityToGeocode,
+        cityToGeocode,
+        template.country,
+      );
+      if (cityGeo) {
+        const cityDrift = haversineMeters(
+          { lat: cityGeo.lat, lon: cityGeo.lon },
+          { lat: startPoint.lat, lon: startPoint.lon },
+        );
+        if (cityDrift > CITY_STARTPOINT_DRIFT_M) {
+          needsReview = true;
+          const cityReason = `city "${cityToGeocode}" geocodes at ${cityGeo.lat.toFixed(4)},${cityGeo.lon.toFixed(4)} but body.startPoint is ${(cityDrift / 1000).toFixed(1)} km away. Either the city label is SEO-only and the startPoint targets a separate play-zone (legitimate, e.g. Brest → Pointe Saint-Mathieu) — OR oddballtrip sent the wrong startPoint (bug, e.g. Cluny → Brionnais). Inspect via dump-game before releasing the activation code.`;
+          reviewReason = reviewReason
+            ? `${reviewReason} | ${cityReason}`
+            : cityReason;
+          console.warn(`[Pipeline] ⚠ city/startPoint mismatch — ${cityReason}`);
+        } else {
+          console.log(
+            `[Pipeline] City sanity-check OK — "${cityToGeocode}" at ${cityGeo.lat.toFixed(4)},${cityGeo.lon.toFixed(4)} drift ${Math.round(cityDrift)}m < ${CITY_STARTPOINT_DRIFT_M}m from startPoint`,
+          );
+        }
+      } else {
+        console.warn(
+          `[Pipeline] City "${cityToGeocode}" failed to geocode — skipping city/startPoint sanity-check`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[Pipeline] City sanity-check threw (non-blocking): ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
+    // ============================================
     // STEP 2 : Convert to ResearchedLocation[] for downstream helpers
     // ============================================
     // Les helpers existants (generateGameSteps, fetchPhotosForSteps,
