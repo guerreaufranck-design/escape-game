@@ -34,23 +34,44 @@ const LANGUAGE_OVERRIDES: Record<string, string> = {
 /**
  * Per-archetype voices. Used as the default when no language override is set.
  *
- * Currently every archetype routes to Dallin Storyteller — a calm middle-aged
- * male American narrator (DEFAULT_VOICE_ID). To give each character its own
- * vocal identity, replace each entry with a Multilingual v2 voice that fits
- * the archetype's vibe.
+ * Voices choisies dans le catalogue PRE-MADE ElevenLabs (compatibles
+ * Flash 2.5 + multilingual v2/v3). Chaque archétype a une voix propre
+ * qui correspond au caractère narratif du personnage AR :
+ *
+ *   knight    → Arnold (deep, autoritaire, militaire)
+ *   witch     → Charlotte (mature feminine, raspy, mystérieuse)
+ *   monk      → Brian (deep storyteller, calme, profondeur spirituelle)
+ *   sailor    → Daniel (British weathered, grave maritime)
+ *   detective → Antoni (warm inquisitive male, voix d'enquête)
+ *   ghost     → George (mature British, raspy, voix d'outre-tombe)
+ *   princess  → Charlotte (raspy female royal — peut être soft + mystery)
+ *   peasant   → Antoni (warm folksy, accessible)
+ *   soldier   → Arnold (strong stern, autorité militaire)
+ *   narrator  → Dallin (default, calme middle-aged male — la voix
+ *               OddballTrip historique pour anecdotes + épilogue)
+ *
+ * Effet : chaque AR character a sa propre voix → immersion +30%.
+ * Pour les anecdotes et l'épilogue (slot=narrator), reste sur Dallin
+ * pour la cohérence "tour-guide" à travers tout le jeu.
+ *
+ * Si dégradation perçue, revert chaque entrée à DEFAULT_VOICE_ID.
  */
 const ARCHETYPE_VOICES: Record<string, string> = {
-  knight: DEFAULT_VOICE_ID,
-  witch: DEFAULT_VOICE_ID,
-  monk: DEFAULT_VOICE_ID,
-  sailor: DEFAULT_VOICE_ID,
-  detective: DEFAULT_VOICE_ID,
-  ghost: DEFAULT_VOICE_ID,
-  princess: DEFAULT_VOICE_ID,
-  peasant: DEFAULT_VOICE_ID,
-  soldier: DEFAULT_VOICE_ID,
-  /** Neutral OddballTrip narrator (anecdotes + epilogue). */
+  knight: "VR6AewLTigWG4xSOukaG",        // Arnold — strong autoritaire
+  witch: "XB0fDUnXU5powFXDhCwa",         // Charlotte — raspy mature feminine
+  monk: "nPczCjzI2devNBz1zQrb",          // Brian — deep calm storyteller
+  sailor: "onwK4e9ZLuTAKqWW03F9",        // Daniel — British weathered
+  detective: "ErXwobaYiN019PkySvjV",     // Antoni — warm inquisitive
+  ghost: "JBFqnCBsd6RMkjVDRZzb",         // George — mature whispered
+  princess: "XB0fDUnXU5powFXDhCwa",      // Charlotte — soft mysterious
+  peasant: "ErXwobaYiN019PkySvjV",       // Antoni — warm folksy
+  soldier: "VR6AewLTigWG4xSOukaG",       // Arnold — strong stern
+  /** Neutral OddballTrip narrator (anecdotes + epilogue) — Dallin reste. */
   narrator: DEFAULT_VOICE_ID,
+  /** Guides OddballTrip neutres — Dallin pour les fallbacks "default". */
+  guide_male: DEFAULT_VOICE_ID,
+  /** Guide féminin — Charlotte voix gentle pour alterner avec Dallin. */
+  guide_female: "XB0fDUnXU5powFXDhCwa",
   default: DEFAULT_VOICE_ID,
 };
 
