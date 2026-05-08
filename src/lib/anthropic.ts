@@ -239,6 +239,33 @@ C. The riddle IS the tour. Weave in REAL touristic / cultural / historical
 D. The answer_text field must contain ONLY the short answer. NEVER a
    sentence. Copy it EXACTLY as provided.
 
+E. RIDDLE STRUCTURE VARIETY — across the ${stepCount} stops, you MUST
+   use DIFFERENT opening structures. NEVER repeat the same beat from
+   stop to stop. Required mix (use at least 3 of these 6 patterns):
+
+   1. SENSORY OPENER : "The smell of incense still clings to these
+      walls..." / "Listen — can you hear the bells?" (concrete sensory
+      detail anchoring the player)
+   2. RHETORICAL QUESTION : "Why did the abbot leave that night?" /
+      "What did the merchant know that cost him his life?"
+   3. DATE + EVENT : "May 16, 1770. The young Austrian dauphine knelt..."
+      (specific date + event from verifiedContext if available)
+   4. WHISPERED QUOTE : "'I have seen the storm,' the watchman wrote in
+      his final entry..." (quoted phrase, fictional anonymous source)
+   5. HYPOTHETICAL : "Imagine these stones in 1281, when the first
+      Mongol sail appeared on the horizon..."
+   6. PARADOX / IRONY : "The same hands that built this fortress
+      against pirates would later open its gates to Napoleon..."
+
+   FORBIDDEN : opening 2+ stops with the same pattern (e.g. all stops
+   starting with "It was [date] when..." → BANNED). Reviewer will reject.
+
+F. RIDDLE PROTAGONIST DIVERSITY — the fictional anonymous protagonist
+   varies across stops. Examples : "the watchman", "the abbess's
+   secretary", "the cabin boy", "the merchant's daughter", "the
+   apprentice scribe", "the gatekeeper's wife". NEVER reuse the same
+   archetype twice in the same game. Each stop = different POV.
+
 GAME PARAMETERS:
 - City: ${city}, ${country}
 - Theme: ${theme}

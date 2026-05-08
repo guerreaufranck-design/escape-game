@@ -37,7 +37,8 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
 - AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Most stops stay "default" (OddballTrip neutral guide). Genre adds NO override. When (and only when) a slam-dunk thematic match exists, prefer monk / knight / sailor / soldier / peasant according to the era. Never push witch / princess / ghost / detective on a non-matching site just because the genre is historical.
 - ANECDOTE: stand-alone historical fact, MUST be cross-checkable. Cite era, dates, named persons.`,
     epilogueDirectives: `- FRAME: a long-kept historical revelation that ties all stops into one true story-arc the player just walked through.
-- TONE: erudite, warm, like a museum curator unveiling a rare archive document.`,
+- TONE: erudite, warm, like a museum curator unveiling a rare archive document.
+- TWIST OBLIGATOIRE: end with a HIDDEN-DETAIL revelation that subverts the player's reading. Examples: "What you learned today is what historians once dismissed as legend until 2018, when a sealed archive opened" / "The real protagonist of this story was not [X] but the women whose names history forgot" / "The truth is more uncomfortable than the legend: [unexpected fact]". The twist makes the player think back AND tell their friends.`,
   },
 
   mystery: {
@@ -49,7 +50,8 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
 - AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Mystery does NOT entitle you to push detective on every stop. A modern art gallery, a museum, a generic civic building → "default" (OddballTrip guide), NOT detective. Only when a stop is a slam-dunk match (a 1850-1940 noir-coded site, a documented crime scene, a cemetery for the victim) do you pick a thematic; in that case, prefer detective for noir-era sites, ghost for victim-tied tombs/ruins.
 - ANECDOTE: a real local crime, smuggling tale, or fait-divers from this city if one fits; otherwise a real period detail (police-archive practice, contemporary criminology, cold case).`,
     epilogueDirectives: `- FRAME: the case is closed. Reveal who did it, why, and what each stop's clue meant in the chain of evidence.
-- TONE: detective wrap-up — the final monologue of a Maigret, a Sherlock, a Columbo. Calm, methodical, one human beat at the end.`,
+- TONE: detective wrap-up — the final monologue of a Maigret, a Sherlock, a Columbo. Calm, methodical, one human beat at the end.
+- TWIST OBLIGATOIRE: the resolution must be COUNTER-INTUITIVE. The "obvious" suspect from the riddles is INNOCENT. The real culprit was hidden in plain sight (often the witness, the helper, or the victim's own family). Inspired by Agatha Christie endings — the player should mentally re-read the riddles and see clues they missed.`,
   },
 
   fantasy: {
@@ -61,7 +63,8 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
 - AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Genre does NOT entitle you to push knight / witch / princess on every stop. Civic buildings, modern museums, plazas → "default". Only on a slam-dunk match (medieval castle = knight, witch-trial site = witch, royal palace = princess) do you swap.
 - ANECDOTE: a real local legend, folklore, or medieval superstition tied to this place — keep it factually framed ("locals from the 14th c. believed...").`,
     epilogueDirectives: `- FRAME: the prophecy is fulfilled. The hidden realm anchors back into the city as the player walks away.
-- TONE: bardic, lyrical, like a Celtic oral storyteller closing a saga around a fire.`,
+- TONE: bardic, lyrical, like a Celtic oral storyteller closing a saga around a fire.
+- TWIST OBLIGATOIRE: the prophecy was NOT what the riddles suggested. The player has just unknowingly broken/sealed/awakened something. The "magical realm" was real — but the hero's role was inverted (you were the antagonist all along, OR the chosen one was someone else and you completed THEIR quest unknowingly).`,
   },
 
   romance: {
@@ -73,7 +76,8 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
 - AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Most stops stay "default" — a market square or a riverbank doesn't have a romance archetype in our catalogue. Only on slam-dunk matches do you swap: princess on a royal palace / ducal residence, monk on a chapel/church, peasant on a village mill.
 - ANECDOTE: a real local love story (verifiable couple, marriage record, novel set here) if one fits; else a romantic period-detail (love-letter customs, secret balcony codes, contraband marriages).`,
     epilogueDirectives: `- FRAME: the lovers' fate, told with elegance — reunited, parted, immortalised.
-- TONE: lyrical, like the closing pages of a 19th-c. classic novel; one tear, one breath.`,
+- TONE: lyrical, like the closing pages of a 19th-c. classic novel; one tear, one breath.
+- TWIST OBLIGATOIRE: the love story is NOT what the player assumed. The two lovers the riddles hinted at were never the real couple — the real love was between [unexpected pair], or one of them was hiding their true identity. End on bittersweet note: love existed but was never claimed publicly, OR was claimed by another name in history. Inspired by Anaïs Nin / Marguerite Duras endings.`,
   },
 
   supernatural: {
@@ -85,7 +89,8 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
 - AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Genre does NOT entitle you to put ghost on every stop. A modern shop, a gallery, a contemporary plaza → "default". Ghost is the natural pick on slam-dunk sites only: cemeteries, mausoleums, crypts, ruins, sites of documented tragic deaths. Witch is acceptable on documented persecution / occult-folklore sites.
 - ANECDOTE: a real local ghost story, suicide-archive, or supernatural folklore tied to this place — most cities have at least one, surface it.`,
     epilogueDirectives: `- FRAME: the spirit's truth is revealed; the haunting is explained, not exorcised. The city remains haunted but the player understands.
-- TONE: melancholic, gothic, like the closing of a M. R. James or Shirley Jackson tale.`,
+- TONE: melancholic, gothic, like the closing of a M. R. James or Shirley Jackson tale.
+- TWIST OBLIGATOIRE: the ghost's motivation is the OPPOSITE of what the riddles suggested. The "vengeful spirit" was actually protecting someone. The "tragic suicide" was murder dressed as suicide. The "haunting" is in fact the spirit trying to deliver a message to the LIVING (often a descendant who passes through). Player walks away feeling watched — in a benevolent way.`,
   },
 
   espionnage: {
@@ -97,7 +102,8 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
 - AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Modern civic buildings, hotels-as-safehouses, generic plazas → "default" (OddballTrip guide). Only on slam-dunk matches do you swap: detective on a 1850-1940 noir-tied building, soldier on a documented military / intel / war-memorial site, sailor on a port that hosted real cold-war ops.
 - ANECDOTE: a real local cold-war episode, cipher-history detail, or military-intelligence tidbit — Berlin, Vienna, Lisbon, France's Atlantic ports all have rich material.`,
     epilogueDirectives: `- FRAME: the mission is closed. The agent's debrief reveals the operation's codename, the asset's fate, the geopolitical stakes.
-- TONE: clinical — like a declassified file's executive summary, with one human note at the end.`,
+- TONE: clinical — like a declassified file's executive summary, with one human note at the end.
+- TWIST OBLIGATOIRE: the player has been the target of counter-intelligence the whole time. The "agent" they were tracking was a double agent, OR was their own handler in disguise, OR the entire operation was a deception orchestrated by the OTHER side. End with: "[ASSET] was never the asset. You were." Player feels the rug pulled.`,
   },
 
   cinema: {
@@ -109,7 +115,8 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
 - AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Cinema rarely produces a slam-dunk match — most stops stay "default". Only swap when the SITE itself fits an archetype (a cathedral filmed in a period drama → monk, a dock filmed in a noir → sailor). Don't pick ghost or detective just because a film of that genre was shot there.
 - ANECDOTE: a real local filming-history detail (which film, which director, which year) if you have one; else a real cultural film-fact about the city's cinema scene.`,
     epilogueDirectives: `- FRAME: the player has walked through a curated cinematic montage of the city. The credits roll.
-- TONE: enthusiastic film-archive curator's voice-over, with one final critical insight.`,
+- TONE: enthusiastic film-archive curator's voice-over, with one final critical insight.
+- TWIST OBLIGATOIRE: reveal a "missing scene" — a detail in the film(s) cited that the player never noticed and that recontextualizes everything. OR reveal that one of the locations was the inspiration for a SCENE in a famous film the player didn't know was shot/inspired here. Player goes home, rewatches the film, sees the location, "no way".`,
   },
 
   fairytale: {
@@ -121,7 +128,8 @@ export const GENRE_TEMPLATES: Record<GameGenre, GenreTemplate> = {
 - AR CHARACTER: the slam-dunk DEFAULT-FIRST rule (detailed below) applies UNCHANGED. Genre does NOT entitle you to push princess / witch / knight on every stop. A market square or a generic park stays "default". Only on slam-dunk matches: princess on a royal palace, witch on a documented witch-trial / persecution site, knight on a medieval castle.
 - ANECDOTE: a real folkloric / fairytale connection of the place (originated a famous tale, inspired a Disney film, has a local legend); else a real history-fact framed warmly for a young audience.`,
     epilogueDirectives: `- FRAME: the moral of the tale, with the player as the hero who saw the kingdom from the inside.
-- TONE: a warm storytelling close, like a parent finishing a bedtime tale.`,
+- TONE: a warm storytelling close, like a parent finishing a bedtime tale.
+- TWIST OBLIGATOIRE: subvert the fairytale moral. The "wicked stepmother" was protecting the princess. The "evil witch" was the only one telling the truth. The "happy ending" is more ambiguous than children's tales. End with a wink to the adult player: "And so the tale was told. But the children were never told the OTHER version." Inspired by Angela Carter retellings.`,
   },
 };
 
