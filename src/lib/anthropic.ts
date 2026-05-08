@@ -146,27 +146,68 @@ export async function generateGameSteps(
 ═══════════════════════════════════════════════════════════════════════
 VERIFIED FACTS (from Perplexity Deep Research, with source URLs)
 ═══════════════════════════════════════════════════════════════════════
-You MUST use these facts as ANCHORS for the anecdote field. Cite them
-explicitly. They are documented and verifiable. Riddle protagonists
-stay FICTIONAL ANONYMOUS, but anecdotes anchor on these real facts.
+You MUST use these facts as ANCHORS. Anecdotes are NOT a place for
+imagination — they are factual ground from which the fictional riddle
+draws its credibility.
 
-ICONIC SITES (prioritize these in your stop selection if they match the input locations):
+ICONIC SITES (prioritize these if they match input locations):
 ${sites || "  (none)"}
 
-REAL HISTORICAL FIGURES (mention by name in anecdote field; NEVER as riddle protagonist with fictional dialogue):
+REAL HISTORICAL FIGURES (USE THESE NAMES — see strict rule below):
 ${figures || "  (none)"}
 
-DATED EVENTS (prefer these years for magic_word/answer_text when using year/Roman numeral):
+DATED EVENTS (USE THESE YEARS — see strict rule below):
 ${events || "  (none)"}
 
 LOCAL TRADITIONS (mention in anecdote when relevant):
 ${traditions || "  (none)"}
 
-USAGE RULES:
-- The anecdote field MUST mention at least one verified fact (figure name, exact date, iconic site) when relevant.
-- The riddle protagonist remains FICTIONAL ANONYMOUS ("the watchman who saw it", "the merchant's daughter") — NEVER attribute fictional dialogue to a real named person.
-- For magic_word using a year, use the EXACT year from the events list. Encode Roman numerals correctly (e.g. 1281 = MCCLXXXI, NOT MCCXXXI).
-- Cite the source URL footnote-style at the end of the anecdote when possible: "(Source: Wikipedia)".
+═══════════════════════════════════════════════════════════════════════
+STRICT USAGE RULES (FOLLOW EXACTLY)
+═══════════════════════════════════════════════════════════════════════
+
+RULE 1 — REAL FIGURES IN ANECDOTE
+  Each anecdote field MUST cite at least ONE real historical figure
+  from the list above WHEN at least one figure is provided. Use their
+  full name + lifespan + role. DO NOT invent fictional names like
+  "Brother Augustin", "Master strategist", "Captain Mendoza" when a
+  REAL person from the list fits the context. The fiction lives in
+  the riddle — the anecdote belongs to history.
+
+  Example BAD (when verified figures are provided):
+    "Brother Augustin fled this abbey in 1790 carrying secret plans..."
+  Example GOOD:
+    "Dom Antoine de Besse (1731-1812), the last abbot of Cluny, was
+     forced to flee in 1790 when revolutionary forces arrived. (Source:
+     Britannica)"
+
+RULE 2 — FICTIONAL PROTAGONIST IN RIDDLE ONLY
+  The riddle's narrator/protagonist remains FICTIONAL ANONYMOUS:
+  "the watchman who saw it", "the abbot's secretary", "the merchant's
+  daughter". NEVER put fictional words/actions in the mouth of a
+  real named person — this is libel risk + Gemini translation refusal.
+  REAL figures = ANECDOTE. FICTIONAL voices = RIDDLE.
+
+RULE 3 — DATED EVENTS DRIVE MAGIC WORDS
+  When using a year as answer_text or ar_facade_text:
+  → Use the EXACT year from the verified events list when one fits the stop's theme.
+  → DO NOT use approximate years that "feel period-appropriate".
+  → ENCODE Roman numerals manually and double-check :
+       1066 = MLXVI       (M=1000 + LXVI=66)
+       1281 = MCCLXXXI    (M=1000 + CC=200 + LXXX=80 + I=1)
+       1492 = MCDXCII     (M=1000 + CD=400 + XC=90 + II=2)
+       1789 = MDCCLXXXIX  (M=1000 + DCC=700 + LXXX=80 + IX=9)
+       1944 = MCMXLIV     (M=1000 + CM=900 + XL=40 + IV=4)
+  Wrong roman numerals = AUTO-CORRECTED post-process. Save us the work.
+
+RULE 4 — SOURCE CITATION
+  Anecdotes ending with parenthetical source : "(Source: Wikipedia)"
+  or "(Source: Britannica)" — for player credibility.
+
+RULE 5 — DISTRIBUTION
+  If you have N verified figures and ${stepCount} stops, distribute the
+  figures across stops: each anecdote anchors on a DIFFERENT verified
+  figure when possible. Don't repeat the same figure on every stop.
 ═══════════════════════════════════════════════════════════════════════
 
 `;

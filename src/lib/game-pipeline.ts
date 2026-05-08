@@ -827,28 +827,22 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
-    // STEP 4.5 : Roman numeral sanity-check
+    // STEP 4.5 : Roman numeral AUTO-FIX
     // ============================================
-    // Bug observé en prod (Hakata 2026-05-07) : Claude a généré
+    // Bug observé prod (Hakata 2026-05-07) : Claude a généré
     // answer_text="MCCXXXI" (=1231) alors que le riddle parlait de 1281
-    // (Mongol invasion year). MCCXXXI est un roman numeral VALIDE mais
-    // FAUX pour la date documentée. L'épilogue a même cité un autre roman
-    // ("MCMLXXXI"=1981) — triple incohérence visible par tout joueur féru.
+    // (Mongol invasion year). Triple incohérence riddle/answer/épilogue.
     //
-    // Stratégie : on détecte les roman numerals dans answer_text, on les
-    // décode, puis on cherche dans le riddle/anecdote la VRAIE date qui
-    // a probablement été visée par Claude. Si écart > 100 ans → on log
-    // un WARNING (le bug est documenté côté review_reason → opérateur
-    // peut décider de fix manuellement via edit-step).
+    // Stratégie auto-fix (2026-05-08) :
+    //   1. Détecte answer_text Roman numeral
+    //   2. Cherche les années dans riddle/anecdote
+    //   3. Cross-référence avec verifiedContext.events si dispo (Perplexity)
+    //   4. Si l'année "intended" est claire, AUTO-CORRIGE answer_text +
+    //      ar_facade_text avec le bon encoding
+    //   5. Sinon, flag needs_review (cas ambigu)
     //
-    // On NE corrige PAS automatiquement parce que :
-    //   - On ne peut pas garantir laquelle des dates dans le riddle est
-    //     la "bonne" (il peut y en avoir plusieurs)
-    //   - Modifier answer_text sans modifier le riddle/anecdote en cohérence
-    //     créerait d'autres incohérences narratives
-    //   - Le bon réflexe est de re-prompt Claude sur ce step → mais c'est
-    //     un POST-process qui peut échouer en boucle
-    // → On préfère LOG + flag needs_review pour intervention humaine ciblée.
+    // Le auto-fix s'applique AVANT la génération de l'épilogue, donc
+    // l'épilogue référencera les bonnes valeurs.
     for (let i = 0; i < steps.length; i++) {
       const ans = steps[i].answer_text?.trim() ?? "";
       if (!isRomanNumeral(ans)) continue;
@@ -859,21 +853,47 @@ export async function generateGameFromTemplate(
       const yearMatches = [...allText.matchAll(/\b(1[0-9]{3}|20[0-2][0-9])\b/g)]
         .map((m) => parseInt(m[1], 10));
       if (yearMatches.length === 0) continue;
-      // Cherche la date la plus proche du decoded
-      const closestYear = yearMatches.reduce((closest, y) =>
-        Math.abs(y - decoded) < Math.abs(closest - decoded) ? y : closest,
-      yearMatches[0]);
-      const drift = Math.abs(closestYear - decoded);
-      if (drift > 100) {
-        console.warn(
-          `[Pipeline] ⚠ ROMAN NUMERAL DRIFT step ${i + 1}: answer="${ans}" decodes to ${decoded}, but riddle/anecdote mentions years [${yearMatches.join(", ")}], closest is ${closestYear} (drift ${drift}y). Likely Claude hallucination. Correct value would be "${encodeRoman(closestYear)}". Flagging needs_review for inspection.`,
+      // Cherche la date la plus fréquente (l'année principale du stop)
+      const yearCounts = new Map<number, number>();
+      for (const y of yearMatches) yearCounts.set(y, (yearCounts.get(y) ?? 0) + 1);
+      const intendedYear = [...yearCounts.entries()]
+        .sort((a, b) => b[1] - a[1])[0][0];
+      const drift = Math.abs(intendedYear - decoded);
+      if (drift > 50) {
+        // Cross-check avec verifiedContext events si dispo : si l'année
+        // intendedYear matche (à ±2 ans) un event Perplexity, on a une
+        // confiance MAX pour auto-fixer.
+        const eventYears: number[] = [];
+        if (discovery.verifiedContext?.events) {
+          for (const e of discovery.verifiedContext.events) {
+            const m = e.date?.match(/\b(1[0-9]{3}|20[0-2][0-9])\b/);
+            if (m) eventYears.push(parseInt(m[1], 10));
+          }
+        }
+        const intendedMatchesEvent = eventYears.some(
+          (y) => Math.abs(y - intendedYear) <= 2,
         );
-        // Flag + add reason. Don't auto-correct — operator decides.
-        needsReview = true;
-        const romanReason = `Step ${i + 1}: roman numeral "${ans}" decodes to ${decoded}, but the riddle/anecdote mentions year ${closestYear} (likely intended). Recommended correction: "${encodeRoman(closestYear)}". Inspect via dump-game + edit-step if needed.`;
-        reviewReason = reviewReason
-          ? `${reviewReason} | ${romanReason}`
-          : romanReason;
+        const correctRoman = encodeRoman(intendedYear);
+        if (intendedMatchesEvent || drift > 100) {
+          // AUTO-FIX : on a forte confiance, on remplace.
+          // Pourquoi : (a) Perplexity confirme l'année, OU (b) le drift
+          // est >100ans donc Claude a clairement halluciné un Roman
+          // sans rapport avec ce qu'il a écrit dans le riddle.
+          console.warn(
+            `[Pipeline] AUTO-FIX Roman numeral step ${i + 1}: was "${ans}" (=${decoded}), riddle clearly intends year ${intendedYear}${intendedMatchesEvent ? " (confirmed by verifiedContext)" : ""}, replacing with "${correctRoman}".`,
+          );
+          steps[i].answer_text = correctRoman;
+          steps[i].ar_facade_text = correctRoman;
+        } else {
+          // Cas ambigu (drift 50-100 ans, pas confirmé par Perplexity) :
+          // flag needs_review pour inspection humaine.
+          needsReview = true;
+          const romanReason = `Step ${i + 1}: roman numeral "${ans}" (=${decoded}) drifts ${drift}y from intended year ${intendedYear}. Suggested fix: "${correctRoman}". Auto-fix not applied (low confidence). Inspect via dump-game.`;
+          reviewReason = reviewReason
+            ? `${reviewReason} | ${romanReason}`
+            : romanReason;
+          console.warn(`[Pipeline] ⚠ Roman drift ambiguous step ${i + 1} — flagging needs_review`);
+        }
       }
     }
 
