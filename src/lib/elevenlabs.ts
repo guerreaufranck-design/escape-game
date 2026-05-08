@@ -12,12 +12,18 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 
 const ELEVENLABS_API_BASE = "https://api.elevenlabs.io/v1";
-// Flash 2.5 multilingual : 0.5 credit/char (vs 1.0 sur V2). Qualité très
-// proche de V2 sur narration courte (riddle 1-2 phrases, anecdote 3-4,
-// dialogue 1-2). Switch décidé 2026-05-07 pour économiser 50% sur le poste
-// TTS sans dégradation perceptible côté joueur.
-// Fallback V2 si Flash refuse une voix : `eleven_multilingual_v2`.
-const MODEL_ID = "eleven_v2_5_flash_multilingual";
+// Multilingual V2 : 1 credit/char, qualité premium, supporte les custom
+// voices de la voice library (dont Dallin Storyteller).
+//
+// REVERT du switch Flash 2.5 (2026-05-07 → 2026-05-08) : Flash 2.5 ne
+// semble pas compatible avec Dallin (custom voice). L'API échouait
+// silencieusement → audio_cache vide → player UI fallback Web Speech API
+// browser (voix de femme française rapide sur Mac/iOS).
+//
+// Pour réactiver Flash plus tard : il faut soit choisir une PRE-MADE voice
+// ElevenLabs (Sarah, Adam, etc. supportées Flash) soit confirmer que
+// Dallin/custom voices sont compatibles via test API direct.
+const MODEL_ID = "eleven_multilingual_v2";
 const STORAGE_BUCKET = "audio";
 
 /**
