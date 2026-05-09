@@ -25,6 +25,7 @@ import { ReportError } from "@/components/player/ReportError";
 import { SelfieARScreen } from "@/components/player/SelfieARScreen";
 import { GameEpilogue } from "@/components/player/GameEpilogue";
 import { TruthReveal } from "@/components/player/TruthReveal";
+import { PostGameUpsell } from "@/components/player/PostGameUpsell";
 import { tt } from "@/lib/translations";
 import type { GameResults } from "@/types/game";
 
@@ -72,6 +73,7 @@ export default function ResultsPage() {
             setResults({
               sessionId,
               gameTitle: data.gameTitle,
+              city: data.city ?? "",
               playerName: data.playerName || tt('results.defaultPlayerName', locale),
               teamName: data.teamName || null,
               totalTimeSeconds: data.totalTimeSeconds || 0,
@@ -196,6 +198,14 @@ export default function ResultsPage() {
             overline={revealed ? undefined : `✓ ${tt('epilogue.codeUnlocked', locale)}`}
             locale={locale}
           />
+        )}
+
+        {/* Post-game upsell GYG — caché si NEXT_PUBLIC_GYG_PARTNER_ID
+            n'est pas configuré. Placement post-épilogue, pré-score :
+            le joueur est en peak engagement narratif, c'est le moment
+            de proposer la suite de son séjour. */}
+        {results.city && (
+          <PostGameUpsell city={results.city} locale={locale} />
         )}
 
         {/* Score */}

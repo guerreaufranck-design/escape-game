@@ -92,6 +92,10 @@ export interface CompletedStepInfo {
 export interface GameResults {
   sessionId: string;
   gameTitle: string;
+  /** Ville du jeu, telle que stockée dans `games.city` ("Cambridge",
+   *  "Aegina Island, Saronic Gulf"). Utilisée pour cibler les upsells
+   *  post-game (GYG cross-sell). */
+  city: string;
   playerName: string;
   teamName: string | null;
   totalTimeSeconds: number;

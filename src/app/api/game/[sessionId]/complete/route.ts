@@ -27,7 +27,7 @@ export async function POST(
 
     const { data: session, error: sessionError } = await supabase
       .from("game_sessions")
-      .select("*, games(title, epilogue_title, epilogue_text)")
+      .select("*, games(title, city, epilogue_title, epilogue_text)")
       .eq("id", sessionId)
       .single();
 
@@ -41,6 +41,7 @@ export async function POST(
 
     const game = session.games as unknown as {
       title: string;
+      city: string;
       epilogue_title?: unknown;
       epilogue_text?: unknown;
     };
@@ -223,6 +224,7 @@ export async function POST(
     const results: GameResults = {
       sessionId: session.id,
       gameTitle,
+      city: game.city,
       playerName: session.player_name,
       teamName: session.team_name,
       totalTimeSeconds,
