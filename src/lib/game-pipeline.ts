@@ -491,14 +491,23 @@ export async function generateGameFromTemplate(
       );
     }
 
-    // Plancher commercial : 5 stops minimum (cf. ABSOLUTE_MIN_STOPS dans
-    // parcours-discovery.ts). Si oddballtrip envoie stopCount<5, on bumpe
-    // silencieusement à 5 — la promesse "escape game vendable" exige ce
-    // floor, indépendamment de la fiche.
-    const stopCount = Math.max(5, template.stopCount ?? 8);
-    if ((template.stopCount ?? 8) < 5) {
+    // Plancher commercial : 6 stops minimum, plafond 9 (cf.
+    // ABSOLUTE_MIN_STOPS et ABSOLUTE_MAX_STOPS dans parcours-discovery.ts).
+    // Politique 2026-05-09 :
+    //   - body.stopCount absent ou < 6 → bump à 6
+    //   - body.stopCount > 9 → cap à 9
+    //   - Default si rien envoyé : 9 (le but est de viser le MAX dans la
+    //     tranche 6-9, le pipeline élague vers le bas si la zone n'a pas
+    //     assez de POIs walkables).
+    const requestedStopCount = template.stopCount ?? 9;
+    const stopCount = Math.max(6, Math.min(9, requestedStopCount));
+    if (requestedStopCount < 6) {
       console.warn(
-        `[Pipeline] stopCount=${template.stopCount} below commercial floor of 5 — bumped to 5`,
+        `[Pipeline] stopCount=${requestedStopCount} below commercial floor of 6 — bumped to 6`,
+      );
+    } else if (requestedStopCount > 9) {
+      console.warn(
+        `[Pipeline] stopCount=${requestedStopCount} above commercial ceiling of 9 — capped to 9`,
       );
     }
 

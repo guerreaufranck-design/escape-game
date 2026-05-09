@@ -65,12 +65,11 @@ import {
  *   stopCount ≤ 3 → 3.5 km (extreme spread, tour large d'une ville)
  */
 function radiusForStopCount(stopCount: number): number {
-  if (stopCount >= 8) return 2_000;
+  if (stopCount >= 9) return 1_900; // 9 stops dense city-center
+  if (stopCount === 8) return 2_000;
   if (stopCount === 7) return 2_200;
   if (stopCount === 6) return 2_500;
-  if (stopCount === 5) return 2_800;
-  if (stopCount === 4) return 3_200;
-  return 3_500; // stopCount ≤ 3
+  return 2_800; // ≤5 (ne devrait plus arriver — clamp à 6 minimum upstream)
 }
 
 /**
@@ -91,37 +90,47 @@ function radiusForStopCount(stopCount: number): number {
  * résoudre.
  */
 function maxInterStopFor(stopCount: number): number {
-  if (stopCount >= 8) return 1_500;
+  if (stopCount >= 9) return 1_400; // 9 stops dense → hops courts
+  if (stopCount === 8) return 1_500;
   if (stopCount === 7) return 1_700;
   if (stopCount === 6) return 1_900;
-  if (stopCount === 5) return 2_200;
-  if (stopCount === 4) return 2_600;
-  return 3_000; // stopCount ≤ 3
+  return 2_200; // ≤5 (clamp upstream à 6)
 }
 
 /**
  * Plancher ABSOLU en dessous duquel on ne publie JAMAIS un jeu, peu
- * importe le stopCount demandé ou la sparsité de la zone. Décision
- * commerciale (2026-05-06) : un escape game à moins de 5 stops n'est
- * pas vendable. Mieux vaut rejeter et signaler "fiche à reframer" que
- * publier un jeu de 3 stops qui dégrade la promesse produit.
+ * importe le stopCount demandé ou la sparsité de la zone.
  *
- * Si une zone donne <5 walkables au radius/maxHop standard, le pipeline
+ * Évolution du seuil :
+ *   2026-05-06 : 5 stops minimum (décision commerciale initiale)
+ *   2026-05-09 : 6 stops minimum — un escape game outdoor 90 min mérite
+ *                au moins 6 étapes pour structurer le récit (intro,
+ *                montée, twist, descente, révélation, conclusion).
+ *                5 c'est juste mais ça coupe la dramaturgie.
+ *
+ * Si une zone donne <6 walkables au radius/maxHop standard, le pipeline
  * ÉLARGIT progressivement (cf. wideningMultiplier dans discoverParcours)
  * et bumpe la difficulté à 5/5 ("attention parcours costaud") plutôt
  * que d'amputer le jeu.
  */
-const ABSOLUTE_MIN_STOPS = 5;
+const ABSOLUTE_MIN_STOPS = 6;
+
+/**
+ * Plafond ABSOLU au-dessus duquel le jeu devient trop long pour le format
+ * 90 min. 9 stops × ~10 min/stop = ~1h30 pile. Au-delà, fatigue joueur,
+ * baisse de l'attention dans le 2e tiers, narrative qui se dilue.
+ */
+const ABSOLUTE_MAX_STOPS = 9;
 
 /**
  * Plancher dérivé du stopCount demandé, mais jamais sous ABSOLUTE_MIN_STOPS.
  *
- *   stopCount = 8 (standard) → plancher 6 (tolère 2 drops)
- *   stopCount = 7            → plancher 5
- *   stopCount = 6            → plancher 5
- *   stopCount = 5            → plancher 5 (aucun drop)
- *   stopCount ≤ 4            → plancher 5 (force à 5 — oddballtrip
- *                              doit demander au moins 5)
+ *   stopCount = 9 (max)      → plancher 7 (tolère 2 drops)
+ *   stopCount = 8            → plancher 6
+ *   stopCount = 7            → plancher 6
+ *   stopCount = 6 (min)      → plancher 6 (aucun drop)
+ *   stopCount ≤ 5            → plancher 6 (force à 6 — oddballtrip
+ *                              doit demander au moins 6)
  */
 function minStopsForPublish(stopCount: number): number {
   return Math.max(ABSOLUTE_MIN_STOPS, stopCount - 2);
