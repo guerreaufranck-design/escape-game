@@ -983,6 +983,16 @@ export async function pickThematicLandmarksFromList(params: {
    *  doublon dans les yeux du joueur. Adaptatif au stopCount :
    *  jeu court = écart MIN plus grand pour vraie couverture. */
   minInterStopM: number;
+  /**
+   * Mode d'accessibilité demandé par l'opérateur :
+   *   - `any` (défaut) : aucune contrainte, Claude pick librement.
+   *   - `free` : interdiction de picker un POI dont l'accès demande
+   *              un ticket payant (musée, monument ticketé, tour
+   *              d'observation, jardin payant). Le joueur doit pouvoir
+   *              jouer 100% depuis la voie publique. Les sites payants
+   *              seront utilisés en upsell cross-sell post-jeu.
+   */
+  accessibility?: "free" | "any";
 }): Promise<{
   selectedIndices: number[];
   rationale: string;
@@ -1008,13 +1018,42 @@ export async function pickThematicLandmarksFromList(params: {
     })
     .join("\n");
 
+  const accessibilityRule = params.accessibility === "free"
+    ? `
+
+═══════════════════════════════════════════════════════════════════
+EXCLUSION RULE — ACCESSIBILITÉ "FREE" (NON-NÉGOCIABLE)
+═══════════════════════════════════════════════════════════════════
+
+L'opérateur a marqué ce jeu en mode "free access" : le joueur doit
+pouvoir TERMINER tout le parcours SANS PAYER d'entrée. Tu DOIS écarter
+tout candidat dont l'accès au public demande un ticket :
+  • Musées (sauf si la place devant le bâtiment fait sens depuis la rue)
+  • Galeries d'art payantes
+  • Monuments ticketés (cathédrales avec billet, tours d'observation)
+  • Jardins/parcs payants, châteaux dont l'intérieur est seul ouvert
+  • Tout site indiqué "museum" ou "art_gallery" dans ses types Google
+
+Préfère systématiquement :
+  • Places, squares, monuments visibles de la rue
+  • Églises ouvertes au public sans billet
+  • Façades historiques, statues, fontaines
+  • Mairies, bibliothèques accessibles librement
+  • Parcs publics, sentiers
+
+Si tu hésites (le candidat POURRAIT être payant ou gratuit), SACRIFIE-LE :
+mieux vaut un parcours 100% sûr en accès libre.
+═══════════════════════════════════════════════════════════════════
+`
+    : "";
+
   const prompt = `You are curating an outdoor escape game. ALL the landmarks below are REAL, GEOCODED Google Places within walking distance of a chosen starting point. Your job: pick the ${params.needed} that fit the theme best AND form a coherent walking parcours.
 
 LOCKED CONTEXT:
 - Theme: "${params.theme}"
 - Pitch: ${params.themeDescription}
 - Narrative (player intro):
-${params.narrative}
+${params.narrative}${accessibilityRule}
 
 CANDIDATES (all real, all in walking zone, indexed) — chaque ligne contient lat/lon pour que tu puisses calculer les distances entre candidats :
 ${candidatesBlock}

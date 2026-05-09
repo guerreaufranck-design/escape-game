@@ -622,6 +622,38 @@ export interface NearbyCandidate {
 }
 
 /**
+ * Types Google Places considérés comme PAYANTS par défaut. La pipeline
+ * filtre cette liste quand `accessibility: "free"` est demandé : les
+ * musées, galeries d'art et monuments ticketés sont EXCLUS du Google
+ * nearbysearch — ainsi Claude ne les pickera jamais comme stops.
+ *
+ * Note: c'est une heuristique, pas une vérité absolue. Certains musées
+ * sont gratuits (ex. Louvre le 1er dimanche du mois, beaucoup de petits
+ * musées municipaux). Mais 90%+ sont payants → mieux vaut sur-filtrer
+ * et laisser Claude piocher des stops 100% en plein air. Les sites
+ * exclus seront utilisés en upsell GYG cross-sell post-jeu.
+ */
+export const PAID_PLACE_TYPES: readonly string[] = ["museum", "art_gallery"];
+
+/**
+ * Types Google Places considérés comme GRATUITS / accessibles depuis
+ * la voie publique. Liste utilisée quand `accessibility: "free"` :
+ * églises, places, parcs, mairies, bibliothèques (souvent ouvertes
+ * sans ticket), tourist_attractions (souvent monuments extérieurs).
+ */
+export const FREE_PLACE_TYPES: readonly string[] = [
+  "tourist_attraction",
+  "church",
+  "library",
+  "city_hall",
+  "park",
+  "place_of_worship",
+  "synagogue",
+  "mosque",
+  "hindu_temple",
+];
+
+/**
  * Découvre TOUS les POIs patrimoniaux/touristiques dans un rayon
  * autour d'un point. C'est la PHASE 1 du flow GPS-first : on récolte
  * la liste exhaustive des landmarks RÉELS de la zone, puis on

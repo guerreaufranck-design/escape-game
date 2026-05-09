@@ -46,6 +46,7 @@ import {
   discoverNearbyLandmarks,
   geocodeLocation,
   haversineMeters,
+  FREE_PLACE_TYPES,
   type NearbyCandidate,
 } from "./geocode";
 
@@ -232,6 +233,27 @@ export interface DiscoverParcoursParams {
    * entre stops") pour ne pas surprendre le joueur.
    */
   wideningMultiplier?: number;
+  /**
+   * Mode d'accessibilité du parcours. Détermine si la pipeline accepte
+   * des POIs payants (musées, galeries, monuments ticketés) comme stops :
+   *
+   *   - `any` (défaut)  : tous les POIs Google sont éligibles. Le jeu
+   *                       peut inclure des musées si Claude juge qu'ils
+   *                       collent au thème — le joueur paie l'entrée
+   *                       à sa charge si nécessaire.
+   *   - `free`          : Google nearbysearch n'inclut que les types
+   *                       d'accès libre (cf. FREE_PLACE_TYPES dans
+   *                       geocode.ts) ET Claude reçoit une directive
+   *                       d'exclusion pour ne JAMAIS picker un POI
+   *                       payant. Le jeu est jouable 100% depuis la
+   *                       voie publique sans ticket. Cas commercial :
+   *                       fiches "balade gratuite Klook", marché
+   *                       price-sensitive, scolaires, jeunes voyageurs.
+   *
+   * Les POIs payants exclus du parcours sont récupérables séparément
+   * pour l'upsell GYG cross-sell post-jeu (chantier 3).
+   */
+  accessibility?: "free" | "any";
 }
 
 export interface DiscoverParcoursResult {
@@ -285,8 +307,14 @@ export async function discoverParcours(
   const radiusM = Math.round(radiusForStopCount(params.stopCount) * widening);
   const maxInterStopM = Math.round(maxInterStopFor(params.stopCount) * widening);
 
+  // Mode d'accès : "free" filtre la liste des types Google AVANT le
+  // nearbysearch (élimine museum/art_gallery), et passe une directive
+  // d'exclusion à Claude pour qu'il ne picker JAMAIS un POI payant.
+  const accessibility = params.accessibility ?? "any";
+  const googleTypes = accessibility === "free" ? [...FREE_PLACE_TYPES] : undefined;
+
   console.log(
-    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m, widening=${widening}x)`,
+    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m, widening=${widening}x, accessibility=${accessibility})`,
   );
 
   // ============================================
@@ -302,7 +330,11 @@ export async function discoverParcours(
   // un faux dernier abbé. Perplexity DR fournit ces ANCHORS factuels à Claude
   // pour qu'il les tisse dans les anecdotes (sites cités, sources URL).
   const [googleResult, verifiedCtxResult] = await Promise.allSettled([
-    discoverNearbyLandmarks(params.startPoint, { radiusM: radiusM, limit: 60 }),
+    discoverNearbyLandmarks(params.startPoint, {
+      radiusM: radiusM,
+      limit: 60,
+      types: googleTypes,
+    }),
     deepResearchTheme({
       city: params.city,
       country: params.country,
@@ -373,6 +405,10 @@ export async function discoverParcours(
         // + Centro Cultural à 16m sur Los Cristianos qui faisaient
         // doublon dans les 5 stops vendus.
         minInterStopM: minInterStopFor(params.stopCount),
+        // Mode "free" : Claude reçoit une directive d'exclusion pour
+        // sauter tout candidat payant ambigu que Google aurait laissé
+        // passer (church marquée tourist_attraction mais ticketée, etc.)
+        accessibility,
       });
       console.log(
         `[discoverParcours] Claude curation: ${curation.selectedIndices.length} picked from ${googleCandidates.length} Google candidates. Rationale: ${curation.rationale}`,

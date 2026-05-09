@@ -54,6 +54,7 @@ export async function POST(request: NextRequest) {
       hasStartPoint: !!body.startPoint,
       language: body.language || "(none)",
       buyerEmail: body.buyerEmail || "N/A",
+      accessibility: body.accessibility || "(default any)",
     }));
 
     // Validate required fields
@@ -185,11 +186,16 @@ export async function POST(request: NextRequest) {
       startPoint,
       // stopCount : combien de landmarks Perplexity doit produire. Si
       // oddballtrip envoie body.stops[] legacy on prend sa longueur ;
-      // sinon body.stopCount ; sinon 8.
+      // sinon body.stopCount ; sinon 9 (commercial sweet spot, ~90 min).
+      // La pipeline clamp ensuite [6, 9] dans game-pipeline.ts.
+      //
+      // Stratégie produit : laisser oddballtrip OMETTRE stopCount par
+      // défaut → toujours 9 stops (max valeur perçue). N'envoyer 6-8
+      // explicitement que pour des fiches "balade courte" différenciées.
       stopCount:
         typeof body.stopCount === "number"
           ? body.stopCount
-          : (stops?.length ?? 8),
+          : (stops?.length ?? 9),
       // language : code ISO 2 lettres ("fr", "en", "de"...). Si présent,
       // le pipeline pré-génère TOUS les audios + traductions dans cette
       // langue après l'insert DB. Si absent, log warning + lazy gen
@@ -211,6 +217,14 @@ export async function POST(request: NextRequest) {
       // fairytale). Fallback `historical` si absent ou invalide. MVP en
       // mémoire — pas de col DB ; cf. game-genres.ts.
       genre: parseGenre(body.genre),
+      // accessibility : "free" force la pipeline à exclure les POIs
+      // payants (musées, galeries) du parcours, pour fiches "balade
+      // gratuite Klook" et marché price-sensitive. Tout autre valeur
+      // (incluant absent) → "any" (comportement historique).
+      // Stripped si valeur invalide pour éviter qu'oddballtrip envoie
+      // accidentellement "true"/"yes" et que la pipeline surface une
+      // erreur cryptique. cf. game-pipeline.ts pour la logique.
+      accessibility: body.accessibility === "free" ? "free" : "any",
     };
 
     // Note (2026-05-07) : les 3 maps d'override hardcodées (genre,

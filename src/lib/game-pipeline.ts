@@ -127,6 +127,25 @@ export interface GameTemplate {
    *  uniquement pour rétrocompat avec les anciens appels API. */
   stops?: PredefinedStop[];
   /**
+   * Mode d'accessibilité du parcours :
+   *
+   *   - `any` (défaut)  : pas de contrainte — la pipeline pioche dans
+   *                       tous les types Google Places (musées, galeries,
+   *                       monuments inclus). Le joueur peut tomber sur un
+   *                       stop ticketé et payer son entrée si nécessaire.
+   *   - `free`          : la pipeline EXCLUT les POIs payants connus
+   *                       (museum, art_gallery) du nearbysearch ET passe
+   *                       une directive Claude pour rejeter tout candidat
+   *                       potentiellement ticketé. Le joueur termine le
+   *                       parcours 100% depuis la voie publique sans
+   *                       jamais avoir à payer.
+   *
+   * Cas d'usage : fiches "balade gratuite Klook", marché price-sensitive,
+   * tour scolaire, scénario marche urbaine. Les POIs payants exclus
+   * peuvent être surfacés séparément en upsell GYG cross-sell post-jeu.
+   */
+  accessibility?: "free" | "any";
+  /**
    * GPS-FIRST MODE — operator clicks N pins on a satellite map and
    * provides their exact coords + landmark names. When this field is
    * set, the research + geocoding phases are SKIPPED entirely; the
@@ -536,6 +555,9 @@ export async function generateGameFromTemplate(
       narrative: template.narrative,
       startPoint,
       stopCount,
+      // accessibility="free" filtre les POIs payants côté Google + Claude.
+      // Pas de défaut : undefined laisse parcours-discovery décider (= "any").
+      accessibility: template.accessibility,
     };
     console.log(
       `[Pipeline] Discovery attempt: ${wideningAttempts[0].label} (multiplier ${wideningAttempts[0].multiplier}x)`,
