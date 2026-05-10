@@ -993,6 +993,21 @@ export async function pickThematicLandmarksFromList(params: {
    *              seront utilisés en upsell cross-sell post-jeu.
    */
   accessibility?: "free" | "any";
+  /**
+   * Sites pré-curatés par OddballTrip (Perplexity Deep Research, 1ère
+   * passe). Claude reçoit ces noms comme HINTS de priorité : si l'un
+   * d'eux apparaît dans les candidats Google (matching sur nom partiel),
+   * il a un boost thématique. Si pas dans les candidats Google, pas
+   * grave — Claude n'est PAS forcé de les inclure.
+   *
+   * Cas typique : OddballTrip a curé "Plage Omaha Beach", "Cimetière
+   * de Colleville-sur-Mer", "Pointe du Hoc". Google retourne aussi des
+   * 100+ POIs aléatoires dans 30 km. Sans hints, Claude pourrait
+   * choisir des POIs hors-thème (un golf, un musée local non WWII).
+   * Avec les seedSiteNames, Claude SAIT que ces 3 sites sont les
+   * références éditoriales, et bias ses choix vers eux + leur écosystème.
+   */
+  seedSiteNames?: string[];
 }): Promise<{
   selectedIndices: number[];
   rationale: string;
@@ -1017,6 +1032,37 @@ export async function pickThematicLandmarksFromList(params: {
       return `[${i}] ${c.name} — ${meta}`;
     })
     .join("\n");
+
+  const seedSitesHint = params.seedSiteNames?.length
+    ? `
+
+═══════════════════════════════════════════════════════════════════
+PRIORITÉ ÉDITORIALE — SITES PRÉ-CURATÉS PAR L'OPÉRATEUR
+═══════════════════════════════════════════════════════════════════
+
+L'opérateur OddballTrip a déjà identifié ces sites comme RÉFÉRENCES
+éditoriales pour ce roadtrip (1ère passe Perplexity Deep Research) :
+
+${params.seedSiteNames.map((n, i) => `  ${i + 1}. ${n}`).join("\n")}
+
+Si TU TROUVES ces sites (ou leurs équivalents proches) dans la liste
+de candidats Google ci-dessus :
+  → DONNE-LEUR LA PRIORITÉ. Ce sont des piliers narratifs validés,
+    le client OddballTrip s'attend à les voir dans son parcours.
+  → Match flexible : "Plage Omaha Beach" peut matcher "Omaha Beach
+    Memorial" ou "WN62 Bunker" qui sont sur la même plage.
+
+Si certains seed sites NE SONT PAS dans la liste Google :
+  → Pas grave, ne les force pas. C'est probable que Google ne les
+    indexe pas séparément. Choisis les meilleurs candidats restants
+    en respectant le thème.
+
+Ne te limite PAS aux seed sites : si Google a 50 candidats et l'opérateur
+n'en a curé que 5, complète avec 3-4 autres choix thématiquement
+pertinents pour atteindre stopCount.
+═══════════════════════════════════════════════════════════════════
+`
+    : "";
 
   const accessibilityRule = params.accessibility === "free"
     ? `
@@ -1053,7 +1099,7 @@ LOCKED CONTEXT:
 - Theme: "${params.theme}"
 - Pitch: ${params.themeDescription}
 - Narrative (player intro):
-${params.narrative}${accessibilityRule}
+${params.narrative}${seedSitesHint}${accessibilityRule}
 
 CANDIDATES (all real, all in walking zone, indexed) — chaque ligne contient lat/lon pour que tu puisses calculer les distances entre candidats :
 ${candidatesBlock}

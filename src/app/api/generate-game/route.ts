@@ -55,6 +55,13 @@ export async function POST(request: NextRequest) {
       language: body.language || "(none)",
       buyerEmail: body.buyerEmail || "N/A",
       accessibility: body.accessibility || "(default any)",
+      transportMode: body.transportMode || "(default walking)",
+      radiusKm: body.radiusKm ?? "(default per mode)",
+      recommendedDays:
+        typeof body.recommendedDaysMin === "number" || typeof body.recommendedDaysMax === "number"
+          ? `${body.recommendedDaysMin ?? "?"}-${body.recommendedDaysMax ?? "?"}d`
+          : "(walking)",
+      seedSitesCount: Array.isArray(body.roadtripSeedSites) ? body.roadtripSeedSites.length : 0,
     }));
 
     // Validate required fields
@@ -225,6 +232,50 @@ export async function POST(request: NextRequest) {
       // accidentellement "true"/"yes" et que la pipeline surface une
       // erreur cryptique. cf. game-pipeline.ts pour la logique.
       accessibility: body.accessibility === "free" ? "free" : "any",
+      // ── ROADTRIP (contrat OddballTrip 2026-05-10) ────────────────
+      // Tous les champs ci-dessous sont rétrocompat : si absents ou si
+      // transportMode === "walking", la pipeline tourne EXACTEMENT
+      // comme avant. Pas de changement sur les fiches walking actives.
+      transportMode: (() => {
+        const m = body.transportMode;
+        return m === "driving" || m === "mixed" ? m : "walking";
+      })(),
+      radiusKm: (() => {
+        const r = body.radiusKm;
+        if (typeof r !== "number" || r <= 0) return undefined;
+        // Hard cap 60 km : au-delà, le narratif ne tient plus (région
+        // entière, joueur perd le fil thématique). On clip au passage
+        // pour éviter qu'un payload cassé (radiusKm: 9999) corrompe
+        // toute la discovery.
+        return Math.min(r, 60);
+      })(),
+      recommendedDaysMin:
+        typeof body.recommendedDaysMin === "number" && body.recommendedDaysMin >= 1
+          ? Math.min(body.recommendedDaysMin, 14)
+          : undefined,
+      recommendedDaysMax:
+        typeof body.recommendedDaysMax === "number" && body.recommendedDaysMax >= 1
+          ? Math.min(body.recommendedDaysMax, 14)
+          : undefined,
+      roadtripSeedSites: Array.isArray(body.roadtripSeedSites)
+        ? body.roadtripSeedSites
+            .filter((s: { name?: string; access?: string }) =>
+              s?.name?.trim() &&
+              (s.access === "libre" || s.access === "payant" || s.access === "mixte"))
+            .map((s: {
+              name: string;
+              access: "libre" | "payant" | "mixte";
+              lat?: number;
+              lon?: number;
+              note?: string;
+            }) => ({
+              name: s.name.trim(),
+              access: s.access,
+              lat: typeof s.lat === "number" ? s.lat : undefined,
+              lon: typeof s.lon === "number" ? s.lon : undefined,
+              note: s.note?.trim() || undefined,
+            }))
+        : undefined,
     };
 
     // Note (2026-05-07) : les 3 maps d'override hardcodées (genre,

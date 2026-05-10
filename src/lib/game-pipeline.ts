@@ -146,6 +146,70 @@ export interface GameTemplate {
    */
   accessibility?: "free" | "any";
   /**
+   * Mode de transport du parcours. Détermine la zone de discovery,
+   * la distance MAX entre stops, le rayon de validation GPS et le
+   * TTL du code activation.
+   *
+   *   - `walking` (default) : 1.5 km radius, 1.4 km max-hop, 30-50m
+   *                            validation, code valide 24h
+   *   - `driving`           : voiture entre TOUS les sites, jusqu'à
+   *                            50 km radius, 30 km max-hop, 200-500m
+   *                            validation, code valide jusqu'à
+   *                            (recommendedDaysMax + 7) × 24 heures
+   *   - `mixed`             : voiture entre les sites + à pied SUR
+   *                            chaque site (centres historiques,
+   *                            parcs archéo, médinas). Mêmes
+   *                            paramètres que `driving` côté radius.
+   *
+   * Cf. contrat OddballTrip 2026-05-10. `walking` est strictement
+   * rétrocompat avec le comportement historique.
+   */
+  transportMode?: "walking" | "driving" | "mixed";
+  /**
+   * Rayon de discovery autour du startPoint, en kilomètres. Si absent :
+   *   • walking → 1.5 km (existant, comportement inchangé)
+   *   • driving / mixed → 30 km (default contrat OddballTrip)
+   *
+   * OddballTrip teste actuellement jusqu'à 50 km (diamètre 100 km).
+   * La pipeline accepte jusqu'à 60 km hard cap pour éviter les payloads
+   * cassés (rayon > 60 km → couvre une région entière, narratif
+   * impossible à tenir).
+   */
+  radiusKm?: number;
+  /**
+   * Durée recommandée du roadtrip, en jours. Affichée en intro player :
+   *   "Ce roadtrip se joue sur X à Y jours, à votre rythme."
+   *
+   * Sert également à calculer code_validity_hours :
+   *   code_validity_hours = (recommendedDaysMax + 7) × 24
+   *   ex: 4 jours max → 264h
+   *       6 jours max → 312h
+   */
+  recommendedDaysMin?: number;
+  recommendedDaysMax?: number;
+  /**
+   * Sites pré-curatés par OddballTrip via Perplexity Deep Research
+   * (1ère passe). SUGGESTIONS, pas contraintes : la pipeline peut les
+   * utiliser comme priorité, les compléter, ou en substituer si la
+   * discovery trouve mieux.
+   *
+   * Le champ `access` est important pour le ratio "free access" :
+   *   - `libre`  : énigme posée dessus, 100% extérieur
+   *   - `payant` : mentionné dans la narration mais énigme depuis
+   *                 l'extérieur (façade, parvis, vue)
+   *   - `mixte`  : entrée payante mais partie libre exploitable
+   *
+   * Critère qualité OddballTrip : ≥50% des stops finaux doivent être
+   * en accès libre, sinon needs_review='free_access_ratio_low'.
+   */
+  roadtripSeedSites?: Array<{
+    name: string;
+    access: "libre" | "payant" | "mixte";
+    lat?: number;
+    lon?: number;
+    note?: string;
+  }>;
+  /**
    * GPS-FIRST MODE — operator clicks N pins on a satellite map and
    * provides their exact coords + landmark names. When this field is
    * set, the research + geocoding phases are SKIPPED entirely; the
@@ -558,6 +622,13 @@ export async function generateGameFromTemplate(
       // accessibility="free" filtre les POIs payants côté Google + Claude.
       // Pas de défaut : undefined laisse parcours-discovery décider (= "any").
       accessibility: template.accessibility,
+      // ── ROADTRIP (contrat OddballTrip 2026-05-10) ────────────────
+      // transportMode "walking" → comportement historique inchangé.
+      // "driving" / "mixed" → rayon élargi (radiusKm * 1000), seedSites
+      // passés à Claude curation comme priorités éditoriales.
+      transportMode: template.transportMode,
+      radiusKm: template.radiusKm,
+      roadtripSeedSites: template.roadtripSeedSites,
     };
     console.log(
       `[Pipeline] Discovery attempt: ${wideningAttempts[0].label} (multiplier ${wideningAttempts[0].multiplier}x)`,
@@ -641,6 +712,85 @@ export async function generateGameFromTemplate(
       } else {
         console.log(
           `[Pipeline] Cluster sanity-check OK — centroid drift ${Math.round(drift)}m < ${CENTROID_DRIFT_M}m`,
+        );
+      }
+    }
+
+    // ============================================
+    // STEP 1.6 : Free access ratio check (roadtrip uniquement)
+    // ============================================
+    // Critère qualité OddballTrip (contrat 2026-05-10) : ≥50% des stops
+    // d'un parcours roadtrip doivent être en accès LIBRE (énigmes
+    // jouables sans entrée payante). Sinon le client achète un parcours
+    // mais doit payer 5-10 entrées de musée pour le terminer → mauvaise
+    // expérience, bad reviews.
+    //
+    // Méthode : on cross-référence les stops finaux avec les
+    // roadtripSeedSites (qui ont un champ `access` curé par OddballTrip
+    // via Perplexity). Si <50% de match en "libre", needs_review=true
+    // avec reason="free_access_ratio_low".
+    //
+    // Cas où on N'APPLIQUE PAS le check :
+    //   - transportMode = walking (la fiche walking actuelle ne fait
+    //     pas la distinction libre/payant — comportement inchangé)
+    //   - roadtripSeedSites absent (pas de ground truth pour évaluer)
+    const isRoadtrip =
+      template.transportMode === "driving" || template.transportMode === "mixed";
+    if (isRoadtrip && template.roadtripSeedSites?.length) {
+      const seedByName = new Map<string, "libre" | "payant" | "mixte">();
+      for (const s of template.roadtripSeedSites) {
+        seedByName.set(s.name.toLowerCase(), s.access);
+      }
+      let libreCount = 0;
+      let matchedCount = 0;
+      let totalCount = discovery.landmarks.length;
+      for (const stop of discovery.landmarks) {
+        const stopNameLower = stop.name.toLowerCase();
+        // Match flexible : un seedSite "Plage Omaha Beach" matche un
+        // stop "Omaha Beach Memorial" si leurs noms partagent ≥3 mots
+        // significatifs ou un mot de ≥6 caractères.
+        let matchedAccess: "libre" | "payant" | "mixte" | null = null;
+        for (const [seedName, access] of seedByName) {
+          // Match 1 : nom complet inclus
+          if (stopNameLower.includes(seedName) || seedName.includes(stopNameLower)) {
+            matchedAccess = access;
+            break;
+          }
+          // Match 2 : token significatif partagé (≥6 char)
+          const tokens = seedName
+            .split(/\s+/)
+            .filter((t) => t.length >= 6);
+          for (const t of tokens) {
+            if (stopNameLower.includes(t)) {
+              matchedAccess = access;
+              break;
+            }
+          }
+          if (matchedAccess) break;
+        }
+        if (matchedAccess) {
+          matchedCount++;
+          // "mixte" compte comme libre (entrée payante mais énigme exploitable
+          // depuis l'extérieur, cf. critère contrat OddballTrip).
+          if (matchedAccess === "libre" || matchedAccess === "mixte") libreCount++;
+        }
+      }
+      // Si moins de 50% des stops finaux sont matchés ET libres : flag.
+      // Ratio calculé sur le total des stops, pas sur les matchés (un
+      // stop non-matché = inconnu, considéré "non-libre" par défaut
+      // par prudence).
+      const libreRatio = totalCount > 0 ? libreCount / totalCount : 0;
+      if (libreRatio < 0.5) {
+        const newReason = `Free access ratio ${Math.round(libreRatio * 100)}% < 50% threshold — only ${libreCount}/${totalCount} stops matched seed sites with libre/mixte access. ${matchedCount} stops matched OddballTrip seed list. The remaining ${totalCount - matchedCount} stops are off-list and could require paid entry. Inspect manually before releasing.`;
+        needsReview = true;
+        // Concatène à la raison existante si déjà flagged par cluster drift.
+        reviewReason = reviewReason
+          ? `${reviewReason} | ${newReason}`
+          : newReason;
+        console.warn(`[Pipeline] ⚠ needs_review=true — free_access_ratio_low: ${libreCount}/${totalCount} libre, threshold 50%`);
+      } else {
+        console.log(
+          `[Pipeline] Free access ratio OK — ${libreCount}/${totalCount} stops libre/mixte (${Math.round(libreRatio * 100)}%)`,
         );
       }
     }
@@ -989,6 +1139,23 @@ export async function generateGameFromTemplate(
       }
     }
 
+    // ── ROADTRIP : valider radius élargi (driving / mixed) ───────────
+    // Le radar walking valide à 30m. Au volant à 90 km/h, 30m = 1.2s →
+    // false negatives garantis (le joueur passe sans déclencher). On
+    // élargit à 250m en mode driving/mixed, ce qui correspond à ~10s
+    // à 90 km/h — le temps de ralentir, garer, et déclencher l'AR.
+    // N'écrase pas les 80m posés en mode narrative (plus restrictif).
+    if (template.transportMode === "driving" || template.transportMode === "mixed") {
+      for (let i = 0; i < steps.length; i++) {
+        if (stopModes[i] !== "narrative") {
+          steps[i].validation_radius_meters = 250;
+        }
+      }
+      console.log(
+        `[Pipeline] Roadtrip mode (${template.transportMode}) — validation radius bumped to 250m for non-narrative stops`,
+      );
+    }
+
     // ============================================
     // STEP 6 : Epilogue
     // ============================================
@@ -1188,6 +1355,28 @@ async function insertGameIntoDatabase(
     // oddballtrip jusqu'à inspection humaine (cf. migration 023).
     needs_review: needsReview,
     review_reason: reviewReason ?? null,
+    // ── ROADTRIP (contrat OddballTrip 2026-05-10, migration 024) ──
+    // Walking par défaut → transport_mode='walking', autres NULL,
+    // code_validity_hours=24h. Toutes les fiches existantes restent
+    // identiques (default DB).
+    transport_mode: template.transportMode ?? "walking",
+    radius_km: template.radiusKm ?? null,
+    recommended_days_min: template.recommendedDaysMin ?? null,
+    recommended_days_max: template.recommendedDaysMax ?? null,
+    // TTL du code activation. Walking = 24h (migration 013).
+    // Roadtrip = (recommendedDaysMax + 7) × 24, soit ~264h pour 4 jours.
+    // Si pas de recommendedDaysMax mais transportMode roadtrip, fallback
+    // à 168h (7 jours, marge confortable).
+    code_validity_hours: (() => {
+      const isRoadtrip =
+        template.transportMode === "driving" || template.transportMode === "mixed";
+      if (!isRoadtrip) return 24;
+      const max = template.recommendedDaysMax;
+      if (typeof max === "number" && max >= 1) {
+        return (max + 7) * 24;
+      }
+      return 168; // 7 jours par défaut pour roadtrip sans days
+    })(),
   });
 
   if (gameError) {

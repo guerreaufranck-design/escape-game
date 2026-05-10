@@ -99,6 +99,27 @@ function maxInterStopFor(stopCount: number): number {
 }
 
 /**
+ * Paramètres spatiaux ROADTRIP (driving / mixed). Override des fonctions
+ * walking ci-dessus quand transportMode != "walking". Tous en mètres.
+ *
+ * Logique : on rend le rayon de discovery PROPORTIONNEL à `radiusKm`
+ * fourni par OddballTrip (default 30 km, jusqu'à 60 km). Le max-hop entre
+ * stops monte à ~radius/2 pour permettre une vraie couverture régionale.
+ * Le min-hop reste comme en walking (300-800m) parce que même en voiture,
+ * 2 sites à 200m l'un de l'autre c'est un doublon visuel.
+ */
+function roadtripParams(stopCount: number, radiusKm: number) {
+  const radiusM = Math.round(radiusKm * 1000);
+  // max-hop = radius/2 environ pour couvrir la zone sans aller-retour
+  // au startPoint à chaque stop. Cap à 30 km (au-delà, narratif perdu).
+  const maxInterStopM = Math.min(Math.round(radiusM * 0.6), 30_000);
+  // min-hop : on garde les valeurs walking (un doublon est un doublon
+  // peu importe le mode de transport)
+  const minInterStopM = minInterStopFor(stopCount);
+  return { radiusM, maxInterStopM, minInterStopM };
+}
+
+/**
  * Plancher ABSOLU en dessous duquel on ne publie JAMAIS un jeu, peu
  * importe le stopCount demandé ou la sparsité de la zone.
  *
@@ -234,6 +255,28 @@ export interface DiscoverParcoursParams {
    */
   wideningMultiplier?: number;
   /**
+   * Mode de transport du parcours. Override le radius/max-hop via
+   * roadtripParams() quand != "walking". Cf. contrat OddballTrip 2026-05-10.
+   */
+  transportMode?: "walking" | "driving" | "mixed";
+  /**
+   * Rayon de discovery custom en km. Si présent, override radiusForStopCount.
+   * Walking par défaut 1.5 km, driving / mixed 30 km, jusqu'à 60 km cap.
+   */
+  radiusKm?: number;
+  /**
+   * Sites pré-curatés OddballTrip (Perplexity 1ère passe). Suggestions
+   * passées comme HINTS à Claude curation, pas constraints. Sert aussi
+   * à déterminer le ratio "free access" du parcours final.
+   */
+  roadtripSeedSites?: Array<{
+    name: string;
+    access: "libre" | "payant" | "mixte";
+    lat?: number;
+    lon?: number;
+    note?: string;
+  }>;
+  /**
    * Mode d'accessibilité du parcours. Détermine si la pipeline accepte
    * des POIs payants (musées, galeries, monuments ticketés) comme stops :
    *
@@ -304,8 +347,25 @@ export async function discoverParcours(
   // d'étapes. Cf. radiusForStopCount + maxInterStopFor.
   // Widening multiplier appliqué quand le pipeline retry sur zone sparse.
   const widening = params.wideningMultiplier ?? 1;
-  const radiusM = Math.round(radiusForStopCount(params.stopCount) * widening);
-  const maxInterStopM = Math.round(maxInterStopFor(params.stopCount) * widening);
+
+  // Mode transport : "walking" = comportement historique inchangé,
+  // "driving" / "mixed" = roadtrip avec rayon élargi (30-50 km typiquement).
+  const transportMode = params.transportMode ?? "walking";
+  const isRoadtrip = transportMode !== "walking";
+
+  // Rayon + max-hop : si roadtrip, on dérive de radiusKm (default 30 km).
+  // Sinon walking historique avec radiusForStopCount/maxInterStopFor.
+  let radiusM: number;
+  let maxInterStopM: number;
+  if (isRoadtrip) {
+    const radiusKm = params.radiusKm ?? 30;
+    const rt = roadtripParams(params.stopCount, radiusKm);
+    radiusM = Math.round(rt.radiusM * widening);
+    maxInterStopM = Math.round(rt.maxInterStopM * widening);
+  } else {
+    radiusM = Math.round(radiusForStopCount(params.stopCount) * widening);
+    maxInterStopM = Math.round(maxInterStopFor(params.stopCount) * widening);
+  }
 
   // Mode d'accès : "free" filtre la liste des types Google AVANT le
   // nearbysearch (élimine museum/art_gallery), et passe une directive
@@ -314,7 +374,7 @@ export async function discoverParcours(
   const googleTypes = accessibility === "free" ? [...FREE_PLACE_TYPES] : undefined;
 
   console.log(
-    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m, widening=${widening}x, accessibility=${accessibility})`,
+    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m, widening=${widening}x, accessibility=${accessibility}, transportMode=${transportMode}${isRoadtrip ? `, seedSites=${params.roadtripSeedSites?.length ?? 0}` : ""})`,
   );
 
   // ============================================
@@ -329,10 +389,15 @@ export async function discoverParcours(
   // le vrai mur Genkō Bōrui ; La Laguna ignorait Amaro Pargo ; Cluny inventait
   // un faux dernier abbé. Perplexity DR fournit ces ANCHORS factuels à Claude
   // pour qu'il les tisse dans les anecdotes (sites cités, sources URL).
+  // Limit Google candidats : pour walking 60 c'est large (2 km dense),
+  // pour roadtrip 30-50 km il faut plus de candidats pour avoir de quoi
+  // sélectionner thématiquement. ~150 candidats sur 50 km = top.
+  const candidateLimit = isRoadtrip ? 150 : 60;
+
   const [googleResult, verifiedCtxResult] = await Promise.allSettled([
     discoverNearbyLandmarks(params.startPoint, {
       radiusM: radiusM,
-      limit: 60,
+      limit: candidateLimit,
       types: googleTypes,
     }),
     deepResearchTheme({
@@ -409,6 +474,11 @@ export async function discoverParcours(
         // sauter tout candidat payant ambigu que Google aurait laissé
         // passer (church marquée tourist_attraction mais ticketée, etc.)
         accessibility,
+        // Roadtrip seed sites : suggestions OddballTrip (Perplexity 1ère
+        // passe). Claude les utilise comme HINTS de priorité, pas comme
+        // contraintes. Si une seedSite est dans les candidats Google,
+        // booster son score thématique. Si elle n'y est pas, pas grave.
+        seedSiteNames: params.roadtripSeedSites?.map((s) => s.name),
       });
       console.log(
         `[discoverParcours] Claude curation: ${curation.selectedIndices.length} picked from ${googleCandidates.length} Google candidates. Rationale: ${curation.rationale}`,
