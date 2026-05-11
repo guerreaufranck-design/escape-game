@@ -44,6 +44,42 @@ interface AudioJob {
 }
 
 /**
+ * Détecte si la traduction Gemini a échoué silencieusement.
+ *
+ * Bug observé sur Lugdunum FR (11/05) : `translateGameField` retourne le
+ * texte ANGLAIS inchangé quand Gemini est rate-limited / quota épuisé /
+ * a un hiccup réseau qui retourne 200 OK avec contenu identique à l'input.
+ * Le résultat n'est pas caché (cf. translate-service.ts), donc invisible
+ * en DB — MAIS la pipeline audio en aval prend ce texte EN et génère un
+ * MP3 ElevenLabs qui parle anglais avec la voix anglo-native du
+ * personnage, alors que l'audio_cache row est taggée `language='fr'`.
+ *
+ * Résultat client : la cliente lit du texte FR sur l'écran (parfois — autres
+ * fields où la traduction a marché) mais entend de l'anglais natif quand
+ * elle clique sur le bouton "Écouter". UX cassée, expérience non-livrable.
+ *
+ * Cette fonction détecte ce cas pour qu'on puisse SKIP la génération audio
+ * du field correspondant. Sans audio, le player fall-back sur Web Speech
+ * API du navigateur, qui synthétise au moins en FR si la locale navigateur
+ * est FR — bien moins glamour qu'ElevenLabs, mais cohérent.
+ *
+ * Garde-fou longueur : on n'applique le check que sur textes > 30 chars.
+ * Sous ce seuil, certains textes courts (noms propres, dates Roman) sont
+ * légitimement identiques entre EN et FR (ex: "Pheidon", "MCDXVI") et un
+ * faux positif skip-erait l'audio à tort.
+ */
+function isTranslationFallback(
+  translated: string,
+  english: string,
+  language: string,
+): boolean {
+  if (language === "en") return false;
+  if (!translated || !english) return false;
+  if (english.trim().length < 30) return false;
+  return translated.trim().toLowerCase() === english.trim().toLowerCase();
+}
+
+/**
  * Prepare everything the player needs to play the game in `language`:
  * translated texts (cached) + narration MP3s (cached + uploaded).
  *
@@ -69,7 +105,7 @@ export async function prepareGamePackage(
   // Gemini round-trip.
   const { data: game, error: gameErr } = await supabase
     .from("games")
-    .select("id, title, description, epilogue_text")
+    .select("id, title, description, epilogue_title, epilogue_text")
     .eq("id", gameId)
     .single();
 
@@ -138,6 +174,28 @@ export async function prepareGamePackage(
       } catch (err) {
         console.warn(
           `[game-package] game.description translation failed for ${language}: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 400));
+    }
+    // epilogue_title — affiché en gros sur l'écran de fin de jeu, juste
+    // avant l'épilogue. AVANT 2026-05-11 ce field n'était pas pré-traduit
+    // (oubli dans la SELECT initiale) → la cliente voyait "The God Who
+    // Never Left" en EN au lieu de "Le Dieu qui n'est jamais parti".
+    // Fix : on le translate exactement comme epilogue_text.
+    const englishGameEpilogueTitle = t(game.epilogue_title, "en");
+    if (englishGameEpilogueTitle) {
+      try {
+        await translateGameField(
+          game.id,
+          "games",
+          "epilogue_title",
+          englishGameEpilogueTitle,
+          language,
+        );
+      } catch (err) {
+        console.warn(
+          `[game-package] game.epilogue_title translation failed for ${language}: ${err instanceof Error ? err.message : err}`,
         );
       }
       await new Promise((r) => setTimeout(r, 400));
@@ -325,7 +383,30 @@ export async function prepareGamePackage(
 
     const voiceId = voiceFor(step.ar_character_type, language);
 
-    if (riddleText?.trim() && !cachedSlots.has(`${step.step_order}:riddle`)) {
+    // ── GARDE-FOU FALLBACK_TO_EN ──────────────────────────────────
+    // Détection silent-failure Gemini : si la traduction a échoué et
+    // retourné le texte EN inchangé, on NE génère PAS l'audio FR — le
+    // MP3 serait du speech anglais avec voix anglophone alors que la
+    // row audio_cache prétend être en FR. Player fall-back sur Web
+    // Speech API du navigateur (synthèse vocale OS-native en FR).
+    const riddleFailed = isTranslationFallback(riddleText, englishRiddle, language);
+    const characterFailed = isTranslationFallback(characterText, englishCharacter, language);
+    const anecdoteFailed = isTranslationFallback(anecdoteText, englishAnecdote, language);
+    if (riddleFailed || characterFailed || anecdoteFailed) {
+      const failed = [
+        riddleFailed && "riddle",
+        characterFailed && "character",
+        anecdoteFailed && "anecdote",
+      ].filter(Boolean).join(", ");
+      console.warn(
+        `[game-package] step ${step.step_order} translation FALLBACK_TO_EN detected on [${failed}] → skipping audio for these fields to avoid EN-speech-in-FR-cache.`,
+      );
+      errors.push(
+        `step ${step.step_order} translation_fallback_to_en: [${failed}] — audio not generated, player will use browser TTS`,
+      );
+    }
+
+    if (riddleText?.trim() && !cachedSlots.has(`${step.step_order}:riddle`) && !riddleFailed) {
       jobs.push({
         stepOrder: step.step_order,
         slot: "riddle",
@@ -336,7 +417,7 @@ export async function prepareGamePackage(
       audioSkipped++;
     }
 
-    if (characterText?.trim() && !cachedSlots.has(`${step.step_order}:character`)) {
+    if (characterText?.trim() && !cachedSlots.has(`${step.step_order}:character`) && !characterFailed) {
       jobs.push({
         stepOrder: step.step_order,
         slot: "character",
@@ -347,7 +428,7 @@ export async function prepareGamePackage(
       audioSkipped++;
     }
 
-    if (anecdoteText?.trim() && !cachedSlots.has(`${step.step_order}:anecdote`)) {
+    if (anecdoteText?.trim() && !cachedSlots.has(`${step.step_order}:anecdote`) && !anecdoteFailed) {
       jobs.push({
         stepOrder: step.step_order,
         slot: "anecdote",
@@ -375,7 +456,19 @@ export async function prepareGamePackage(
             englishEpilogue,
             language,
           );
-    if (epilogueText?.trim() && !cachedSlots.has(`0:epilogue`)) {
+    // Garde-fou même logique que les steps : si Gemini a silent-failed
+    // et retourné le texte EN inchangé, on NE génère PAS l'audio
+    // ElevenLabs FR (ce serait du speech anglais avec voix anglo-native).
+    const epilogueFailed = isTranslationFallback(epilogueText, englishEpilogue, language);
+    if (epilogueFailed) {
+      console.warn(
+        `[game-package] epilogue translation FALLBACK_TO_EN detected → skipping audio (would generate EN speech in FR-cache).`,
+      );
+      errors.push(
+        `epilogue translation_fallback_to_en — audio not generated, player will use browser TTS`,
+      );
+    }
+    if (epilogueText?.trim() && !cachedSlots.has(`0:epilogue`) && !epilogueFailed) {
       jobs.push({
         stepOrder: 0,
         slot: "epilogue",
