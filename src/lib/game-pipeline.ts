@@ -33,6 +33,7 @@ import { createAdminClient } from "./supabase/admin";
 import { geocodeLocation, haversineMeters } from "./geocode";
 import { discoverParcours } from "./parcours-discovery";
 import { prepareGamePackage } from "./game-package";
+import { validateFinalGame } from "./pipeline-validators";
 import { pickFallbackGuide, AR_CHARACTERS } from "./ar-sprites";
 import { type GameGenre, DEFAULT_GENRE } from "./game-genres";
 import { v4 as uuidv4 } from "uuid";
@@ -1234,6 +1235,67 @@ export async function generateGameFromTemplate(
     } else {
       console.warn(
         `[Pipeline] ⚠ MISSING template.language — audios will be generated LAZILY when the player starts the session. Latency in-game ~5-10s × 8 stops. Send body.language = "fr"|"en"|... in /api/games/generate to pre-generate.`,
+      );
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // FINAL VALIDATOR — pre-publish quality gate
+    // ════════════════════════════════════════════════════════════
+    // Tourne après tout (game inseré + audios générés + translations
+    // cachées) pour détecter en UNE PASSE les 5 classes de bugs observés
+    // en prod : twin stops, sous-floor, Roman drift, traductions
+    // incomplètes, audio coverage mismatch.
+    //
+    // Si UN seul issue est trouvé → needs_review=true posé sur le game
+    // → oddballtrip retient l'envoi du code activation au client
+    // → opérateur reçoit l'email d'alerte avec la liste exacte des
+    //   problèmes → soit edit-step + release-game, soit wipe + regenerate.
+    //
+    // Cycle CASSÉ : plus de "ship → client reçoit jeu cassé → patch en
+    // urgence" — détection systématique avant que le code parte.
+    try {
+      const supabase = createAdminClient();
+      const finalValidation = await validateFinalGame(
+        gameId,
+        template.language,
+      );
+      if (!finalValidation.ok) {
+        console.warn(
+          `[Pipeline] ⚠ Final validator detected ${finalValidation.issues.length} issue(s) — flagging needs_review`,
+        );
+        for (const issue of finalValidation.issues) {
+          console.warn(`[Pipeline]   - [${issue.code}] ${issue.message}`);
+        }
+        // Concat with existing review_reason if any (from centroid drift /
+        // free_access_ratio checks earlier).
+        const { data: currentGame } = await supabase
+          .from("games")
+          .select("review_reason")
+          .eq("id", gameId)
+          .single();
+        const existingReason = currentGame?.review_reason ?? "";
+        const combinedReason = existingReason
+          ? `${existingReason} | ${finalValidation.reviewReason}`
+          : finalValidation.reviewReason;
+        await supabase
+          .from("games")
+          .update({
+            needs_review: true,
+            review_reason: combinedReason,
+          })
+          .eq("id", gameId);
+        // Override needsReview state so the route.ts callback to oddballtrip
+        // includes needsReview=true → oddballtrip holds the activation code.
+        needsReview = true;
+        reviewReason = combinedReason;
+      } else {
+        console.log(
+          `[Pipeline] ✅ Final validator passed all checks (stops, twins, romans, translations, audio)`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[Pipeline] Final validator threw (non-blocking, defaulting to no flag change): ${err instanceof Error ? err.message : err}`,
       );
     }
 
