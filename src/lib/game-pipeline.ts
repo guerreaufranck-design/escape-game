@@ -34,6 +34,7 @@ import { geocodeLocation, haversineMeters } from "./geocode";
 import { discoverParcours } from "./parcours-discovery";
 import { prepareGamePackage } from "./game-package";
 import { validateFinalGame } from "./pipeline-validators";
+import { attemptAutoRepair } from "./pipeline-auto-repair";
 import { pickFallbackGuide, AR_CHARACTERS } from "./ar-sprites";
 import { type GameGenre, DEFAULT_GENRE } from "./game-genres";
 import { v4 as uuidv4 } from "uuid";
@@ -1253,67 +1254,98 @@ export async function generateGameFromTemplate(
     //
     // Cycle CASSÉ : plus de "ship → client reçoit jeu cassé → patch en
     // urgence" — détection systématique avant que le code parte.
-    try {
-      const supabase = createAdminClient();
-      const finalValidation = await validateFinalGame(
-        gameId,
-        template.language,
+    // ════════════════════════════════════════════════════════════
+    // VALIDATOR + AUTO-REPAIR LOOP (max 3 iterations)
+    // ════════════════════════════════════════════════════════════
+    // Marché global 24/7 : pas d'humain pour fixer à 3h du matin.
+    // La pipeline tente automatiquement de réparer les issues que le
+    // validator détecte. Chaque itération : validate → repair → re-validate.
+    //
+    // Stratégies de repair (cf. pipeline-auto-repair.ts) :
+    //   - translation_incomplete    : 2e passe prepareGamePackage (cumule 4+4 retries)
+    //   - audio_coverage_mismatch   : idem (cascade du fix translation)
+    //   - roman_date_drift          : regenerateStep + invalidate cache + re-package
+    //   - twin_stops / below_floor  : non-auto-repairable, structural — flag needs_review
+    //
+    // Si après 3 itérations le validator passe → is_published=true (auto-publish).
+    // Sinon → stays unpublished + email opérateur (cas rare structurel).
+    const supabase = createAdminClient();
+    let finalValidation = await validateFinalGame(gameId, template.language);
+    const MAX_REPAIR_ITERATIONS = 3;
+    let repairIteration = 0;
+    while (!finalValidation.ok && repairIteration < MAX_REPAIR_ITERATIONS) {
+      repairIteration++;
+      console.log(
+        `[Pipeline] Auto-repair iteration ${repairIteration}/${MAX_REPAIR_ITERATIONS} — ${finalValidation.issues.length} issue(s) to fix`,
       );
-      if (!finalValidation.ok) {
-        console.warn(
-          `[Pipeline] ⚠ Final validator detected ${finalValidation.issues.length} issue(s) — flagging needs_review`,
+      const repair = await attemptAutoRepair(gameId, finalValidation, {
+        language: template.language,
+        city: template.city,
+        theme: template.theme,
+        narrative: template.narrative,
+        genre: template.genre,
+      });
+      console.log(
+        `[Pipeline] Auto-repair iter ${repairIteration} → attempted=[${repair.attemptedIssues.join(",")}], unrepairable=[${repair.unrepairableIssues.join(",")}]`,
+      );
+      if (!repair.anyAttempted) {
+        // Plus aucune issue n'est auto-repairable → break, on flag.
+        console.log(
+          `[Pipeline] Auto-repair stopped — no more repairable issues (only structural left)`,
         );
-        for (const issue of finalValidation.issues) {
-          console.warn(`[Pipeline]   - [${issue.code}] ${issue.message}`);
-        }
-        // Concat with existing review_reason if any (from centroid drift /
-        // free_access_ratio checks earlier).
-        const { data: currentGame } = await supabase
-          .from("games")
-          .select("review_reason")
-          .eq("id", gameId)
-          .single();
-        const existingReason = currentGame?.review_reason ?? "";
-        const combinedReason = existingReason
-          ? `${existingReason} | ${finalValidation.reviewReason}`
-          : finalValidation.reviewReason;
-        await supabase
-          .from("games")
-          .update({
-            needs_review: true,
-            review_reason: combinedReason,
-          })
-          .eq("id", gameId);
-        // Override needsReview state so the route.ts callback to oddballtrip
-        // includes needsReview=true → oddballtrip holds the activation code.
-        needsReview = true;
-        reviewReason = combinedReason;
+        break;
+      }
+      // Re-validate après les repairs
+      finalValidation = await validateFinalGame(gameId, template.language);
+    }
+
+    if (finalValidation.ok) {
+      console.log(
+        `[Pipeline] ✅ Final validator passed (after ${repairIteration} auto-repair iteration${repairIteration === 1 ? "" : "s"})`,
+      );
+      // Validator OK → on FLIPPE is_published à true. OddballTrip
+      // peut maintenant trouver le game via find-game et créer le code
+      // activation. Avant ce moment, le game est invisible côté API
+      // externe — pas de race condition possible.
+      const { error: pubErr } = await supabase
+        .from("games")
+        .update({ is_published: true })
+        .eq("id", gameId);
+      if (pubErr) {
+        console.warn(
+          `[Pipeline] ⚠ Failed to flip is_published=true after validator OK: ${pubErr.message}`,
+        );
       } else {
         console.log(
-          `[Pipeline] ✅ Final validator passed all checks (stops, twins, romans, translations, audio)`,
+          `[Pipeline] is_published=true — game now visible to find-game endpoint`,
         );
-        // Validator OK → on FLIPPE is_published à true. OddballTrip
-        // peut maintenant trouver le game via find-game et créer le code
-        // activation. Avant ce moment, le game est invisible côté API
-        // externe — pas de race condition possible.
-        const { error: pubErr } = await supabase
-          .from("games")
-          .update({ is_published: true })
-          .eq("id", gameId);
-        if (pubErr) {
-          console.warn(
-            `[Pipeline] ⚠ Failed to flip is_published=true after validator OK: ${pubErr.message}`,
-          );
-        } else {
-          console.log(
-            `[Pipeline] is_published=true — game now visible to find-game endpoint`,
-          );
-        }
       }
-    } catch (err) {
+    } else {
       console.warn(
-        `[Pipeline] Final validator threw (non-blocking, defaulting to no flag change): ${err instanceof Error ? err.message : err}`,
+        `[Pipeline] ⚠ Final validator STILL has ${finalValidation.issues.length} issue(s) after ${repairIteration} auto-repair iteration(s) — flagging needs_review`,
       );
+      for (const issue of finalValidation.issues) {
+        console.warn(`[Pipeline]   - [${issue.code}] ${issue.message}`);
+      }
+      // Concat with existing review_reason if any.
+      const { data: currentGame } = await supabase
+        .from("games")
+        .select("review_reason")
+        .eq("id", gameId)
+        .single();
+      const existingReason = currentGame?.review_reason ?? "";
+      const combinedReason = existingReason
+        ? `${existingReason} | ${finalValidation.reviewReason}`
+        : finalValidation.reviewReason;
+      await supabase
+        .from("games")
+        .update({
+          needs_review: true,
+          review_reason: combinedReason,
+        })
+        .eq("id", gameId);
+      needsReview = true;
+      reviewReason = combinedReason;
     }
 
     // ============================================
