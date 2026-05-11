@@ -346,12 +346,22 @@ export async function POST(request: NextRequest) {
           new URL(request.url).origin;
         const finalizeUrl = `${baseUrl}/api/internal/finalize-game`;
         console.log(`[GenerateGame] Triggering Lambda 2 (fire-and-forget): ${finalizeUrl}`);
-        // Fire-and-forget : pas de await, l'erreur ne bloque pas cette
-        // lambda. Si le call échoue (réseau Vercel), le game reste
-        // is_published=false → opérateur sait que quelque chose s'est
-        // mal passé via le monitoring DB (game inseré il y a > 30 min
-        // toujours invisible).
-        fetch(finalizeUrl, {
+        // Fire-and-forget avec Promise.race pour garantir que la
+        // requête HTTP est BIEN ENVOYÉE avant que Vercel kill cette
+        // lambda. Sans ça (bug observé Lugdunum V5 11/05), Vercel
+        // termine la lambda dès le return, avant même que le TCP
+        // handshake vers Lambda 2 soit fait → Lambda 2 jamais appelée.
+        //
+        // Stratégie : on lance le fetch en background, on race contre
+        // un setTimeout(2000). Dans 2s :
+        //   - SOIT la requête HTTP est entièrement complétée
+        //     (Lambda 2 a renvoyé une réponse)
+        //   - SOIT le TCP + envoi du body sont terminés et Lambda 2
+        //     est en train de traiter (on reçoit pas la réponse mais
+        //     ça ne nous bloque pas — Lambda 2 vit indépendamment)
+        // Dans les 2 cas Lambda 2 est lancée et continuera son travail
+        // dans son propre processus, même si Lambda 1 meurt.
+        const fetchPromise = fetch(finalizeUrl, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -375,6 +385,11 @@ export async function POST(request: NextRequest) {
             `[GenerateGame] Lambda 2 trigger failed: ${err instanceof Error ? err.message : err}`,
           );
         });
+        await Promise.race([
+          fetchPromise,
+          new Promise((r) => setTimeout(r, 2000)),
+        ]);
+        console.log(`[GenerateGame] Lambda 2 trigger initiated (race timeout 2s)`);
       }
 
       // (was: send callback + needs_review email here. Now Lambda 2 does
