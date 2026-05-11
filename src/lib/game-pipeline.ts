@@ -1292,6 +1292,23 @@ export async function generateGameFromTemplate(
         console.log(
           `[Pipeline] ✅ Final validator passed all checks (stops, twins, romans, translations, audio)`,
         );
+        // Validator OK → on FLIPPE is_published à true. OddballTrip
+        // peut maintenant trouver le game via find-game et créer le code
+        // activation. Avant ce moment, le game est invisible côté API
+        // externe — pas de race condition possible.
+        const { error: pubErr } = await supabase
+          .from("games")
+          .update({ is_published: true })
+          .eq("id", gameId);
+        if (pubErr) {
+          console.warn(
+            `[Pipeline] ⚠ Failed to flip is_published=true after validator OK: ${pubErr.message}`,
+          );
+        } else {
+          console.log(
+            `[Pipeline] is_published=true — game now visible to find-game endpoint`,
+          );
+        }
       }
     } catch (err) {
       console.warn(
@@ -1400,7 +1417,18 @@ async function insertGameIntoDatabase(
     city: template.city,
     difficulty: template.difficulty,
     estimated_duration_min: template.estimatedDurationMin,
-    is_published: true, // Auto-published — generated games are ready to play
+    // is_published=false INITIALEMENT. La pipeline flippera à `true`
+    // UNIQUEMENT après que validateFinalGame passe tous ses checks
+    // (twin stops, Roman drift, translations 100%, audio coverage).
+    // Tant que is_published=false :
+    //   - /api/external/find-game retourne 404 (filtre WHERE is_published=true)
+    //   - OddballTrip ne peut PAS trouver le game pour créer le code
+    //   - Le client n'a aucun moyen de recevoir un jeu cassé
+    // Fix race condition observée 11/05/26 — OddballTrip pollait find-game
+    // dès l'INSERT (avant que prepareGamePackage + validator finissent),
+    // créait le code, l'envoyait au client. Désormais : is_published=true
+    // = signal "tout est en DB, validé, prêt".
+    is_published: false,
     // 3 cheap hints per step is the sweet spot: hint 1 = atmospheric
     // nudge, hint 2 = where to look (e.g. "scan the facade above the
     // main door"), hint 3 = the SHAPE of the answer ("a Latin word + a

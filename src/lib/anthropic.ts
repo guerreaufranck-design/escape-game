@@ -200,6 +200,25 @@ RULE 3 — DATED EVENTS DRIVE MAGIC WORDS
        1944 = MCMXLIV     (M=1000 + CM=900 + XL=40 + IV=4)
   Wrong roman numerals = AUTO-CORRECTED post-process. Save us the work.
 
+RULE 3b — ROMAN NUMERALS NEVER IN NARRATION TEXT (HARD CONSTRAINT)
+  Roman numerals (M, D, C, L, X, V, I sequences like MCDXCII or XLIII)
+  go EXCLUSIVELY into 2 fields :
+    ✓ ar_facade_text   (visible AR overlay the player sees)
+    ✓ answer_text      (what the player types to validate)
+  Roman numerals are FORBIDDEN in :
+    ✗ riddle_text          (narrated by ElevenLabs — would be read as
+                             "M-C-D-X-C-I-I" letter-by-letter, garbage)
+    ✗ anecdote             (narrated)
+    ✗ ar_character_dialogue (narrated)
+    ✗ ar_treasure_reward   (narrated)
+    ✗ hints[].text         (may be narrated)
+  In NARRATION, refer to years with ARABIC numerals only :
+    ✓ "In 1492, Columbus..."          ← arabic, fine for ElevenLabs
+    ✗ "In MCDXCII, Columbus..."       ← Roman, ElevenLabs reads letters
+  The player DISCOVERS the Roman numeral by opening their AR camera at
+  the location, NOT by hearing it in audio narration. Audio gives the
+  context (year + clue to look at the facade) ; AR gives the answer.
+
 RULE 4 — SOURCE CITATION
   Anecdotes ending with parenthetical source : "(Source: Wikipedia)"
   or "(Source: Britannica)" — for player credibility.

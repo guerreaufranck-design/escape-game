@@ -88,7 +88,7 @@ export async function GET(
         en: string,
       ): Promise<string> =>
         en
-          ? translateGameField(game.id, "games", field, en, locale).catch(
+          ? translateGameField(game.id, "games", field, en, locale, { cacheOnly: true }).catch(
               (err) => {
                 console.warn(
                   `[game] ${field} translation failed, serving English. err=${err instanceof Error ? err.message : err}`,
@@ -143,7 +143,7 @@ export async function GET(
           };
           let translated: Record<string, string> = {};
           try {
-            translated = await translateStepFields(step.id, enFields, locale);
+            translated = await translateStepFields(step.id, enFields, locale, { cacheOnly: true });
           } catch (err) {
             console.warn(
               `[game/${sessionId}] step translation failed, serving English. Locale=${locale}, step=${step.id}, err=${err instanceof Error ? err.message : err}`,
@@ -227,6 +227,7 @@ export async function GET(
                 "ar_treasure_reward",
                 rawTreasure,
                 locale,
+                { cacheOnly: true },
               );
             } catch {
               arTreasureReward = rawTreasure;
@@ -250,6 +251,7 @@ export async function GET(
                 "ar_character_dialogue",
                 rawDialogue,
                 locale,
+                { cacheOnly: true },
               );
             } catch {
               dialogue = rawDialogue;
@@ -287,6 +289,7 @@ export async function GET(
                       `${step.id}-attraction-${idx}`,
                       enFields,
                       locale,
+                      { cacheOnly: true },
                     );
                     return {
                       name: t.name || enFields.name,
@@ -333,7 +336,8 @@ export async function GET(
             try {
               title = await translateGameField(
                 `step-title-${session.game_id}-${completion.step_order}`,
-                "game_steps", "completed_title", enTitle, locale
+                "game_steps", "completed_title", enTitle, locale,
+                { cacheOnly: true },
               );
             } catch {
               // Keep fallback

@@ -65,7 +65,8 @@ export async function translateGameField(
   sourceTable: string,
   sourceField: string,
   englishText: string,
-  targetLang: string
+  targetLang: string,
+  options: { cacheOnly?: boolean } = {},
 ): Promise<string> {
   // English is the base language — no translation needed
   if (targetLang === "en" || !englishText.trim()) {
@@ -87,6 +88,20 @@ export async function translateGameField(
     return cached.translated_text;
   }
 
+  // MODE cacheOnly : utilisé par les routes PLAYER pour garantir ZÉRO
+  // latence Gemini en cours de jeu. Avec le gate is_published, le cache
+  // est toujours 100% complet avant qu'un jeu soit visible au joueur.
+  // Si on tombe ici en mode cacheOnly, c'est un edge case (cache invalidé
+  // manuellement, données legacy) → on retourne EN immédiatement plutôt
+  // que de faire attendre la cliente "veuillez patienter pendant la
+  // génération de l'étape suivante" comme observé Lugdunum V3.
+  if (options.cacheOnly) {
+    console.warn(
+      `[translate-service] cacheOnly miss for ${sourceField} (id=${sourceId}, lang=${targetLang}) — serving EN (no live Gemini call).`,
+    );
+    return englishText;
+  }
+
   // If the source text is actually French (legacy games stored as plain
   // French), tell Gemini that — otherwise the "Translate from English to
   // Japanese" prompt confuses it and it sometimes returns the French
@@ -101,7 +116,7 @@ export async function translateGameField(
   }
 
   // Cache miss — call Gemini with bounded timeout + 1 retry, then cache.
-  const translated = await translateWithRetry(
+  let translated = await translateWithRetry(
     () => translateText(englishText, targetLang, detectedSource),
     `translateGameField:${sourceField}`,
   );
@@ -109,8 +124,58 @@ export async function translateGameField(
   // Don't cache EN-as-translation — see translateStepFields for the
   // same protection. Caching identical text would lock the player into
   // English on every subsequent visit.
-  const isUnchanged =
+  let isUnchanged =
     translated.trim().toLowerCase() === englishText.trim().toLowerCase();
+
+  // BUG OBSERVÉ Lugdunum V2 (11/05) : Gemini retourne 200 OK avec le
+  // texte EN inchangé quand il rate-limit (au lieu de retourner 429).
+  // La pipeline en aval génère alors un audio ElevenLabs avec du texte
+  // EN, taggé `language='fr'` dans audio_cache → la cliente entend
+  // de l'anglais avec une voix anglo-native alors qu'elle a payé du FR.
+  //
+  // Fix : si on détecte un fallback-to-EN sur un texte > 30 chars (sous
+  // ce seuil, certains textes courts sont légitimement identiques entre
+  // langues — ex: "MCDXVI"), on RETRY 2 fois avec backoff exponentiel
+  // (5s, 15s). Ça laisse au rate-limit Gemini le temps de se relâcher.
+  if (isUnchanged && englishText.trim().length > 30) {
+    // Budget acceptable : ~4 min de retry par field (total max 220s).
+    // Si plusieurs fields foirent, le pipeline peut prendre 15-30 min,
+    // mais c'est acceptable vs livrer un jeu cassé au client.
+    // Politique : "30 min de délai < mauvais jeu" (user, 11/05/26).
+    const backoffMs = [10_000, 30_000, 60_000, 120_000];
+    for (let attempt = 0; attempt < backoffMs.length && isUnchanged; attempt++) {
+      console.warn(
+        `[translate-service] ${sourceField} fallback_to_en detected (attempt ${attempt + 1}/${backoffMs.length + 1}), waiting ${backoffMs[attempt]}ms before retry`,
+      );
+      await new Promise((r) => setTimeout(r, backoffMs[attempt]));
+      try {
+        translated = await translateWithRetry(
+          () => translateText(englishText, targetLang, detectedSource),
+          `translateGameField:${sourceField}:retry${attempt + 1}`,
+        );
+        isUnchanged =
+          translated.trim().toLowerCase() === englishText.trim().toLowerCase();
+        if (!isUnchanged) {
+          console.log(
+            `[translate-service] ${sourceField} retry ${attempt + 1} SUCCESS after ${backoffMs[attempt]}ms wait`,
+          );
+        }
+      } catch (err) {
+        console.warn(
+          `[translate-service] ${sourceField} retry ${attempt + 1} threw: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+    // Après 2 retries, si toujours unchanged → on accepte le EN. Le
+    // validator post-pipeline va flag `translation_incomplete` et
+    // `audio_coverage_mismatch` → needs_review=true → opérateur notifié.
+    if (isUnchanged) {
+      console.warn(
+        `[translate-service] ${sourceField} STILL fallback_to_en after 2 retries — returning EN, validator will flag this game`,
+      );
+    }
+  }
+
   if (isUnchanged) {
     return translated; // serve once, never cache
   }
@@ -140,7 +205,8 @@ export async function translateGameField(
 export async function translateStepFields(
   stepId: string,
   fields: Record<string, string>, // { riddle_text: "...", title: "...", ... }
-  targetLang: string
+  targetLang: string,
+  options: { cacheOnly?: boolean } = {},
 ): Promise<Record<string, string>> {
   if (targetLang === "en") return fields;
 
@@ -173,6 +239,20 @@ export async function translateStepFields(
 
   // If nothing to translate, return cached results
   if (Object.keys(toTranslate).length === 0) return result;
+
+  // MODE cacheOnly : appelé par les routes player, garantit zéro
+  // latence Gemini en cours de jeu. Les fields manquants sont
+  // servis EN (le joueur lit l'anglais brut plutôt que d'attendre).
+  // Cf. translateGameField pour la justification complète.
+  if (options.cacheOnly) {
+    console.warn(
+      `[translate-service] cacheOnly miss for step ${stepId}: ${Object.keys(toTranslate).join(",")} — serving EN`,
+    );
+    for (const [field, text] of Object.entries(toTranslate)) {
+      result[field] = text;
+    }
+    return result;
+  }
 
   // Batch translate via JSON approach. ONE Gemini call covers every
   // un-cached field of the step in a single round-trip. If the batch
