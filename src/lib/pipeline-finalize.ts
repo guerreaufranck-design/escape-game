@@ -119,10 +119,19 @@ export async function finalizeGame(params: {
     console.log(
       `[finalize] ✅ Final validator passed (after ${repairIteration} repair iter${repairIteration === 1 ? "" : "s"})`,
     );
-    // Flip is_published=true → OddballTrip find-game can now succeed
+    // Flip is_published=true ET reset needs_review/review_reason
+    // (peuvent traîner d'une itération précédente où le validator avait
+    // failed — observé Lugdunum V5 11/05 : needs_review=true resté
+    // sticky après que les iterations suivantes du validator passent).
+    // OddballTrip vérifie needs_review pour décider d'envoyer le code,
+    // donc on doit reset à false explicitement quand validator OK.
     const { error: pubErr } = await supabase
       .from("games")
-      .update({ is_published: true })
+      .update({
+        is_published: true,
+        needs_review: false,
+        review_reason: null,
+      })
       .eq("id", gameId);
     if (pubErr) {
       console.warn(
