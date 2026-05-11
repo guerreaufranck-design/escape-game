@@ -324,10 +324,61 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Run the pipeline
+    // Run the pipeline (Lambda 1: discovery + insert with is_published=false)
     const result = await generateGameFromTemplate(template);
 
     if (result.success) {
+      // ════════════════════════════════════════════════════════════
+      // CHAIN INTO LAMBDA 2 — fire-and-forget finalize-game
+      // ════════════════════════════════════════════════════════════
+      // Lambda 2 runs prepareGamePackage + validator + auto-repair +
+      // is_published flip in its own 600s budget. We trigger it via
+      // fetch WITHOUT awaiting — this lambda returns to OddballTrip
+      // immediately while the new lambda continues processing.
+      //
+      // OddballTrip polls find-game until is_published=true → only
+      // then receives 200 → only then creates the activation code.
+      // Race condition impossible.
+      if (result.gameId) {
+        const baseUrl =
+          process.env.NEXT_PUBLIC_APP_URL ||
+          (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
+          new URL(request.url).origin;
+        const finalizeUrl = `${baseUrl}/api/internal/finalize-game`;
+        console.log(`[GenerateGame] Triggering Lambda 2 (fire-and-forget): ${finalizeUrl}`);
+        // Fire-and-forget : pas de await, l'erreur ne bloque pas cette
+        // lambda. Si le call échoue (réseau Vercel), le game reste
+        // is_published=false → opérateur sait que quelque chose s'est
+        // mal passé via le monitoring DB (game inseré il y a > 30 min
+        // toujours invisible).
+        fetch(finalizeUrl, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${expectedSecret}`,
+          },
+          body: JSON.stringify({
+            gameId: result.gameId,
+            language: template.language,
+            city: template.city,
+            theme: template.theme,
+            narrative: template.narrative,
+            genre: template.genre,
+            slug: template.slug,
+            buyerEmail: body.buyerEmail,
+            orderId: body.orderId,
+            callbackUrl: body.callbackUrl,
+            callbackSecret: body.callbackSecret,
+          }),
+        }).catch((err) => {
+          console.error(
+            `[GenerateGame] Lambda 2 trigger failed: ${err instanceof Error ? err.message : err}`,
+          );
+        });
+      }
+
+      // (was: send callback + needs_review email here. Now Lambda 2 does
+      // both at the end of its own work, with the FINAL needsReview status.)
       // Send callback to oddballtrip if provided (must await on Vercel serverless)
       if (body.callbackUrl) {
         console.log(`[GenerateGame] Sending callback to ${body.callbackUrl}`);

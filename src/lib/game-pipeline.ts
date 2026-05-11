@@ -32,9 +32,9 @@ import {
 import { createAdminClient } from "./supabase/admin";
 import { geocodeLocation, haversineMeters } from "./geocode";
 import { discoverParcours } from "./parcours-discovery";
-import { prepareGamePackage } from "./game-package";
-import { validateFinalGame } from "./pipeline-validators";
-import { attemptAutoRepair } from "./pipeline-auto-repair";
+// prepareGamePackage + validateFinalGame + attemptAutoRepair moved to
+// Lambda 2 (pipeline-finalize.ts + /api/internal/finalize-game route)
+// for proper Vercel maxDuration handling. Cf. CHAINED PIPELINE block below.
 import { pickFallbackGuide, AR_CHARACTERS } from "./ar-sprites";
 import { type GameGenre, DEFAULT_GENRE } from "./game-genres";
 import { v4 as uuidv4 } from "uuid";
@@ -1200,153 +1200,29 @@ export async function generateGameFromTemplate(
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
-    // ============================================
-    // STEP 7.5 : Pré-génération audio + traductions (langue acheteur)
-    // ============================================
-    // Pour que le joueur ait ZÉRO latence quand il démarre la session,
-    // on génère ICI tous les audios + traductions dans la langue
-    // qu'il a achetée. Sans ça, chaque stop déclenche une génération
-    // ElevenLabs + Claude/Gemini en cours de jeu (~5-10 sec × 8 stops
-    // = ~60 sec de blocage cumulés, ressentis comme « l'app est cassée »).
+    // ════════════════════════════════════════════════════════════
+    // CHAINED PIPELINE — prepare+validate+repair moved to Lambda 2
+    // ════════════════════════════════════════════════════════════
+    // Auparavant ici : prepareGamePackage + validator + auto-repair
+    // dans la même lambda. Avec les retries Gemini agressifs (jusqu'à
+    // 220s par field × 30+ fields) on dépassait régulièrement 600s
+    // Vercel maxDuration → lambda killed, game stuck is_published=false
+    // (cas Lugdunum V4 11/05).
     //
-    // Validation simple : on attend un code ISO 2 lettres en lowercase
-    // (cf. /api/external/generate-code). Sinon on warn et on laisse
-    // le pipeline générer en lazy à la demande — pas idéal mais le
-    // jeu publie quand même.
-    if (template.language && /^[a-z]{2}$/.test(template.language)) {
-      const lang = template.language;
-      const audioStart = Date.now();
-      try {
-        const pkg = await prepareGamePackage(gameId, lang);
-        const audioMs = Date.now() - audioStart;
-        if (pkg.success) {
-          console.log(
-            `[Pipeline] Pre-generated audio package for "${lang}" in ${Math.round(audioMs / 1000)}s — generated=${pkg.audioGenerated}, skipped=${pkg.audioSkipped}, failed=${pkg.audioFailed}`,
-          );
-        } else {
-          console.warn(
-            `[Pipeline] Audio package for "${lang}" returned errors (non-blocking): ${pkg.errors?.join("; ")}`,
-          );
-        }
-      } catch (err) {
-        console.warn(
-          `[Pipeline] Audio package generation threw (non-blocking): ${err instanceof Error ? err.message : err}`,
-        );
-      }
-    } else {
-      console.warn(
-        `[Pipeline] ⚠ MISSING template.language — audios will be generated LAZILY when the player starts the session. Latency in-game ~5-10s × 8 stops. Send body.language = "fr"|"en"|... in /api/games/generate to pre-generate.`,
-      );
-    }
+    // Maintenant : la lambda 1 (ce code) s'arrête après l'insert game.
+    // La lambda 2 (/api/internal/finalize-game) est déclenchée en
+    // fire-and-forget depuis route.ts. Elle a son propre budget 10 min
+    // pour faire prepareGamePackage + validator + auto-repair + flip
+    // is_published. Total effectif = 20 min.
+    //
+    // Le game reste is_published=false jusqu'à ce que Lambda 2 complète
+    // tous les checks. OddballTrip polle find-game et reçoit 404 pendant
+    // tout ce temps → impossible de créer un code prématurément.
+    console.log(
+      `[Pipeline] Discovery + insert complete. Lambda 2 (finalize-game) will be triggered fire-and-forget for prepare + validate + auto-repair + is_published flip.`,
+    );
 
-    // ════════════════════════════════════════════════════════════
-    // FINAL VALIDATOR — pre-publish quality gate
-    // ════════════════════════════════════════════════════════════
-    // Tourne après tout (game inseré + audios générés + translations
-    // cachées) pour détecter en UNE PASSE les 5 classes de bugs observés
-    // en prod : twin stops, sous-floor, Roman drift, traductions
-    // incomplètes, audio coverage mismatch.
-    //
-    // Si UN seul issue est trouvé → needs_review=true posé sur le game
-    // → oddballtrip retient l'envoi du code activation au client
-    // → opérateur reçoit l'email d'alerte avec la liste exacte des
-    //   problèmes → soit edit-step + release-game, soit wipe + regenerate.
-    //
-    // Cycle CASSÉ : plus de "ship → client reçoit jeu cassé → patch en
-    // urgence" — détection systématique avant que le code parte.
-    // ════════════════════════════════════════════════════════════
-    // VALIDATOR + AUTO-REPAIR LOOP (max 3 iterations)
-    // ════════════════════════════════════════════════════════════
-    // Marché global 24/7 : pas d'humain pour fixer à 3h du matin.
-    // La pipeline tente automatiquement de réparer les issues que le
-    // validator détecte. Chaque itération : validate → repair → re-validate.
-    //
-    // Stratégies de repair (cf. pipeline-auto-repair.ts) :
-    //   - translation_incomplete    : 2e passe prepareGamePackage (cumule 4+4 retries)
-    //   - audio_coverage_mismatch   : idem (cascade du fix translation)
-    //   - roman_date_drift          : regenerateStep + invalidate cache + re-package
-    //   - twin_stops / below_floor  : non-auto-repairable, structural — flag needs_review
-    //
-    // Si après 3 itérations le validator passe → is_published=true (auto-publish).
-    // Sinon → stays unpublished + email opérateur (cas rare structurel).
-    const supabase = createAdminClient();
-    let finalValidation = await validateFinalGame(gameId, template.language);
-    const MAX_REPAIR_ITERATIONS = 3;
-    let repairIteration = 0;
-    while (!finalValidation.ok && repairIteration < MAX_REPAIR_ITERATIONS) {
-      repairIteration++;
-      console.log(
-        `[Pipeline] Auto-repair iteration ${repairIteration}/${MAX_REPAIR_ITERATIONS} — ${finalValidation.issues.length} issue(s) to fix`,
-      );
-      const repair = await attemptAutoRepair(gameId, finalValidation, {
-        language: template.language,
-        city: template.city,
-        theme: template.theme,
-        narrative: template.narrative,
-        genre: template.genre,
-      });
-      console.log(
-        `[Pipeline] Auto-repair iter ${repairIteration} → attempted=[${repair.attemptedIssues.join(",")}], unrepairable=[${repair.unrepairableIssues.join(",")}]`,
-      );
-      if (!repair.anyAttempted) {
-        // Plus aucune issue n'est auto-repairable → break, on flag.
-        console.log(
-          `[Pipeline] Auto-repair stopped — no more repairable issues (only structural left)`,
-        );
-        break;
-      }
-      // Re-validate après les repairs
-      finalValidation = await validateFinalGame(gameId, template.language);
-    }
-
-    if (finalValidation.ok) {
-      console.log(
-        `[Pipeline] ✅ Final validator passed (after ${repairIteration} auto-repair iteration${repairIteration === 1 ? "" : "s"})`,
-      );
-      // Validator OK → on FLIPPE is_published à true. OddballTrip
-      // peut maintenant trouver le game via find-game et créer le code
-      // activation. Avant ce moment, le game est invisible côté API
-      // externe — pas de race condition possible.
-      const { error: pubErr } = await supabase
-        .from("games")
-        .update({ is_published: true })
-        .eq("id", gameId);
-      if (pubErr) {
-        console.warn(
-          `[Pipeline] ⚠ Failed to flip is_published=true after validator OK: ${pubErr.message}`,
-        );
-      } else {
-        console.log(
-          `[Pipeline] is_published=true — game now visible to find-game endpoint`,
-        );
-      }
-    } else {
-      console.warn(
-        `[Pipeline] ⚠ Final validator STILL has ${finalValidation.issues.length} issue(s) after ${repairIteration} auto-repair iteration(s) — flagging needs_review`,
-      );
-      for (const issue of finalValidation.issues) {
-        console.warn(`[Pipeline]   - [${issue.code}] ${issue.message}`);
-      }
-      // Concat with existing review_reason if any.
-      const { data: currentGame } = await supabase
-        .from("games")
-        .select("review_reason")
-        .eq("id", gameId)
-        .single();
-      const existingReason = currentGame?.review_reason ?? "";
-      const combinedReason = existingReason
-        ? `${existingReason} | ${finalValidation.reviewReason}`
-        : finalValidation.reviewReason;
-      await supabase
-        .from("games")
-        .update({
-          needs_review: true,
-          review_reason: combinedReason,
-        })
-        .eq("id", gameId);
-      needsReview = true;
-      reviewReason = combinedReason;
-    }
+    // (validator + auto-repair are now in Lambda 2 — see pipeline-finalize.ts)
 
     // ============================================
     // STEP 8 : Build canonical landmarks[] payload
