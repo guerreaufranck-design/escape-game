@@ -51,6 +51,89 @@ import {
 } from "./geocode";
 
 /**
+ * Pour un roadtrip, enrichit chaque seedSite avec lat/lon si elles ne
+ * sont pas déjà fournies. Géocode le nom via Google Geocoding API (~$0.005
+ * par site, négligeable). Les sites qui ne se géocodent pas sont SKIPPED
+ * (Claude curation continue sans eux).
+ *
+ * Pourquoi : OddballTrip envoie typiquement `{ name, access }` sans coords.
+ * Sans coords, on ne peut pas faire de nearbysearch additionnel autour
+ * du seedSite → on reste cantonné autour du startPoint, ce qui défait
+ * tout l'intérêt du roadtrip (cas Girona du 11/05 : 5 stops centre-ville
+ * uniquement, aucun Costa Brava). Avec coords, on peut élargir la
+ * couverture Google Places sur les zones thématiquement importantes.
+ */
+async function enrichSeedSitesWithCoords(
+  seedSites: Array<{
+    name: string;
+    access: "libre" | "payant" | "mixte";
+    lat?: number;
+    lon?: number;
+    note?: string;
+  }>,
+  city: string,
+  country: string,
+  refPoint: { lat: number; lon: number },
+  maxDistanceM: number,
+): Promise<Array<{
+  name: string;
+  access: "libre" | "payant" | "mixte";
+  lat: number;
+  lon: number;
+  note?: string;
+  source: "provided" | "geocoded";
+}>> {
+  const enriched: Array<{
+    name: string;
+    access: "libre" | "payant" | "mixte";
+    lat: number;
+    lon: number;
+    note?: string;
+    source: "provided" | "geocoded";
+  }> = [];
+
+  // Parallel geocoding pour pas séquentialiser 7-10 appels Google
+  const tasks = seedSites.map(async (seed) => {
+    // Path 1: coords déjà fournies par OddballTrip → on les utilise direct
+    if (typeof seed.lat === "number" && typeof seed.lon === "number") {
+      return {
+        name: seed.name,
+        access: seed.access,
+        lat: seed.lat,
+        lon: seed.lon,
+        note: seed.note,
+        source: "provided" as const,
+      };
+    }
+    // Path 2: pas de coords → géocodage à la volée. La fonction utilise
+    // refPoint pour rejeter les hits qui s'éloignent trop (anti-faux-positif
+    // sur des noms ambigus type "Cathédrale" qui géocoderaient à Paris au
+    // lieu de la ville régionale).
+    const geo = await geocodeLocation(seed.name, city, country, {
+      referencePoint: refPoint,
+      maxDistanceM,
+    });
+    if (geo) {
+      return {
+        name: seed.name,
+        access: seed.access,
+        lat: geo.lat,
+        lon: geo.lon,
+        note: seed.note,
+        source: "geocoded" as const,
+      };
+    }
+    return null;
+  });
+
+  const results = await Promise.allSettled(tasks);
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) enriched.push(r.value);
+  }
+  return enriched;
+}
+
+/**
  * Rayon de recherche autour du startPoint, ADAPTATIF au stopCount.
  *
  * Logique : on vend une DURÉE (~90 min), pas un nombre de stops fixe.
@@ -394,12 +477,55 @@ export async function discoverParcours(
   // sélectionner thématiquement. ~150 candidats sur 50 km = top.
   const candidateLimit = isRoadtrip ? 150 : 60;
 
-  const [googleResult, verifiedCtxResult] = await Promise.allSettled([
+  // ── ROADTRIP : enrichissement seedSites + multi-centre discovery ──
+  // En walking : 1 seul nearbysearch centré sur startPoint (suffit
+  // largement pour 1.5 km).
+  // En roadtrip : 1 nearbysearch sur startPoint + 1 mini-nearbysearch
+  // (radius 3 km) AUTOUR DE CHAQUE SEEDSITE. Sans ça, Google trie par
+  // distance et ne retourne que les POIs proches du startPoint, ignorant
+  // les sites distants pourtant fondamentaux pour le thème (cas Girona
+  // 11/05 : 5 stops centre-ville, zéro Costa Brava à 30 km).
+  let enrichedSeedSites: Awaited<ReturnType<typeof enrichSeedSitesWithCoords>> = [];
+  if (isRoadtrip && params.roadtripSeedSites?.length) {
+    enrichedSeedSites = await enrichSeedSitesWithCoords(
+      params.roadtripSeedSites,
+      params.city,
+      params.country,
+      params.startPoint,
+      // Tolérance distance : on accepte qu'un seedSite soit jusqu'à 2×
+      // radiusM du startPoint. À 30 km radius, ça permet 60 km de
+      // tolérance — couvre les fiches "hub + arrière-pays".
+      radiusM * 2,
+    );
+    const geocodedCount = enrichedSeedSites.filter((s) => s.source === "geocoded").length;
+    console.log(
+      `[discoverParcours] Roadtrip seedSites enrichment: ${enrichedSeedSites.length}/${params.roadtripSeedSites.length} resolved (${geocodedCount} geocoded, ${enrichedSeedSites.length - geocodedCount} provided)`,
+    );
+  }
+
+  // Discovery : 1 search startPoint + N searches per seedSite (radius 3 km)
+  const discoveryCalls: Array<Promise<NearbyCandidate[]>> = [
     discoverNearbyLandmarks(params.startPoint, {
       radiusM: radiusM,
       limit: candidateLimit,
       types: googleTypes,
     }),
+  ];
+  // Mini-nearbysearches centrés sur chaque seedSite enrichi.
+  // 3 km de rayon = couvre la zone "site phare + alentours immédiats"
+  // sans déborder sur d'autres clusters. Limit 30 par seedSite (Tossa
+  // de Mar village + Costa Brava côte n'en a pas plus thématiquement).
+  for (const seed of enrichedSeedSites) {
+    discoveryCalls.push(
+      discoverNearbyLandmarks(
+        { lat: seed.lat, lon: seed.lon },
+        { radiusM: 3_000, limit: 30, types: googleTypes },
+      ),
+    );
+  }
+
+  const allDiscoveryResults = await Promise.allSettled([
+    Promise.allSettled(discoveryCalls),
     deepResearchTheme({
       city: params.city,
       country: params.country,
@@ -409,12 +535,42 @@ export async function discoverParcours(
     }),
   ]);
 
+  // Aggregate + dedup les nearbysearches (multi-centres)
   let googleCandidates: NearbyCandidate[] = [];
-  if (googleResult.status === "fulfilled") {
-    googleCandidates = googleResult.value;
+  const verifiedCtxResult = allDiscoveryResults[1];
+
+  if (allDiscoveryResults[0].status === "fulfilled") {
+    const seenPlaceIds = new Set<string>();
+    for (const callResult of allDiscoveryResults[0].value) {
+      if (callResult.status === "fulfilled") {
+        for (const candidate of callResult.value) {
+          if (!seenPlaceIds.has(candidate.placeId)) {
+            seenPlaceIds.add(candidate.placeId);
+            // Recalcule distanceM relative au startPoint (pas au seedSite
+            // qui a servi de centre de la mini-search). Ainsi tous les
+            // candidats partagent la même métrique de distance pour le
+            // tri downstream et la walkability check.
+            const distanceM = haversineMeters(
+              { lat: candidate.lat, lon: candidate.lon },
+              params.startPoint,
+            );
+            googleCandidates.push({ ...candidate, distanceM });
+          }
+        }
+      } else {
+        console.warn(
+          `[discoverParcours] Sub-nearbysearch threw: ${callResult.reason instanceof Error ? callResult.reason.message : callResult.reason}`,
+        );
+      }
+    }
+    // Tri final par distance au startPoint croissante (cohérent avec
+    // walking flow historique). Les seedSite candidats arrivent
+    // mécaniquement plus loin dans le tri, mais sont quand même dans
+    // le pool — Claude peut les choisir.
+    googleCandidates.sort((a, b) => a.distanceM - b.distanceM);
   } else {
     console.warn(
-      `[discoverParcours] Google nearbysearch threw: ${googleResult.reason instanceof Error ? googleResult.reason.message : googleResult.reason}`,
+      `[discoverParcours] Multi-center nearbysearch threw: ${allDiscoveryResults[0].reason instanceof Error ? allDiscoveryResults[0].reason.message : allDiscoveryResults[0].reason}`,
     );
   }
 
