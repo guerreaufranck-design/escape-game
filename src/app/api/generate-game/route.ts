@@ -285,17 +285,37 @@ export async function POST(request: NextRequest) {
     // discovery) attrape les cas exceptionnels en posant le flag
     // `games.needs_review` plutôt qu'en patchant à l'aveugle.
 
-    // Idempotency: if a game with this slug already exists, return it
+    // Idempotency : si un game avec ce slug existe déjà (publié OU
+    // en cours de génération récente), on retourne l'existant au lieu
+    // de relancer.
+    //
+    // BUG OBSERVÉ 12/05 Alcazar : OddballTrip retry agressivement quand
+    // find-game renvoie 404 → 6 générations en 17 min pour le même slug
+    // (8db9b399, ab77c0d8, eb79fcde, a9177897, e0d9032d, 65fb78d7).
+    // Coût brûlé : ~$10 pour rien.
+    // Cause : idempotency vérifiait `is_published=true` UNIQUEMENT.
+    // Comme la nouvelle architecture chained-lambdas garde
+    // is_published=false jusqu'à validation, AUCUN duplicate n'était
+    // jamais détecté → chaque retry OddballTrip = nouveau game.
+    //
+    // Fix : on inclut aussi les games en cours de génération RÉCENTE
+    // (créés dans la dernière heure). Si un game existe pour ce slug,
+    // peu importe son is_published, on le retourne. OddballTrip va
+    // poller jusqu'à ce que is_published=true et créer le code à ce
+    // moment-là.
     const supabase = createAdminClient();
-    const { data: existingGame } = await supabase
+    const recentCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: existingGames } = await supabase
       .from("games")
-      .select("id")
+      .select("id, is_published, created_at")
       .eq("slug", template.slug)
-      .eq("is_published", true)
-      .single();
+      .gte("created_at", recentCutoff)
+      .order("created_at", { ascending: false })
+      .limit(1);
 
+    const existingGame = existingGames?.[0];
     if (existingGame) {
-      console.log(`[GenerateGame] Game already exists for slug "${template.slug}" → ${existingGame.id}`);
+      console.log(`[GenerateGame] Game already exists for slug "${template.slug}" → ${existingGame.id} (is_published=${existingGame.is_published}, created ${existingGame.created_at}) — returning existing instead of generating duplicate.`);
 
       // Still send callback so oddballtrip can process pending purchases
       if (body.callbackUrl) {
