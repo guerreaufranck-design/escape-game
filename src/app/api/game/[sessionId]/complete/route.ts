@@ -145,7 +145,13 @@ export async function POST(
       let answer = stepData?.answer_text ? t(stepData.answer_text, locale) : null;
       let anecdote = stepData?.anecdote ? t(stepData.anecdote, locale) : null;
 
-      if (needsTranslation && stepData?.id) {
+      // Cache lookup pour les step fields. Même fix que game-level :
+      // `needsTranslation` (statique-locales-only) raterait les jeux
+      // pipeline en EN brut + FR cache. On accepte aussi (locale != en
+      // && isPlainEnglish) pour servir le cache FR existant.
+      const stepIsPlain = typeof stepData?.title === "string" && !String(stepData.title).startsWith("{");
+      const stepNeedsCache = needsTranslation || (locale !== "en" && stepIsPlain);
+      if (stepNeedsCache && stepData?.id) {
         const enFields: Record<string, string> = {};
         const enTitle = getEnglishBase(stepData.title);
         const enAnswer = getEnglishBase(stepData.answer_text);
@@ -156,7 +162,7 @@ export async function POST(
 
         if (Object.keys(enFields).length > 0) {
           try {
-            const translated = await translateStepFields(stepData.id, enFields, locale);
+            const translated = await translateStepFields(stepData.id, enFields, locale, { cacheOnly: true });
             if (translated.title) title = translated.title;
             if (translated.answer_text) answer = translated.answer_text;
             if (translated.anecdote) anecdote = translated.anecdote;
@@ -174,13 +180,30 @@ export async function POST(
       });
     }
 
+    // BUG fix (Lugdunum V5 12/05) : la pipeline moderne stocke les
+    // textes en EN brut dans `games` puis cache la traduction FR/etc
+    // dans translations_cache via prepareGamePackage. Le check
+    // `needsTranslation` (= !isStaticLocale) skip la lecture du cache
+    // pour fr/de/es/it/en, supposant que ces langues sont déjà encodées
+    // en JSON multi-lang dans la colonne. Faux pour la pipeline actuelle.
+    //
+    // Fix : aligner sur /api/game/[sessionId]/route.ts qui utilise
+    // `needsGemini = needsTranslation || (locale !== "en" && isPlainEnglish)`.
+    // Désormais on lit le cache même pour les locales statiques quand
+    // le contenu DB est en EN brut.
+    const isPlainEnglish = typeof game.title === "string" && !String(game.title).startsWith("{");
+    const needsCacheLookup = needsTranslation || (locale !== "en" && isPlainEnglish);
+
     // Translate game title
     let gameTitle = t(game.title, locale);
-    if (needsTranslation) {
+    if (needsCacheLookup) {
       const enTitle = getEnglishBase(game.title);
       if (enTitle) {
         try {
-          gameTitle = await translateGameField(session.game_id, "games", "title", enTitle, locale);
+          // cacheOnly: la pipeline garantit le cache complet via gate
+          // is_published. Pas d'appel Gemini live ici (qui ferait
+          // attendre la cliente).
+          gameTitle = await translateGameField(session.game_id, "games", "title", enTitle, locale, { cacheOnly: true });
         } catch { /* keep fallback */ }
       }
     }
@@ -191,7 +214,7 @@ export async function POST(
       let epilogueTitle = t(game.epilogue_title, locale) || getEnglishBase(game.epilogue_title);
       let epilogueText = t(game.epilogue_text, locale) || getEnglishBase(game.epilogue_text);
 
-      if (needsTranslation) {
+      if (needsCacheLookup) {
         const enTitle = getEnglishBase(game.epilogue_title);
         const enText = getEnglishBase(game.epilogue_text);
         try {
@@ -202,6 +225,7 @@ export async function POST(
               "epilogue_title",
               enTitle,
               locale,
+              { cacheOnly: true },
             );
           }
           if (enText) {
@@ -211,6 +235,7 @@ export async function POST(
               "epilogue_text",
               enText,
               locale,
+              { cacheOnly: true },
             );
           }
         } catch { /* keep English fallback */ }
