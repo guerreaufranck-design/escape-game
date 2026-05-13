@@ -50,6 +50,22 @@ export const recoverStuckGames = inngest.createFunction(
     // ─────────────────────────────────────────────────────────────────
     // Step 1 — Query stuck games
     // ─────────────────────────────────────────────────────────────────
+    // NOTE colonnes : la table `games` n'a PAS de col `theme`/`narrative`/
+    // `genre`/`language`. Mapping :
+    //   - games.title       = ce qu'on appelle "theme" dans le code
+    //   - games.description = themeDescription
+    //   - narrative + genre = PAS PERSISTÉS (transitent uniquement dans
+    //     le request body de /api/games/generate)
+    //   - language          = PAS PERSISTÉ non plus
+    //
+    // Conséquence pour le heartbeat : on re-fire l'event avec
+    //   narrative: "" (vide) — pas grave, narrative ne sert qu'au repair
+    //                          niche `roman_date_drift` via regenerateStep
+    //   genre: undefined  — fallback à 'historical' dans game-pipeline
+    //   language: "fr"    — hardcoded comme dans l'ancien cron Vercel
+    //                       process-pending-games (TODO migration future :
+    //                       ajouter game.language pour préserver le lang
+    //                       du buyer)
     const stuckGames = await step.run("find-stuck-games", async () => {
       const supabase = createAdminClient();
       const cutoff = new Date(
@@ -57,7 +73,7 @@ export const recoverStuckGames = inngest.createFunction(
       ).toISOString();
       const { data, error } = await supabase
         .from("games")
-        .select("id, slug, city, theme, narrative, language, genre, created_at")
+        .select("id, slug, city, title, created_at")
         .eq("is_published", false)
         .eq("needs_review", false)
         .lt("created_at", cutoff)
@@ -84,17 +100,22 @@ export const recoverStuckGames = inngest.createFunction(
     // On émet UN event par stuck game. Pas de Promise.all → on les fait
     // séquentiellement pour ne pas burst Inngest. step.sendEvent attend
     // l'ack avant de continuer.
+    //
+    // Mapping DB → event payload (cf. note dans find-stuck-games) :
+    //   theme    = games.title    (col DB)
+    //   narrative = ""            (non persisté ; suffisant pour 90% des repairs)
+    //   genre    = undefined      (fallback historical dans game-pipeline)
+    //   language = "fr"           (hardcoded — TODO future migration)
     for (const game of stuckGames) {
       await step.sendEvent(`replay-${game.id}`, {
         name: "game/generate.requested",
         data: {
           gameId: game.id,
           slug: game.slug,
-          language: game.language ?? undefined,
+          language: "fr",
           city: game.city,
-          theme: game.theme,
-          narrative: game.narrative,
-          genre: game.genre ?? undefined,
+          theme: game.title,
+          narrative: "",
           // Pas de callbackUrl ici — c'est un replay interne, on ne notifie
           // pas OddballTrip à nouveau (ils ont déjà reçu le callback de
           // l'appel initial, ou ils polleront find-game eux-mêmes).
