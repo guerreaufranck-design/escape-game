@@ -62,16 +62,18 @@ export const generateGame = inngest.createFunction(
     name: "Generate game (durable finalize)",
     triggers: [{ event: gameGenerateRequested }],
     /**
-     * Concurrency cap global — max 10 jeux finalisés en parallèle.
+     * Concurrency cap global — max 5 jeux finalisés en parallèle.
      *
-     * Pourquoi 10 : prepareGamePackage fait ~8-15 appels Gemini + ~8-15
-     * appels ElevenLabs par jeu. À 10 jeux parallèles = ~150 calls Gemini
-     * concurrents, ce qui reste sous le quota (15 req/min en free tier,
-     * 1000 req/min en tier 1). Si on a un spike de 50 achats simultanés
-     * sur OddballTrip, Inngest queue les 40 surplus et les exécute au
-     * fil de l'eau au lieu de tous faire timeout.
+     * Pourquoi 5 : limite hard du plan Inngest free tier. Très suffisant
+     * pour 3500 jeux/mois (~5 jeux/heure de moyenne, peak ~15/h sur les
+     * weekends). Si Inngest reçoit 20 events en burst, il queue les 15
+     * surplus et les exécute au fil de l'eau au lieu de tous faire
+     * timeout — exactement le comportement qu'on veut.
+     *
+     * Si on dépasse durablement (>100 jeux/heure régulier), upgrade
+     * Inngest Pro à $20/mois qui donne 50 en parallèle.
      */
-    concurrency: { limit: 10 },
+    concurrency: { limit: 5 },
     /**
      * Retry budget au niveau function. Si un step throw après ces N
      * tentatives, l'event `game/generate.failed` est émis automatiquement
