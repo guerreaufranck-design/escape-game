@@ -47,9 +47,14 @@ export const handleGenerateGameFailure = inngest.createFunction(
     // ─────────────────────────────────────────────────────────────────
     const gameContext = await step.run("load-game-context", async () => {
       const supabase = createAdminClient();
+      // NOTE colonnes : games n'a PAS de col `country`/`theme`/`narrative`.
+      // Mapping :
+      //   - games.title       = ce qu'on appelle "theme" dans le code
+      //   - country, narrative = pas persistés (transitent uniquement dans
+      //     le request body de /api/games/generate)
       const { data, error: dbErr } = await supabase
         .from("games")
-        .select("id, slug, city, country, theme, is_published, needs_review")
+        .select("id, slug, city, title, is_published, needs_review")
         .eq("id", gameId)
         .single();
       if (dbErr || !data) {
@@ -96,8 +101,10 @@ export const handleGenerateGameFailure = inngest.createFunction(
       try {
         await sendPipelineFailureAlert({
           city: gameContext?.city ?? "Unknown",
-          country: gameContext?.country ?? "Unknown",
-          theme: gameContext?.theme ?? "Unknown",
+          // country pas persisté en DB → on met "Unknown" pour l'email
+          country: "Unknown",
+          // theme = games.title en DB
+          theme: gameContext?.title ?? "Unknown",
           slug: gameContext?.slug ?? gameId,
           error: `[Inngest dead letter] step=${failedStep} attempts=${attempts}: ${error}`,
           errorCode: "INTERNAL_ERROR",
