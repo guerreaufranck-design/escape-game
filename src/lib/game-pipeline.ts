@@ -640,10 +640,24 @@ export async function generateGameFromTemplate(
       wideningMultiplier: wideningAttempts[0].multiplier,
     });
     let usedWidening = wideningAttempts[0];
+    // 2026-05-13 — Politique stopCount cible.
+    //
+    // AVANT : on acceptait dès 5 stops (early-exit du widening). Résultat
+    // observé : tous les jeux finissaient à 6 stops (le plancher commercial),
+    // jamais au sweet spot 9. La raison : Claude curation retourne 8-9 mais
+    // le walkability filter en aval drop 2-4 → on tombe à 5-7 et on accepte.
+    //
+    // MAINTENANT : on retry le widening tant qu'on n'a pas AU MOINS
+    // (stopCount - 1) stops. Si stopCount=9, on cherche ≥8 stops. Si après
+    // les 3 widening attempts on a moins, on accepte ce qu'on a (>=6 floor).
+    //
+    // Coût : potentiellement 2x discoveries au lieu d'1, mais on gagne 2-3
+    // stops sur chaque jeu (de 6 à 8-9), valeur perçue +50% pour ~$0.05.
+    const targetStopCount = Math.max(6, stopCount - 1);
     for (const attempt of wideningAttempts.slice(1)) {
-      if (discovery.success && discovery.landmarks.length >= 5) break;
+      if (discovery.success && discovery.landmarks.length >= targetStopCount) break;
       console.warn(
-        `[Pipeline] ${usedWidening.label} attempt yielded ${discovery.success ? discovery.landmarks.length : 0} stops (need ≥5) — retrying with ${attempt.label} (multiplier ${attempt.multiplier}x)`,
+        `[Pipeline] ${usedWidening.label} attempt yielded ${discovery.success ? discovery.landmarks.length : 0} stops (target ≥${targetStopCount}) — retrying with ${attempt.label} (multiplier ${attempt.multiplier}x)`,
       );
       discovery = await discoverParcours({
         ...discoveryParamsBase,
@@ -652,10 +666,12 @@ export async function generateGameFromTemplate(
       usedWidening = attempt;
     }
 
-    if (!discovery.success || discovery.landmarks.length < 5) {
+    // Floor absolu : 6 stops. Si même à 2.5x widening on a < 6, on FAIL
+    // (la zone est éditorialement à reframer).
+    if (!discovery.success || discovery.landmarks.length < 6) {
       const err = new Error(
         discovery.error ||
-          `All widening attempts failed — zone too sparse for ≥5 walkable stops even at 2.5× radius/maxHop. Reframe the fiche editorially.`,
+          `All widening attempts failed — zone too sparse for ≥6 walkable stops even at 2.5× radius/maxHop. Reframe the fiche editorially.`,
       ) as Error & {
         code?: PipelineErrorCode;
         failedLandmarks?: FailedLandmark[];

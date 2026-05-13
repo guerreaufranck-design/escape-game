@@ -149,11 +149,16 @@ async function enrichSeedSitesWithCoords(
  *   stopCount ≤ 3 → 3.5 km (extreme spread, tour large d'une ville)
  */
 function radiusForStopCount(stopCount: number): number {
-  if (stopCount >= 9) return 1_900; // 9 stops dense city-center
-  if (stopCount === 8) return 2_000;
-  if (stopCount === 7) return 2_200;
-  if (stopCount === 6) return 2_500;
-  return 2_800; // ≤5 (ne devrait plus arriver — clamp à 6 minimum upstream)
+  // 2026-05-13 — bump radius walking pour viser une expérience demi-journée
+  // (~1h30-2h30 de jeu cumulé) au lieu d'une simple promenade 90 min.
+  // Logique : humain marche 6 km/h. Avec radius=2.5km et 9 stops, le joueur
+  // fait ~5-7 km de marche cumulée + 27 min cumulé AR (3 min × 9 stops) =
+  // 1h30 à 2h30 d'expérience. Sweet spot pour une fiche premium.
+  if (stopCount >= 9) return 2_500; // 9 stops étalés sur 5 km diamètre
+  if (stopCount === 8) return 2_700;
+  if (stopCount === 7) return 2_900;
+  if (stopCount === 6) return 3_100;
+  return 3_400; // ≤5 (ne devrait plus arriver — clamp à 6 minimum upstream)
 }
 
 /**
@@ -174,11 +179,15 @@ function radiusForStopCount(stopCount: number): number {
  * résoudre.
  */
 function maxInterStopFor(stopCount: number): number {
-  if (stopCount >= 9) return 1_400; // 9 stops dense → hops courts
-  if (stopCount === 8) return 1_500;
-  if (stopCount === 7) return 1_700;
-  if (stopCount === 6) return 1_900;
-  return 2_200; // ≤5 (clamp upstream à 6)
+  // 2026-05-13 — bump aligné avec radius x1.3 pour permettre des hops
+  // plus longs cohérents avec le format demi-journée. Sinon le walkability
+  // filter dropperait des stops valides juste parce qu'ils sont à 1.5km
+  // d'un voisin, ce qui est OK à pied à 6 km/h (~15 min de marche).
+  if (stopCount >= 9) return 1_800; // 9 stops → hops jusqu'à 1.8 km
+  if (stopCount === 8) return 2_000;
+  if (stopCount === 7) return 2_200;
+  if (stopCount === 6) return 2_400;
+  return 2_700; // ≤5 (clamp upstream à 6)
 }
 
 /**

@@ -191,18 +191,26 @@ export async function POST(request: NextRequest) {
       // voit qu'on a reçu mais pas utilisé.
       stops,
       startPoint,
-      // stopCount : combien de landmarks Perplexity doit produire. Si
-      // oddballtrip envoie body.stops[] legacy on prend sa longueur ;
-      // sinon body.stopCount ; sinon 9 (commercial sweet spot, ~90 min).
-      // La pipeline clamp ensuite [6, 9] dans game-pipeline.ts.
+      // stopCount : combien de landmarks Perplexity doit produire.
       //
-      // Stratégie produit : laisser oddballtrip OMETTRE stopCount par
-      // défaut → toujours 9 stops (max valeur perçue). N'envoyer 6-8
-      // explicitement que pour des fiches "balade courte" différenciées.
+      // 2026-05-13 — FORCE 9 par défaut. Avant, on prenait body.stops?.length
+      // en fallback ce qui revenait à 6 pour les fiches OddballTrip qui
+      // envoient encore le legacy `stops[]` array avec 6 entrées.
+      // Résultat observé : Cambridge 6 stops, Aegina 6, Lugdunum 6,
+      // Alcázar 6 — TOUS au plancher au lieu du sweet spot 9.
+      //
+      // Désormais : body.stops[] est SILENCIEUSEMENT IGNORÉ pour la
+      // détermination du stopCount (il l'était déjà pour la discovery,
+      // cf. game-pipeline.ts). Seul body.stopCount EXPLICITE peut
+      // forcer une valeur autre que 9.
+      //
+      // La pipeline clamp ensuite [6, 9] dans game-pipeline.ts.
+      // Le widening progressif (1x, 1.5x, 2.5x) tente d'atteindre 9
+      // même sur zones sparses avant de redescendre vers le floor 6.
       stopCount:
         typeof body.stopCount === "number"
           ? body.stopCount
-          : (stops?.length ?? 9),
+          : 9,
       // language : code ISO 2 lettres ("fr", "en", "de"...). Si présent,
       // le pipeline pré-génère TOUS les audios + traductions dans cette
       // langue après l'insert DB. Si absent, log warning + lazy gen

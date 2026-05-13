@@ -206,8 +206,13 @@ export async function translateStepFields(
   stepId: string,
   fields: Record<string, string>, // { riddle_text: "...", title: "...", ... }
   targetLang: string,
-  options: { cacheOnly?: boolean } = {},
+  options: { cacheOnly?: boolean; sourceTable?: string } = {},
 ): Promise<Record<string, string>> {
+  // 2026-05-13 — `sourceTable` ajouté pour permettre le batch des fields
+  // game-level (title, description, epilogue_title, epilogue_text) en un
+  // seul Gemini call au lieu de 4 séparés. Default "game_steps" pour
+  // backwards compat avec tous les callsites existants.
+  const sourceTable = options.sourceTable ?? "game_steps";
   if (targetLang === "en") return fields;
 
   const supabase = createAdminClient();
@@ -304,7 +309,7 @@ export async function translateStepFields(
           .upsert(
             {
               source_id: stepId,
-              source_table: "game_steps",
+              source_table: sourceTable,
               source_field: field,
               language: targetLang,
               translated_text: text,
@@ -357,7 +362,7 @@ export async function translateStepFields(
             .upsert(
               {
                 source_id: stepId,
-                source_table: "game_steps",
+                source_table: sourceTable,
                 source_field: r.value.field,
                 language: targetLang,
                 translated_text: r.value.text,
