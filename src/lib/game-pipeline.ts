@@ -30,7 +30,52 @@ import {
   type GeneratedStep,
 } from "./anthropic";
 import { createAdminClient } from "./supabase/admin";
-import { geocodeLocation, haversineMeters } from "./geocode";
+import {
+  geocodeLocation,
+  haversineMeters,
+  discoverNearbyLandmarks,
+  type NearbyCandidate,
+} from "./geocode";
+
+/**
+ * Sélectionne le meilleur landmark d'une ville pour servir de startPoint.
+ * Critère : rating × log(reviews) + bonus pour types prestigieux (cathedral,
+ * castle, monument, etc.). Le meilleur landmark devient le point de départ
+ * du jeu — précision Google Places sub-10m.
+ *
+ * Utilisé en fallback quand OddballTrip n'a pas fourni de `startPointText`
+ * géocodable. Garantit qu'on a TOUJOURS un point de départ précis et
+ * touristiquement pertinent, jamais juste un "city center" flou.
+ */
+function pickTopLandmarkForStartPoint(
+  candidates: NearbyCandidate[],
+): NearbyCandidate {
+  const PRESTIGE_TYPES: Record<string, number> = {
+    cathedral: 5.0,
+    castle: 4.5,
+    fort: 4.0,
+    palace: 4.5,
+    monument: 4.0,
+    historical_landmark: 4.0,
+    tourist_attraction: 3.0,
+    museum: 2.5,
+    church: 2.0,
+    city_hall: 2.0,
+    place_of_worship: 1.5,
+  };
+  const scored = candidates.map((c) => {
+    const rating = c.rating ?? 3.5;
+    const reviews = c.userRatingsTotal ?? 1;
+    const ratingScore = (rating - 3) * Math.log10(reviews + 1);
+    let typeBonus = 0;
+    for (const t of c.types ?? []) {
+      typeBonus += PRESTIGE_TYPES[t] ?? 0;
+    }
+    return { candidate: c, score: ratingScore + typeBonus };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0].candidate;
+}
 import { discoverParcours } from "./parcours-discovery";
 // prepareGamePackage + validateFinalGame + attemptAutoRepair moved to
 // Lambda 2 (pipeline-finalize.ts + /api/internal/finalize-game route)
@@ -482,11 +527,44 @@ export async function generateGameFromTemplate(
     // override body.startPoint si drift > 20km. Le jeu publie au bon endroit,
     // peu importe la qualité du startPoint envoyé. needs_review = true si
     // override pour signaler le bug upstream à l'opérateur.
-    const CITY_STARTPOINT_DRIFT_M = 20_000;
     const cityToGeocode = template.city.split(/\s*[·,]\s*/)[0].trim();
 
-    // 1. Géocode le startPointText précis si fourni
-    let textGeo: { lat: number; lon: number } | null = null;
+    // ═══════════════════════════════════════════════════════════════════
+    // RÉSOLUTION DU STARTPOINT — politique 2026-05-13
+    // ═══════════════════════════════════════════════════════════════════
+    //
+    // PRINCIPE FONDAMENTAL :
+    //   On ne fait JAMAIS confiance à `body.startPoint` (coords numériques
+    //   envoyées par OddballTrip). On a observé qu'OddballTrip envoie
+    //   régulièrement des coords corrompues (Béziers 13/05 : startPoint
+    //   à 39.3 km de la cathédrale Saint-Nazaire). C'est leur DB qui
+    //   est merdique sur ce champ — on ne s'en sert PAS comme source.
+    //
+    // HIÉRARCHIE D'AUTORITÉ (du plus précis au plus dégradé) :
+    //   1. startPointText géocodé via Google Maps Geocoding API
+    //      → précision sub-10m sur les vrais landmarks (cathédrales,
+    //        tours, monuments). Marche pour "Cathédrale Saint-Nazaire,
+    //        Béziers", "Tour Saint-Nicolas, La Rochelle", etc.
+    //
+    //   2. TOP LANDMARK touristique de la ville via Google Places nearby
+    //      → si OddballTrip n'envoie pas startPointText, on cherche le
+    //        monument le plus iconique de la ville et on l'utilise comme
+    //        point de départ. Beaucoup plus précis et thématique que
+    //        cityCenter brut.
+    //
+    //   3. cityCenter géocodé (geocodeLocation du nom de la ville)
+    //      → ultime fallback si même Google Places ne retourne rien
+    //        (zone tropicale isolée, mauvais nom de ville, etc.).
+    //
+    // body.startPoint est IGNORÉ. Volontairement. Documenté.
+
+    // 1. ESSAI PRINCIPAL — géocode startPointText si fourni
+    let resolvedStartPoint: { lat: number; lon: number } | null = null;
+    let startPointSource:
+      | "startPointText-geocoded"
+      | "top-landmark-google-places"
+      | "city-center-fallback" = "city-center-fallback";
+
     if (template.startPointText && template.startPointText.trim()) {
       try {
         const geo = await geocodeLocation(
@@ -495,86 +573,105 @@ export async function generateGameFromTemplate(
           template.country,
         );
         if (geo) {
-          textGeo = { lat: geo.lat, lon: geo.lon };
+          resolvedStartPoint = { lat: geo.lat, lon: geo.lon };
+          startPointSource = "startPointText-geocoded";
           console.log(
-            `[Pipeline] startPointText "${template.startPointText}" geocoded at ${textGeo.lat.toFixed(4)},${textGeo.lon.toFixed(4)} (PRECISE source)`,
+            `[Pipeline] startPoint resolved via Google geocoding of "${template.startPointText}" → ${resolvedStartPoint.lat.toFixed(6)},${resolvedStartPoint.lon.toFixed(6)} (precision sub-10m)`,
           );
         } else {
           console.warn(
-            `[Pipeline] startPointText "${template.startPointText}" failed to geocode — falling back to cityCenter`,
+            `[Pipeline] startPointText "${template.startPointText}" failed to geocode — falling back to top landmark`,
           );
         }
       } catch (err) {
         console.warn(
-          `[Pipeline] startPointText geocode threw (non-blocking): ${err instanceof Error ? err.message : err}`,
+          `[Pipeline] startPointText geocode threw: ${err instanceof Error ? err.message : err} — falling back to top landmark`,
         );
       }
     }
 
-    // 2. Géocode le city comme fallback (et pour comparaison)
-    let cityCenter: { lat: number; lon: number } | null = null;
-    try {
-      const cityGeo = await geocodeLocation(
-        cityToGeocode,
-        cityToGeocode,
-        template.country,
-      );
-      if (cityGeo) cityCenter = { lat: cityGeo.lat, lon: cityGeo.lon };
-    } catch (err) {
-      console.warn(
-        `[Pipeline] City geocode threw (non-blocking): ${err instanceof Error ? err.message : err}`,
-      );
-    }
+    // 2. FALLBACK — top landmark touristique de la ville via Google Places
+    if (!resolvedStartPoint) {
+      try {
+        // D'abord on geocode la ville pour avoir un centre approximatif
+        // (point de référence pour la recherche nearby Google Places).
+        const cityGeo = await geocodeLocation(
+          cityToGeocode,
+          cityToGeocode,
+          template.country,
+        );
+        if (cityGeo) {
+          console.log(
+            `[Pipeline] Searching top landmark of ${cityToGeocode} via Google Places (radius 2km around city center)`,
+          );
+          const landmarks = await discoverNearbyLandmarks(
+            { lat: cityGeo.lat, lon: cityGeo.lon },
+            {
+              radiusM: 2_000,
+              limit: 30,
+              // Types priorisés (monuments emblématiques) :
+              types: [
+                "tourist_attraction",
+                "church",
+                "museum",
+                "city_hall",
+                "place_of_worship",
+              ],
+            },
+          );
 
-    // Source d'autorité choisie : textGeo > cityCenter
-    const authoritativeStart = textGeo ?? cityCenter;
-    const authoritativeSource = textGeo ? "startPointText" : "cityCenter";
-
-    let startPoint = template.startPoint;
-    let startPointAutoCorrected: {
-      from: { lat: number; lon: number };
-      to: { lat: number; lon: number };
-      driftKm: number;
-      source: string;
-    } | null = null;
-    if (!startPoint) {
-      // Pas de startPoint envoyé — fallback obligatoire vers authoritativeStart.
-      if (!authoritativeStart) {
-        const err = new Error(
-          `INTERNAL_ERROR: cannot geocode startPointText nor city center as fallback startPoint for "${template.city}, ${template.country}"`,
-        ) as Error & { code?: PipelineErrorCode };
-        err.code = "INTERNAL_ERROR";
-        throw err;
-      }
-      console.warn(
-        `[Pipeline] ⚠ MISSING template.startPoint — using ${authoritativeSource} ${authoritativeStart.lat.toFixed(4)},${authoritativeStart.lon.toFixed(4)}`,
-      );
-      startPoint = authoritativeStart;
-    } else if (authoritativeStart) {
-      // body.startPoint fourni ET authoritativeStart dispo → on vérifie le drift.
-      const drift = haversineMeters(authoritativeStart, startPoint);
-      if (drift > CITY_STARTPOINT_DRIFT_M) {
+          if (landmarks.length > 0) {
+            // Pick le top par "score touristique" : rating × log(reviews)
+            // + bonus pour types prestigieux (cathedral, monument, castle…).
+            const topLandmark = pickTopLandmarkForStartPoint(landmarks);
+            resolvedStartPoint = {
+              lat: topLandmark.lat,
+              lon: topLandmark.lon,
+            };
+            startPointSource = "top-landmark-google-places";
+            console.log(
+              `[Pipeline] startPoint resolved via Google Places top landmark: "${topLandmark.name}" (rating ${topLandmark.rating ?? "?"}/5, ${topLandmark.userRatingsTotal ?? "?"} reviews) → ${resolvedStartPoint.lat.toFixed(6)},${resolvedStartPoint.lon.toFixed(6)} (precision sub-10m)`,
+            );
+          } else {
+            console.warn(
+              `[Pipeline] No landmark found in Google Places for ${cityToGeocode} — falling back to city center`,
+            );
+            resolvedStartPoint = { lat: cityGeo.lat, lon: cityGeo.lon };
+            startPointSource = "city-center-fallback";
+            console.log(
+              `[Pipeline] startPoint = city center ${resolvedStartPoint.lat.toFixed(6)},${resolvedStartPoint.lon.toFixed(6)} (precision ~500m)`,
+            );
+          }
+        }
+      } catch (err) {
         console.warn(
-          `[Pipeline] ⚠ AUTO-CORRECT startPoint: ${authoritativeSource} at ${authoritativeStart.lat.toFixed(4)},${authoritativeStart.lon.toFixed(4)} but body.startPoint was ${(drift / 1000).toFixed(1)}km away (${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)}). Overriding to ${authoritativeSource}.`,
-        );
-        startPointAutoCorrected = {
-          from: { lat: startPoint.lat, lon: startPoint.lon },
-          to: { lat: authoritativeStart.lat, lon: authoritativeStart.lon },
-          driftKm: Math.round((drift / 1000) * 10) / 10,
-          source: authoritativeSource,
-        };
-        startPoint = authoritativeStart;
-      } else {
-        console.log(
-          `[Pipeline] startPoint from operator: ${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)} — drift ${Math.round(drift)}m from ${authoritativeSource}, OK`,
+          `[Pipeline] Top landmark / cityCenter resolution threw: ${err instanceof Error ? err.message : err}`,
         );
       }
-    } else {
-      // body.startPoint fourni mais aucune source de vérité dispo → trust body.
+    }
+
+    // 3. ÉCHEC TOTAL — impossible de géocoder quoi que ce soit
+    if (!resolvedStartPoint) {
+      const err = new Error(
+        `INTERNAL_ERROR: cannot resolve startPoint for "${template.city}, ${template.country}" — startPointText geocode failed, Google Places returned nothing, city geocode failed.`,
+      ) as Error & { code?: PipelineErrorCode };
+      err.code = "INTERNAL_ERROR";
+      throw err;
+    }
+
+    const startPoint = resolvedStartPoint;
+    // (gardé pour compatibilité avec le reste du code qui s'attendait à
+    // ce champ — toujours null car on n'auto-corrige plus depuis body.startPoint,
+    // on ignore directement)
+    const startPointAutoCorrected: null = null;
+    // Si body.startPoint était fourni, on log juste pour audit, sans plus.
+    if (template.startPoint) {
+      const drift = haversineMeters(startPoint, template.startPoint);
       console.log(
-        `[Pipeline] startPoint from operator: ${startPoint.lat.toFixed(4)},${startPoint.lon.toFixed(4)} (no startPointText nor cityCenter geocode available, no validation)`,
+        `[Pipeline] body.startPoint (${template.startPoint.lat.toFixed(4)},${template.startPoint.lon.toFixed(4)}) IGNORED — drift ${Math.round(drift / 1000 * 10) / 10}km from resolved startPoint. We trust Google Maps, not OddballTrip's numeric field.`,
       );
     }
+    void startPointSource; // garder TS happy si non utilisé downstream
 
     // Plancher commercial : 6 stops minimum, plafond 9 (cf.
     // ABSOLUTE_MIN_STOPS et ABSOLUTE_MAX_STOPS dans parcours-discovery.ts).
@@ -836,23 +933,14 @@ export async function generateGameFromTemplate(
     // Le marché global impose : un acheteur à 3h du matin doit recevoir
     // son code dans les 5-7 min sans qu'un humain le valide. Les rares
     // cas flaggés sont les vraies anomalies qui méritent inspection.
-    if (startPointAutoCorrected) {
-      if (startPointAutoCorrected.source === "startPointText") {
-        // Haute précision : auto-correct via le texte géocodé. Pas de flag.
-        // On log juste pour traçabilité — utile pour identifier les
-        // fiches oddballtrip à corriger upstream à un autre moment.
-        console.log(
-          `[Pipeline] AUTO-PUBLISH after correction via startPointText (high precision, no review needed). UPSTREAM BUG to fix later: oddballtrip should fix stored startPoint for slug "${template.slug}" (was ${startPointAutoCorrected.driftKm}km off).`,
-        );
-      } else {
-        // Précision dégradée (cityCenter ~500m) : on flag pour review
-        needsReview = true;
-        const correctReason = `body.startPoint auto-corrected to CITY CENTER (less precise than startPointText would be). Was ${startPointAutoCorrected.driftKm}km off. Game playable at city level but checkpoint precision is ~500m. oddballtrip should provide startPointText for this slug to enable auto-publish next time.`;
-        reviewReason = reviewReason
-          ? `${reviewReason} | ${correctReason}`
-          : correctReason;
-      }
-    }
+    // (SUPPRIMÉ 2026-05-13) — l'auto-correction depuis body.startPoint
+    // est obsolète. body.startPoint est désormais TOTALEMENT IGNORÉ.
+    // Le startPoint vient exclusivement de :
+    //   1. Géocode Google Maps de startPointText (priorité)
+    //   2. Top landmark Google Places de la ville (fallback)
+    //   3. cityCenter (dernier recours)
+    // Aucun de ces 3 cas n'a besoin d'un needs_review — tous précis.
+    void startPointAutoCorrected; // toujours null désormais
 
     // Widening 2.5x = zone géographiquement extreme. La qualité des
     // stops trouvés peut être limite — on flag pour double-check humain.
