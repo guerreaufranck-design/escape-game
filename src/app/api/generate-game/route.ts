@@ -29,6 +29,7 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPipelineFailureAlert, sendNeedsReviewAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
+import { inngest } from "@/lib/inngest-client";
 
 // Pipeline can take 5-7 minutes (Perplexity deep research is slow)
 export const maxDuration = 600; // 10 minutes max
@@ -380,56 +381,108 @@ export async function POST(request: NextRequest) {
       // then receives 200 → only then creates the activation code.
       // Race condition impossible.
       if (result.gameId) {
-        const baseUrl =
-          process.env.NEXT_PUBLIC_APP_URL ||
-          (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
-          new URL(request.url).origin;
-        const finalizeUrl = `${baseUrl}/api/internal/finalize-game`;
-        console.log(`[GenerateGame] Triggering Lambda 2 (fire-and-forget): ${finalizeUrl}`);
-        // Fire-and-forget avec Promise.race pour garantir que la
-        // requête HTTP est BIEN ENVOYÉE avant que Vercel kill cette
-        // lambda. Sans ça (bug observé Lugdunum V5 11/05), Vercel
-        // termine la lambda dès le return, avant même que le TCP
-        // handshake vers Lambda 2 soit fait → Lambda 2 jamais appelée.
+        // ════════════════════════════════════════════════════════════
+        // FEATURE FLAG : USE_INNGEST
+        // ════════════════════════════════════════════════════════════
+        // - "true"  → nouveau chemin Inngest (durable, retries auto,
+        //             dead letter, observabilité dashboard)
+        // - autre   → ancien chemin chained lambdas (fire-and-forget)
         //
-        // Stratégie : on lance le fetch en background, on race contre
-        // un setTimeout(2000). Dans 2s :
-        //   - SOIT la requête HTTP est entièrement complétée
-        //     (Lambda 2 a renvoyé une réponse)
-        //   - SOIT le TCP + envoi du body sont terminés et Lambda 2
-        //     est en train de traiter (on reçoit pas la réponse mais
-        //     ça ne nous bloque pas — Lambda 2 vit indépendamment)
-        // Dans les 2 cas Lambda 2 est lancée et continuera son travail
-        // dans son propre processus, même si Lambda 1 meurt.
-        const fetchPromise = fetch(finalizeUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${expectedSecret}`,
-          },
-          body: JSON.stringify({
-            gameId: result.gameId,
-            language: template.language,
-            city: template.city,
-            theme: template.theme,
-            narrative: template.narrative,
-            genre: template.genre,
-            slug: template.slug,
-            buyerEmail: body.buyerEmail,
-            orderId: body.orderId,
-            callbackUrl: body.callbackUrl,
-            callbackSecret: body.callbackSecret,
-          }),
-        }).catch((err) => {
-          console.error(
-            `[GenerateGame] Lambda 2 trigger failed: ${err instanceof Error ? err.message : err}`,
+        // Migration progressive : on flippe à "true" en prod après
+        // validation du sanity check end-to-end, on observe pendant
+        // 24h sur le dashboard Inngest, on rollback en flippant à
+        // "false" si jamais un problème. Aucune redéploiement requis
+        // pour le rollback (Vercel env vars hot-reload).
+        if (process.env.USE_INNGEST === "true") {
+          console.log(
+            `[GenerateGame] Sending Inngest event game/generate.requested for gameId=${result.gameId}`,
           );
-        });
-        await Promise.race([
-          fetchPromise,
-          new Promise((r) => setTimeout(r, 2000)),
-        ]);
-        console.log(`[GenerateGame] Lambda 2 trigger initiated (race timeout 2s)`);
+          try {
+            await inngest.send({
+              name: "game/generate.requested",
+              data: {
+                gameId: result.gameId,
+                slug: template.slug,
+                language: template.language,
+                city: template.city,
+                theme: template.theme,
+                narrative: template.narrative,
+                genre: template.genre,
+                buyerEmail: body.buyerEmail,
+                orderId: body.orderId,
+                callbackUrl: body.callbackUrl,
+                callbackSecret: body.callbackSecret,
+              },
+            });
+            console.log(
+              `[GenerateGame] Inngest event sent — finalize will run durably`,
+            );
+          } catch (err) {
+            // Si Inngest.send échoue (rare : Inngest Cloud down),
+            // le jeu est inséré en DB mais finalize ne tournera pas.
+            // Le cron `recoverStuckGames` (toutes les 5 min) ré-amorce
+            // l'event pour ce gameId au bout de 30 min, donc on récupère.
+            // On log warn mais on ne re-throw pas — Lambda 1 a quand
+            // même produit le jeu, OddballTrip va le polléer.
+            console.error(
+              `[GenerateGame] inngest.send failed (heartbeat cron will recover): ${err instanceof Error ? err.message : err}`,
+            );
+          }
+        } else {
+          // ──────────────────────────────────────────────────────────
+          // ANCIEN CHEMIN — chained lambdas via fire-and-forget HTTP
+          // ──────────────────────────────────────────────────────────
+          const baseUrl =
+            process.env.NEXT_PUBLIC_APP_URL ||
+            (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null) ||
+            new URL(request.url).origin;
+          const finalizeUrl = `${baseUrl}/api/internal/finalize-game`;
+          console.log(`[GenerateGame] Triggering Lambda 2 (fire-and-forget): ${finalizeUrl}`);
+          // Fire-and-forget avec Promise.race pour garantir que la
+          // requête HTTP est BIEN ENVOYÉE avant que Vercel kill cette
+          // lambda. Sans ça (bug observé Lugdunum V5 11/05), Vercel
+          // termine la lambda dès le return, avant même que le TCP
+          // handshake vers Lambda 2 soit fait → Lambda 2 jamais appelée.
+          //
+          // Stratégie : on lance le fetch en background, on race contre
+          // un setTimeout(2000). Dans 2s :
+          //   - SOIT la requête HTTP est entièrement complétée
+          //     (Lambda 2 a renvoyé une réponse)
+          //   - SOIT le TCP + envoi du body sont terminés et Lambda 2
+          //     est en train de traiter (on reçoit pas la réponse mais
+          //     ça ne nous bloque pas — Lambda 2 vit indépendamment)
+          // Dans les 2 cas Lambda 2 est lancée et continuera son travail
+          // dans son propre processus, même si Lambda 1 meurt.
+          const fetchPromise = fetch(finalizeUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${expectedSecret}`,
+            },
+            body: JSON.stringify({
+              gameId: result.gameId,
+              language: template.language,
+              city: template.city,
+              theme: template.theme,
+              narrative: template.narrative,
+              genre: template.genre,
+              slug: template.slug,
+              buyerEmail: body.buyerEmail,
+              orderId: body.orderId,
+              callbackUrl: body.callbackUrl,
+              callbackSecret: body.callbackSecret,
+            }),
+          }).catch((err) => {
+            console.error(
+              `[GenerateGame] Lambda 2 trigger failed: ${err instanceof Error ? err.message : err}`,
+            );
+          });
+          await Promise.race([
+            fetchPromise,
+            new Promise((r) => setTimeout(r, 2000)),
+          ]);
+          console.log(`[GenerateGame] Lambda 2 trigger initiated (race timeout 2s)`);
+        }
       }
 
       // (was: send callback + needs_review email here. Now Lambda 2 does

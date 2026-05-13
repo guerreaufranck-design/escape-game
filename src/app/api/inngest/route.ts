@@ -23,20 +23,20 @@
 
 import { serve } from "inngest/next";
 import { inngest } from "@/lib/inngest-client";
-import { allTestFunctions } from "@/lib/inngest/functions-test";
+import { allInngestFunctions } from "@/lib/inngest";
 
-// Inngest n'est PAS un endpoint long-running ; chaque invocation = 1 step.
-// Vercel default 10s suffit largement (step typique = 30s-5min mais
-// nous reverrons ce timeout au moment de migrer la pipeline réelle).
-export const maxDuration = 60;
+/**
+ * Vercel maxDuration de cet endpoint.
+ *
+ * Chaque invocation d'Inngest = exécution d'UN seul step. Le step le plus
+ * long est `prepare-package` qui peut prendre 5-10 min (translations
+ * Gemini + audio ElevenLabs). On met 600s (10 min, max Vercel) pour
+ * couvrir tous les cas. Si un step dépasse 10 min, Inngest le retry
+ * automatiquement.
+ */
+export const maxDuration = 600;
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
-  functions: [
-    // Tests de bout en bout (à supprimer après stabilisation)
-    ...allTestFunctions,
-    // TODO J3 : ajouter la fonction `generateGame` ici
-    // TODO J5 : ajouter le dead letter handler `handleGenerateGameFailure`
-    // TODO J5 : ajouter le heartbeat `recoverStuckGames`
-  ],
+  functions: allInngestFunctions,
 });

@@ -33,16 +33,35 @@ import { Inngest, eventType, staticSchema } from "inngest";
  *   - game/generate.succeeded → jeu publié avec succès
  */
 
-/** Demande de génération d'un jeu. La row games doit déjà exister en DB
- *  avec is_published=false avant d'envoyer cet event. */
+/** Demande de finalisation d'un jeu déjà inséré (is_published=false).
+ *  Envoyé par /api/games/generate APRÈS l'exécution de Lambda 1
+ *  (generateGameFromTemplate qui insère la row + les steps).
+ *
+ *  La fonction Inngest `generateGame` consume cet event et exécute
+ *  durablement : prepareGamePackage → validateFinalGame → attemptAutoRepair
+ *  loop → flip is_published → notify OddballTrip via callback. */
 export const gameGenerateRequested = eventType("game/generate.requested", {
   schema: staticSchema<{
-    /** UUID du game pré-inséré en DB (is_published=false). */
+    /** UUID du game déjà inséré en DB par Lambda 1 (is_published=false). */
     gameId: string;
-    /** Code humain visible par OddballTrip (ABCD-1234-WXYZ). */
-    code: string;
-    /** Idempotency key pour dédupliquer si OddballTrip retry. */
-    idempotencyKey?: string;
+    /** Slug — utilisé pour les logs et le callback. */
+    slug: string;
+    /** Langue ISO-639-1 (fr, en, de…) pour la pré-génération audio. */
+    language?: string;
+    /** Champs métier — utilisés par attemptAutoRepair pour régénérer un step. */
+    city: string;
+    theme: string;
+    narrative: string;
+    /** Genre narratif (historical, fantasy, mystery…). */
+    genre?: string;
+    /** Email du buyer — utilisé pour l'alerte needs_review. */
+    buyerEmail?: string;
+    /** Order ID OddballTrip — tracking. */
+    orderId?: string;
+    /** Callback URL OddballTrip — notif success/failure post-finalize. */
+    callbackUrl?: string;
+    /** Bearer token pour authentifier le callback. */
+    callbackSecret?: string;
   }>(),
 });
 
