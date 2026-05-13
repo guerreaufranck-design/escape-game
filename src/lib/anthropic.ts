@@ -1308,32 +1308,93 @@ export async function adaptNarrativeForReplacedStops(params: {
     })
     .join("\n\n");
 
-  const prompt = `You are rewriting the SCENARIO of an existing outdoor escape game whose original landmark list had to be partially substituted because some venues did not actually exist.
+  const prompt = `You are writing the SCENARIO of an outdoor escape game. The list of physical stops (real GPS locations) is ALREADY FIXED — selected upstream by a geometric algorithm for walkability + dispersion. Your job is to weave a creative fiction THAT FITS THE GIVEN THEME using these specific locations as plot anchors.
 
-LOCKED (do NOT change these):
+═══════════════════════════════════════════════════════════════════
+  DESIGN PHILOSOPHY — READ CAREFULLY
+═══════════════════════════════════════════════════════════════════
+
+The player's experience :
+1. Riddles, characters, anecdotes, and AR clues are ALL revealed in
+   Augmented Reality on the player's phone. They are NOT pre-existing
+   physical plaques or signs.
+2. → You can INVENT freely what the AR reveals at each location.
+3. → Each stop's "theme link" can be REAL (if known history exists)
+   OR FICTIONAL (you invent a thematic backstory). The player can't
+   tell the difference.
+
+═══════════════════════════════════════════════════════════════════
+  RULES — what you MUST do and MUST NOT do
+═══════════════════════════════════════════════════════════════════
+
+✅ MUST :
+- Keep the THEME consistent across all stops. If theme is "Corsairs of
+  La Rochelle", every stop's fiction must fit a corsair / pirate /
+  17th-century-naval-resistance universe. If theme is "Druids", every
+  stop fits the druid universe. Tone, vocabulary, plot all reinforce
+  the theme.
+- Use the GIVEN locations in the GIVEN order. Don't reorder. Don't drop.
+- For each stop, find SOMETHING to anchor the fiction on : the building's
+  function (church, museum, fountain, plaza), its architecture, an era
+  it evokes, or simply its physical setting.
+- Make the narrative threading FEEL coherent — even if you invent, make
+  it BELIEVABLE within the theme. Continuity across stops matters.
+
+❌ MUST NOT :
+- Wander off-theme. A modern park in a "Corsairs" game becomes "the
+  hidden meeting ground where corsairs once divided their spoils" —
+  NOT "where children play soccer today".
+- Stay within real history for every stop. If a location has no real
+  thematic link, INVENT one that fits the theme. The escape game IS
+  fiction — players sign up for that experience.
+- Force a thematic link onto a location it really can't carry. If a
+  given stop is, say, a contemporary supermarket, GIVE IT a fictional
+  thematic role (e.g. "the secret entrance to the corsair tunnels") —
+  don't refuse to use it just because the real-world building doesn't
+  fit.
+- Refuse a stop. Every stop in the list MUST appear in your output.
+
+═══════════════════════════════════════════════════════════════════
+  CONTEXT — locked inputs
+═══════════════════════════════════════════════════════════════════
+
 - City: ${params.city}, ${params.country}
-- Theme: "${params.theme}"
-
-REFERENCE — original narrative (kept ONLY for tone / atmosphere; many of its plot points reference the replaced venues and must be discarded):
+- Theme (LOCKED — never deviate): "${params.theme}"
+- Original narrative (for tone reference only — its plot may not match
+  the new stop list, you can discard plot points):
 ${params.originalNarrative}
 
-THE NEW DEFINITIVE STOP LIST (in walking order, do NOT reorder):
+═══════════════════════════════════════════════════════════════════
+  THE DEFINITIVE STOP LIST (in walking order, locked, do NOT reorder)
+═══════════════════════════════════════════════════════════════════
+
 ${stopsBlock}
 
-YOUR JOB:
-1. Rewrite \`themeDescription\` — 1 to 2 sentences (120-180 chars), same tone as the original, that pitch the game on the product page. Mention the city, hint at the theme.
-2. Rewrite \`narrative\` — 600-900 chars, the intro the player reads before starting. It must thread the EXACT new stops in order, give a coherent cause/quest/secret-to-uncover, and respect the locked theme. Reference the real venues by their generic noun ("the church", "the bridge over the Clerve", "the war memorial") — players don't see the Google name.
-3. For each stop, output:
-   - \`name\` — a poetic, evocative title in English (3-7 words) for the UI card. NEW for replacements; for kept stops, you may reuse \`keptPoeticName\` or polish it slightly to fit the new flow.
-   - \`description\` — 1-2 sentences telling the next-stage Claude what to anchor the riddle on for that stop (era, observable architectural detail, theme link). For kept stops you can recycle \`keptDescription\` if useful.
+═══════════════════════════════════════════════════════════════════
+  YOUR JOB
+═══════════════════════════════════════════════════════════════════
 
-CONSTRAINTS:
-- The number of items in \`stops\` MUST equal the number above (${params.finalStops.length}).
-- Do not invent landmarks not on the list.
-- Stay grounded in real history of these specific venues — do not fabricate plot points the riddle stage cannot honor.
-- Tone: cinematic, mystery-genre, second-person ("tu") in French when later translated, but write in English here.
+1. \`themeDescription\` (120-180 chars, 1-2 sentences) — product-page
+   pitch. Mentions city + theme.
 
-OUTPUT FORMAT — strict JSON, no markdown:
+2. \`narrative\` (600-900 chars) — the intro the player reads before
+   starting. Threads the exact stops in order. Coherent quest /
+   conspiracy / secret-to-uncover that fits the theme. Reference the
+   real venues by generic noun ("the old church", "the harbour
+   tower") — players don't see Google names.
+
+3. For each stop, output :
+   - \`name\` — poetic / evocative title in English (3-7 words) for the
+     UI card. Must SOUND like it fits the theme (e.g. for Corsair theme
+     "The Smuggler's Sanctuary", "Harbor of the Lost Fleet"; for Druid
+     theme "Whisper of the Sacred Oak", "Stone of the Forgotten Rite").
+   - \`description\` — 1-2 sentences anchoring the riddle on a real or
+     invented thematic detail of the location, in the theme's universe.
+     This guides the next Claude stage that writes the AR content.
+
+═══════════════════════════════════════════════════════════════════
+  OUTPUT FORMAT — strict JSON, no markdown
+═══════════════════════════════════════════════════════════════════
 
 {
   "themeDescription": "…",

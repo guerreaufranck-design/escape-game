@@ -49,6 +49,10 @@ import {
   FREE_PLACE_TYPES,
   type NearbyCandidate,
 } from "./geocode";
+import {
+  selectStopsByGeometry,
+  computeAdaptiveMinDist,
+} from "./parcours-selection";
 
 /**
  * Pour un roadtrip, enrichit chaque seedSite avec lat/lon si elles ne
@@ -602,110 +606,96 @@ export async function discoverParcours(
   }
 
   // ============================================
-  // PHASE 2 : Curation thématique par Claude
+  // PHASE 2 : SÉLECTION GÉOMÉTRIQUE PURE (no LLM)
   // ============================================
-  // Claude reçoit la liste Google + le thème, et choisit les
-  // `stopCount` qui collent le mieux. Si Google a >= stopCount
-  // candidats, Claude pourra TOUJOURS retourner stopCount picks
-  // (la fonction complète avec les plus proches en cas de manque).
+  //
+  // ARCHITECTURE 2026-05-13 — fin du cycle de patches.
+  //
+  // PRINCIPE : on choisit les stops UNIQUEMENT pour la qualité de
+  // la balade (POIs dispersés + attractifs touristiquement). Le
+  // THÈME n'entre PAS dans la sélection — il est imposé en aval
+  // par Claude qui écrit la fiction "DANS le thème" par-dessus les
+  // POIs choisis. Les indices sont révélés par AR — on peut tout
+  // inventer narrativement.
+  //
+  // Cette philosophie résout par construction TOUS les bugs
+  // récurrents :
+  //   - Plus jamais de twin_stops < 100m (impossible mathématiquement)
+  //   - Plus jamais de cluster pathologique (rejeté par greedy)
+  //   - Plus jamais de needs_review "zone sparse" (relaxation graduelle
+  //     jusqu'au plancher 100m, échec clair sinon)
+  //   - Plus de bypass via Claude "qui interprète" minDist
+  //
+  // L'ancienne curation pickThematicLandmarksFromList est volontairement
+  // REMPLACÉE (pas patchée). Si on a besoin un jour d'un mode
+  // "fidélité historique stricte" sur certains thèmes, ce sera un
+  // FLAG explicite, pas le comportement par défaut.
   let claudePicks: DiscoveredStop[] = [];
-  if (googleCandidates.length >= params.stopCount) {
-    try {
-      const curation = await pickThematicLandmarksFromList({
-        theme: params.theme,
-        themeDescription: params.themeDescription,
-        narrative: params.narrative,
-        candidates: googleCandidates.map((c) => ({
-          name: c.name,
-          types: c.types,
-          address: c.address,
-          rating: c.rating,
-          distanceM: c.distanceM,
-          // GPS coords pour que Claude calcule les distances
-          // inter-candidats et garantisse un parcours walkable.
-          lat: c.lat,
-          lon: c.lon,
-        })),
-        needed: params.stopCount,
-        // Contrainte walkability transmise EN AMONT à Claude pour
-        // qu'il choisisse un cluster cohérent dès le départ — au
-        // lieu qu'on filtre après et perde des stops.
-        maxInterStopM: maxInterStopM,
-        // Distance MIN entre stops — évite les "twins" type Bibliothèque
-        // + Centro Cultural à 16m sur Los Cristianos qui faisaient
-        // doublon dans les 5 stops vendus.
-        minInterStopM: minInterStopFor(params.stopCount),
-        // Mode "free" : Claude reçoit une directive d'exclusion pour
-        // sauter tout candidat payant ambigu que Google aurait laissé
-        // passer (church marquée tourist_attraction mais ticketée, etc.)
-        accessibility,
-        // Roadtrip seed sites : suggestions OddballTrip (Perplexity 1ère
-        // passe). Claude les utilise comme HINTS de priorité, pas comme
-        // contraintes. Si une seedSite est dans les candidats Google,
-        // booster son score thématique. Si elle n'y est pas, pas grave.
-        seedSiteNames: params.roadtripSeedSites?.map((s) => s.name),
-      });
-      console.log(
-        `[discoverParcours] Claude curation: ${curation.selectedIndices.length} picked from ${googleCandidates.length} Google candidates. Rationale: ${curation.rationale}`,
-      );
-      // NOTE : on ne pousse PAS les non-sélectionnés dans rejected[].
-      // Sur Rouen, Google retourne 60 candidats, Claude en pick 8 — les
-      // 52 non-pickés sont juste les non-choisis, pas des "échecs".
-      // Les remonter dans le callback STOPS_DROPPED induit l'opérateur
-      // en erreur (l'email disait "52 stops droppés" alors que tout
-      // s'est passé normalement). On ne logge dans rejected[] que les
-      // VRAIS rejets : géocodage cassé, walkability fail, etc.
-      claudePicks = curation.selectedIndices.map((i) => {
-        const c = googleCandidates[i];
-        return {
-          name: c.name,
-          description: `${c.types.slice(0, 2).join(", ")}, ${Math.round(c.distanceM)}m from start`,
-          source: c.placeId ? `https://www.google.com/maps/place/?q=place_id:${c.placeId}` : undefined,
-          lat: c.lat,
-          lon: c.lon,
-          placeId: c.placeId,
-          distanceFromStartM: c.distanceM,
-          stopMode: "radar",
-          types: c.types,
-          rating: c.rating,
-        };
-      });
-    } catch (err) {
-      console.warn(
-        `[discoverParcours] Claude curation failed: ${err instanceof Error ? err.message : err} — falling back to top-${params.stopCount} by distance`,
-      );
-      claudePicks = googleCandidates.slice(0, params.stopCount).map((c) => ({
-        name: c.name,
-        description: `${c.types.slice(0, 2).join(", ")}, ${Math.round(c.distanceM)}m from start`,
-        source: c.placeId ? `https://www.google.com/maps/place/?q=place_id:${c.placeId}` : undefined,
-        lat: c.lat,
-        lon: c.lon,
-        placeId: c.placeId,
-        distanceFromStartM: c.distanceM,
-        stopMode: "radar",
-        types: c.types,
-        rating: c.rating,
-      }));
-    }
-  } else {
-    // Google a renvoyé < stopCount candidats. Cas rare (zone sparse,
-    // erreur API, site archéo isolé). On utilisera tous ceux qu'il y a
-    // et on essaiera l'enrichissement Perplexity en Phase 3.
+
+  // Min-distance entre stops, adaptatif :
+  //   - Plus le jeu a de stops dans une zone donnée, plus on resserre
+  //   - Hard floor 100m (ABSOLUTE_FLOOR_M dans parcours-selection.ts)
+  //   - Plafond 600m (sinon les stops sont trop espacés et la balade
+  //     perd son intérêt)
+  // Roadtrip override : en mode driving/mixed, on accepte des écarts
+  // bien plus grands (les stops peuvent être à 10 km l'un de l'autre).
+  // Pour roadtrip, minDist = max(150m, radius/sqrt(N)) plafonné à 600m
+  // pour l'aspect "exploration ville" même en roadtrip. La walkability
+  // entre stops d'un roadtrip est gérée par le maxInterStopM, pas le min.
+  const minInterStopForSelection = computeAdaptiveMinDist(
+    params.stopCount,
+    radiusM,
+  );
+  console.log(
+    `[discoverParcours] Geometric selection params: stopCount=${params.stopCount}, minN=${minStops}, minDist=${Math.round(minInterStopForSelection)}m (adaptive from radius=${radiusM}m)`,
+  );
+
+  const selection = selectStopsByGeometry({
+    candidates: googleCandidates,
+    targetN: params.stopCount,
+    minN: minStops,
+    minDistanceM: minInterStopForSelection,
+  });
+
+  console.log(
+    `[discoverParcours] Selection result: ${selection.selected.length}/${params.stopCount} picked, ` +
+      `actualMinPairDist=${Math.round(selection.actualMinPairDistanceM)}m, ` +
+      `finalMinDistUsed=${selection.finalMinDistanceUsedM}m, ` +
+      `relaxationSteps=${selection.relaxationSteps}, ` +
+      `rejected=${selection.rejected.length}`,
+  );
+
+  if (!selection.success) {
     console.warn(
-      `[discoverParcours] Google returned only ${googleCandidates.length} candidates (need ${params.stopCount}) — will try Perplexity enrichment`,
+      `[discoverParcours] Selection failed: ${selection.failureReason}`,
     );
-    claudePicks = googleCandidates.map((c) => ({
-      name: c.name,
-      description: `${c.types.slice(0, 2).join(", ")}, ${Math.round(c.distanceM)}m from start`,
-      source: c.placeId ? `https://www.google.com/maps/place/?q=place_id:${c.placeId}` : undefined,
-      lat: c.lat,
-      lon: c.lon,
-      placeId: c.placeId,
-      distanceFromStartM: c.distanceM,
-      stopMode: "radar",
-      types: c.types,
-      rating: c.rating,
-    }));
+  }
+
+  // Convertit les candidats sélectionnés en DiscoveredStop. Tous en
+  // mode "radar" — les stops viennent de Google Places donc géocodés
+  // sub-10m, le radar du joueur sait précisément où le guider.
+  claudePicks = selection.selected.map((c) => ({
+    name: c.name,
+    description: `${c.types.slice(0, 2).join(", ")}, ${Math.round(c.distanceM)}m from start`,
+    source: c.placeId
+      ? `https://www.google.com/maps/place/?q=place_id:${c.placeId}`
+      : undefined,
+    lat: c.lat,
+    lon: c.lon,
+    placeId: c.placeId,
+    distanceFromStartM: c.distanceM,
+    stopMode: "radar",
+    types: c.types,
+    rating: c.rating,
+  }));
+
+  // Les rejets de la sélection vont dans rejected[] pour audit
+  // (utile pour debug : "pourquoi tel POI n'a pas été pris ?").
+  for (const r of selection.rejected) {
+    rejected.push({
+      name: r.candidate.name,
+      reason: r.reason,
+    });
   }
 
   // ============================================

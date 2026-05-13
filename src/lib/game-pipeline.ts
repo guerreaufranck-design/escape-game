@@ -640,20 +640,22 @@ export async function generateGameFromTemplate(
       wideningMultiplier: wideningAttempts[0].multiplier,
     });
     let usedWidening = wideningAttempts[0];
-    // 2026-05-13 — Politique stopCount cible.
+    // 2026-05-13 v2 — Politique stopCount cible MODÉRÉE.
     //
-    // AVANT : on acceptait dès 5 stops (early-exit du widening). Résultat
-    // observé : tous les jeux finissaient à 6 stops (le plancher commercial),
-    // jamais au sweet spot 9. La raison : Claude curation retourne 8-9 mais
-    // le walkability filter en aval drop 2-4 → on tombe à 5-7 et on accepte.
+    // V1 (matin) avait viseé stopCount - 1 (= 8 pour stopCount=9). Mais
+    // chaque widening retry = 1 nouveau call Perplexity DR (slow, 30-60s)
+    // + 1 nouveau call Claude curation. 2 retries = +3 min total. Combiné
+    // avec step generation (2-4 min) on dépassait le Vercel 600s timeout.
+    // Observé Béziers 13/05 11:45 → 504 Gateway Timeout.
     //
-    // MAINTENANT : on retry le widening tant qu'on n'a pas AU MOINS
-    // (stopCount - 1) stops. Si stopCount=9, on cherche ≥8 stops. Si après
-    // les 3 widening attempts on a moins, on accepte ce qu'on a (>=6 floor).
+    // V2 : on accepte (stopCount - 3), soit 6 stops minimum pour stopCount=9.
+    // Ça correspond au plancher commercial historique. Si discovery donne
+    // 6+ stops d'un coup, on prend (pas de retry). Si < 6, widening kick in
+    // mais c'est rare et justifié.
     //
-    // Coût : potentiellement 2x discoveries au lieu d'1, mais on gagne 2-3
-    // stops sur chaque jeu (de 6 à 8-9), valeur perçue +50% pour ~$0.05.
-    const targetStopCount = Math.max(6, stopCount - 1);
+    // Trade-off : on garde la possibilité d'avoir 6 stops parfois, mais on
+    // ne timeout PLUS jamais. Mieux 6 stops livrés que 9 stops timeoutés.
+    const targetStopCount = Math.max(6, stopCount - 3);
     for (const attempt of wideningAttempts.slice(1)) {
       if (discovery.success && discovery.landmarks.length >= targetStopCount) break;
       console.warn(
