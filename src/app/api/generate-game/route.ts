@@ -285,35 +285,47 @@ export async function POST(request: NextRequest) {
     // discovery) attrape les cas exceptionnels en posant le flag
     // `games.needs_review` plutôt qu'en patchant à l'aveugle.
 
-    // Idempotency : si un game avec ce slug existe déjà (publié OU
-    // en cours de génération récente), on retourne l'existant au lieu
-    // de relancer.
+    // Idempotency : 2 cas couverts.
     //
-    // BUG OBSERVÉ 12/05 Alcazar : OddballTrip retry agressivement quand
-    // find-game renvoie 404 → 6 générations en 17 min pour le même slug
-    // (8db9b399, ab77c0d8, eb79fcde, a9177897, e0d9032d, 65fb78d7).
-    // Coût brûlé : ~$10 pour rien.
-    // Cause : idempotency vérifiait `is_published=true` UNIQUEMENT.
-    // Comme la nouvelle architecture chained-lambdas garde
-    // is_published=false jusqu'à validation, AUCUN duplicate n'était
-    // jamais détecté → chaque retry OddballTrip = nouveau game.
+    // CAS 1 — game publié (ANY age) :
+    //   Customer rachète une même fiche → on retourne le game existant
+    //   sans regen. Économise ~$2 + 10 min par achat répété.
     //
-    // Fix : on inclut aussi les games en cours de génération RÉCENTE
-    // (créés dans la dernière heure). Si un game existe pour ce slug,
-    // peu importe son is_published, on le retourne. OddballTrip va
-    // poller jusqu'à ce que is_published=true et créer le code à ce
-    // moment-là.
+    // CAS 2 — game NON publié récent (< 1h) :
+    //   OddballTrip retry sur le même slug pendant la fenêtre de
+    //   génération → on retourne l'in-flight game. Évite les duplicates
+    //   en pipeline. Observé Alcazar 12/05 (6 duplicates en 17 min,
+    //   ~$10 brûlés).
+    //
+    // BUG ANTÉRIEUR (corrigé maintenant) :
+    //   Le premier fix utilisait `gte(created_at, now - 1h)` SEUL, ce
+    //   qui excluait les games publiés > 1h → relance d'un game déjà
+    //   publié il y a 15h. Observé 13/05 08:08 sur splendeurs-de-l-alcazar.
     const supabase = createAdminClient();
     const recentCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
-    const { data: existingGames } = await supabase
+
+    // Case 1: published game of any age (priority)
+    const { data: publishedMatch } = await supabase
       .from("games")
       .select("id, is_published, created_at")
       .eq("slug", template.slug)
-      .gte("created_at", recentCutoff)
+      .eq("is_published", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
-    const existingGame = existingGames?.[0];
+    // Case 2: unpublished but recent game (anti-retry-storm)
+    const { data: recentUnpublished } = !publishedMatch?.[0]
+      ? await supabase
+          .from("games")
+          .select("id, is_published, created_at")
+          .eq("slug", template.slug)
+          .eq("is_published", false)
+          .gte("created_at", recentCutoff)
+          .order("created_at", { ascending: false })
+          .limit(1)
+      : { data: null };
+
+    const existingGame = publishedMatch?.[0] || recentUnpublished?.[0];
     if (existingGame) {
       console.log(`[GenerateGame] Game already exists for slug "${template.slug}" → ${existingGame.id} (is_published=${existingGame.is_published}, created ${existingGame.created_at}) — returning existing instead of generating duplicate.`);
 
