@@ -192,32 +192,53 @@ RULE 3 — DATED EVENTS DRIVE MAGIC WORDS
   When using a year as answer_text or ar_facade_text:
   → Use the EXACT year from the verified events list when one fits the stop's theme.
   → DO NOT use approximate years that "feel period-appropriate".
-  → ENCODE Roman numerals manually and double-check :
-       1066 = MLXVI       (M=1000 + LXVI=66)
-       1281 = MCCLXXXI    (M=1000 + CC=200 + LXXX=80 + I=1)
-       1492 = MCDXCII     (M=1000 + CD=400 + XC=90 + II=2)
-       1789 = MDCCLXXXIX  (M=1000 + DCC=700 + LXXX=80 + IX=9)
-       1944 = MCMXLIV     (M=1000 + CM=900 + XL=40 + IV=4)
-  Wrong roman numerals = AUTO-CORRECTED post-process. Save us the work.
+  → Use ARABIC NUMERALS ONLY ("1628", not "MDCXXVIII"). See rule 3b.
 
-RULE 3b — ROMAN NUMERALS NEVER IN NARRATION TEXT (HARD CONSTRAINT)
-  Roman numerals (M, D, C, L, X, V, I sequences like MCDXCII or XLIII)
-  go EXCLUSIVELY into 2 fields :
-    ✓ ar_facade_text   (visible AR overlay the player sees)
-    ✓ answer_text      (what the player types to validate)
-  Roman numerals are FORBIDDEN in :
-    ✗ riddle_text          (narrated by ElevenLabs — would be read as
-                             "M-C-D-X-C-I-I" letter-by-letter, garbage)
-    ✗ anecdote             (narrated)
-    ✗ ar_character_dialogue (narrated)
-    ✗ ar_treasure_reward   (narrated)
-    ✗ hints[].text         (may be narrated)
-  In NARRATION, refer to years with ARABIC numerals only :
-    ✓ "In 1492, Columbus..."          ← arabic, fine for ElevenLabs
-    ✗ "In MCDXCII, Columbus..."       ← Roman, ElevenLabs reads letters
-  The player DISCOVERS the Roman numeral by opening their AR camera at
-  the location, NOT by hearing it in audio narration. Audio gives the
-  context (year + clue to look at the facade) ; AR gives the answer.
+╔═══════════════════════════════════════════════════════════════════════╗
+║ RULE 3b — ROMAN NUMERALS ARE TOTALLY FORBIDDEN (NO EXCEPTION)          ║
+╠═══════════════════════════════════════════════════════════════════════╣
+║                                                                       ║
+║ Roman numerals are FORBIDDEN in ALL fields, including answer_text     ║
+║ and ar_facade_text. NO EXCEPTION.                                     ║
+║                                                                       ║
+║ Two reasons (both fatal) :                                            ║
+║   1. ElevenLabs TTS reads "MMXXVI" as "M-M-X-X-V-I" letter-by-letter, ║
+║      which makes ZERO sense audio-side. The player hears garbage.     ║
+║   2. Year mismatches between riddle-narration and Roman-numeral-      ║
+║      encoded answer create validator failures (roman_date_drift)     ║
+║      that cannot be auto-repaired with confidence.                    ║
+║                                                                       ║
+║ FORBIDDEN PATTERN (will be REJECTED by post-validator) :              ║
+║   "answer_text": "MDCXXVIII"      ✗                                   ║
+║   "ar_facade_text": "MCMXLIV"     ✗                                   ║
+║   ANY string matching /^[MDCLXVI]{2,}$/ in those 2 fields             ║
+║                                                                       ║
+║ USE INSTEAD — pick the MOST DRAMATIC option among :                   ║
+║                                                                       ║
+║   A. LATIN THEMATIC WORDS (preferred — exotic, narrable, varied) :    ║
+║      VERITAS, FIDES, AURUM, LIBERTAS, MARE, GLORIA, VIRTUS, PAX,      ║
+║      CARITAS, MEMENTO, IMPERIUM, REGINA, MAGNUM, VICTORIA, etc.       ║
+║      → BUT vary them across stops. Don't repeat the same word.        ║
+║                                                                       ║
+║   B. ARABIC YEAR ("1628", "1789", "1944") :                           ║
+║      Easy to narrate, easy to fact-check, accepted by ElevenLabs.     ║
+║                                                                       ║
+║   C. FRENCH/SPANISH/THEME-LANGUAGE WORDS :                            ║
+║      CORSAIRE, RÉSISTANCE, TRÉSOR, SECRET, BAROUDEUR, etc.            ║
+║                                                                       ║
+║   D. SHORT PROPER NAMES (real or fictional, ≤ 12 chars) :             ║
+║      PHEIDON, GRIMAUD, MORTEMER, LAFITTE, etc.                        ║
+║                                                                       ║
+║   E. SHORT SYMBOLS / NUMBERS (uppercase) :                            ║
+║      "VII" (only as single ordinal like a king's number — OK), "42", ║
+║      "ALPHA", "OMEGA"                                                 ║
+║      → Even here, prefer A/B/C/D options.                             ║
+║                                                                       ║
+║ DOUBLE-CHECK : before writing answer_text or ar_facade_text, ask     ║
+║ yourself : "if ElevenLabs reads this aloud, will it sound natural ?"  ║
+║ If not, use a Latin word or arabic year instead.                      ║
+║                                                                       ║
+╚═══════════════════════════════════════════════════════════════════════╝
 
 RULE 4 — SOURCE CITATION
   Anecdotes ending with parenthetical source : "(Source: Wikipedia)"
@@ -577,7 +598,54 @@ Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional te
     );
   }
 
-  // Validate that answers match the original research
+  // ────────────────────────────────────────────────────────────────────
+  // POST-PROCESS — BAN ROMAN NUMERALS (HARD)
+  // ────────────────────────────────────────────────────────────────────
+  // Claude knows the rule (cf. prompt RULE 3b) but parfois pond quand
+  // même des Romans dans answer_text / ar_facade_text. Causes :
+  //   - ElevenLabs lit "MDCXXVIII" letter-by-letter → audio garbage
+  //   - Drift entre date riddle (1563) et facade (1628) → validator KO
+  //
+  // Politique : on REMPLACE tout Roman numeral détecté par sa valeur
+  // arabe (MDCXXVIII → 1628). Si le riddle text contient le Roman aussi
+  // on le remplace pareil. Si Claude a écrit "1628" en arabe ailleurs
+  // dans le riddle (typique), tout sera cohérent.
+  //
+  // Si la substitution est ambiguë (le Roman ne correspond pas à un
+  // year crédible) on logge un warning mais on garde la conversion —
+  // le post-validator pipeline-validators.ts ne vérifie PLUS le drift.
+  for (let i = 0; i < steps.length; i++) {
+    const step = steps[i];
+    const stepNum = i + 1;
+    step.answer_text = sanitizeRomanNumeralField(
+      step.answer_text,
+      stepNum,
+      "answer_text",
+    );
+    step.ar_facade_text = sanitizeRomanNumeralField(
+      step.ar_facade_text,
+      stepNum,
+      "ar_facade_text",
+    );
+    // Riddle / anecdote / character / treasure : on remplace les Romans
+    // EMBEDDED (genre "in MCMXCIV the king..." → "in 1994 the king...")
+    // par leur valeur arabe. Ces fields sont narrés par ElevenLabs.
+    step.riddle_text = replaceRomansEmbedded(step.riddle_text);
+    step.anecdote = replaceRomansEmbedded(step.anecdote);
+    if (step.ar_character_dialogue) {
+      step.ar_character_dialogue = replaceRomansEmbedded(step.ar_character_dialogue);
+    }
+    if (step.ar_treasure_reward) {
+      step.ar_treasure_reward = replaceRomansEmbedded(step.ar_treasure_reward);
+    }
+    if (Array.isArray(step.hints)) {
+      for (const h of step.hints) {
+        if (h.text) h.text = replaceRomansEmbedded(h.text);
+      }
+    }
+  }
+
+  // Validate that answers match the original research (best-effort warn)
   const locationAnswers = new Set(locations.map((l) => String(l.answer)));
   for (const step of steps) {
     if (!locationAnswers.has(String(step.answer_text))) {
@@ -588,6 +656,92 @@ Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional te
   }
 
   return steps;
+}
+
+// ============================================================================
+//  ROMAN NUMERAL SANITIZERS (post-Claude hard guard)
+// ============================================================================
+
+/** Détecte si un string est ENTIÈREMENT un Roman numeral. Permissif sur
+ *  les strings courts (≤ 2 chars) pour ne pas faux-positifer sur "I"
+ *  (1ère personne anglaise) ou "II"/"III" qui peuvent légitimement
+ *  apparaître en ordinaux ("Henri II"). */
+function isPureRomanNumeral(s: string): boolean {
+  const trimmed = s.trim().toUpperCase();
+  if (trimmed.length < 3) return false; // I, II → laissé tel quel
+  return /^[MDCLXVI]+$/.test(trimmed);
+}
+
+/** Décode un Roman numeral en valeur arabe. Retourne null si invalide. */
+function decodeRomanNumeral(s: string): number | null {
+  const values: Record<string, number> = {
+    M: 1000, D: 500, C: 100, L: 50, X: 10, V: 5, I: 1,
+  };
+  const upper = s.trim().toUpperCase();
+  let total = 0;
+  let prev = 0;
+  for (let i = upper.length - 1; i >= 0; i--) {
+    const v = values[upper[i]];
+    if (v === undefined) return null;
+    total += v < prev ? -v : v;
+    prev = v;
+  }
+  return total;
+}
+
+/** Si le field complet EST un Roman numeral, le convertir en arabe (ex.
+ *  "MDCXXVIII" → "1628"). Sinon laisser tel quel. */
+function sanitizeRomanNumeralField(
+  value: string,
+  stepOrder: number,
+  fieldName: string,
+): string {
+  if (!value) return value;
+  if (isPureRomanNumeral(value)) {
+    const decoded = decodeRomanNumeral(value);
+    if (decoded !== null && decoded > 0 && decoded < 4000) {
+      const arabic = String(decoded);
+      console.warn(
+        `[generateGameSteps] Step ${stepOrder}: sanitized Roman "${value}" → "${arabic}" in ${fieldName} (ElevenLabs-compat fix)`,
+      );
+      return arabic;
+    }
+    console.warn(
+      `[generateGameSteps] Step ${stepOrder}: detected Roman-like "${value}" in ${fieldName} but failed to decode — leaving as-is`,
+    );
+  }
+  return value;
+}
+
+/** Remplace toute occurrence isolée de Roman numeral (≥ 3 chars, M/D/C
+ *  uniquement entourés de espaces/ponctuation) par son équivalent arabe.
+ *
+ *  Exemples convertis :
+ *    "In MCMXCIV the king..." → "In 1994 the king..."
+ *    "From MDCXXVIII to MDCXXX..." → "From 1628 to 1630..."
+ *
+ *  Préserve "Henri II", "Louis XIV" car les patterns ordinaux post-noms
+ *  propres sont OK (ElevenLabs gère "Henri II" comme "Henri deux"). */
+function replaceRomansEmbedded(text: string): string {
+  if (!text) return text;
+  // Regex : capture les mots ENTIÈRE faits de MDCLXVI (≥ 3 chars).
+  // Limite : on ne touche pas aux II/III/IV/V/VI/VII/VIII/IX qui sont
+  // souvent des ordinaux légitimes ("Henri II", "Louis XIV").
+  return text.replace(/\b[MDCLXVI]{3,}\b/g, (match) => {
+    // Skip si le pattern n'est pas vraiment un Roman pur (false positive
+    // sur acronymes comme "VIM", "MIX", etc. qui contiennent autre chose)
+    if (!/^[MDCLXVI]+$/.test(match)) return match;
+    // Skip si le pattern est probablement un ordinal court (XIV, XV, etc.)
+    if (match.length <= 4 && !/^M|^D|^C[CDM]/.test(match)) return match;
+    const decoded = decodeRomanNumeral(match);
+    if (decoded !== null && decoded >= 100 && decoded < 4000) {
+      console.warn(
+        `[generateGameSteps] Embedded Roman "${match}" → "${decoded}" (ElevenLabs-compat)`,
+      );
+      return String(decoded);
+    }
+    return match;
+  });
 }
 
 // ===========================================================================

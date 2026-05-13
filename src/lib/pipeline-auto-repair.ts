@@ -101,111 +101,20 @@ export async function attemptAutoRepair(
       }
 
       case "roman_date_drift": {
-        // Pour chaque step en drift, regen avec injection forte de la
-        // date correcte (la 1ère date extraite de riddle/anecdote).
-        const drifts = (issue.details?.romanDrifts as Array<{
-          step: number;
-          roman: string;
-          decoded: number;
-          mentionedDates: number[];
-        }>) ?? [];
-        for (const drift of drifts) {
-          const { data: step } = await supabase
-            .from("game_steps")
-            .select("*")
-            .eq("game_id", gameId)
-            .eq("step_order", drift.step)
-            .single();
-          if (!step) continue;
-          // Choix de la date cible : la première date mentionnée dans
-          // riddle/anecdote. C'est l'année historiquement ancrée que
-          // Claude doit mettre comme ar_facade_text Roman.
-          const targetYear = drift.mentionedDates[0];
-          if (typeof targetYear !== "number") continue;
-          const targetRoman = encodeRoman(Math.abs(targetYear));
-          console.log(
-            `[auto-repair] Roman drift step ${drift.step}: regen with target=${targetYear} (${targetRoman})`,
-          );
-          try {
-            const regenerated = await regenerateStep({
-              brokenStep: {
-                title: step.title,
-                latitude: step.latitude,
-                longitude: step.longitude,
-                validation_radius_meters: step.validation_radius_meters,
-                riddle_text: step.riddle_text,
-                answer_text: step.answer_text,
-                hints: Array.isArray(step.hints) ? step.hints : [],
-                anecdote: step.anecdote ?? "",
-                bonus_time_seconds: step.bonus_time_seconds ?? 0,
-                answer_source: step.answer_source === "virtual_ar" ? "virtual_ar" : "physical",
-                ar_character_type: step.ar_character_type ?? "default",
-                ar_character_dialogue: step.ar_character_dialogue ?? "",
-                ar_facade_text: step.ar_facade_text ?? "",
-                ar_treasure_reward: step.ar_treasure_reward ?? "",
-                route_attractions: Array.isArray(step.route_attractions)
-                  ? step.route_attractions
-                  : [],
-              },
-              issue: {
-                step_index: drift.step - 1,
-                problem: `The ar_facade_text "${drift.roman}" decodes to ${drift.decoded}, which is ${Math.abs(drift.decoded - targetYear)} years away from the date ${targetYear} mentioned in riddle/anecdote. ElevenLabs reads Roman numerals letter-by-letter, so this drift confuses the player. Fix: set ar_facade_text and answer_text to the Roman numeral encoding ${targetRoman} = ${targetYear}.`,
-                severity: "blocking",
-                suggestion: `Set ar_facade_text="${targetRoman}" and answer_text="${targetRoman}". Keep the riddle/anecdote narration using Arabic numerals (${targetYear}) only. Do NOT include Roman numerals in narration text.`,
-              },
-              location: {
-                name: step.landmark_name ?? step.title,
-                latitude: step.latitude,
-                longitude: step.longitude,
-                whatToObserve: "",
-                answer: targetRoman,
-                answerType: "year",
-                source: "",
-              },
-              city: context.city,
-              theme: context.theme,
-              narrative: context.narrative,
-              stepNumber: drift.step,
-              totalSteps: 6,
-              genre: context.genre,
-            });
-            // Update DB
-            await supabase
-              .from("game_steps")
-              .update({
-                title: regenerated.title,
-                riddle_text: regenerated.riddle_text,
-                ar_facade_text: regenerated.ar_facade_text,
-                ar_character_dialogue: regenerated.ar_character_dialogue,
-                ar_treasure_reward: regenerated.ar_treasure_reward,
-                anecdote: regenerated.anecdote,
-                answer_text: regenerated.answer_text,
-                hints: regenerated.hints,
-              })
-              .eq("id", step.id);
-            // Invalidate audio + translation cache pour ce step (les
-            // anciens fichiers contiennent du texte EN du drift)
-            await supabase
-              .from("audio_cache")
-              .delete()
-              .eq("game_id", gameId)
-              .eq("step_order", drift.step);
-            await supabase
-              .from("translations_cache")
-              .delete()
-              .eq("source_id", step.id);
-            attempted.push(`roman_date_drift step ${drift.step}`);
-            console.log(
-              `[auto-repair] Step ${drift.step} regenerated successfully — cache invalidated`,
-            );
-          } catch (err) {
-            console.warn(
-              `[auto-repair] regenerateStep step ${drift.step} threw: ${err instanceof Error ? err.message : err}`,
-            );
-          }
-        }
-        // Après les regens, on re-run prepareGamePackage pour re-traduire
-        // + re-audio les steps modifiés.
+        // (OBSOLÈTE 2026-05-13) Roman numerals sont TOTALEMENT bannis du
+        // pipeline. Cf. anthropic.ts sanitizeRomanNumeralField +
+        // replaceRomansEmbedded qui convertissent post-Claude. Plus
+        // aucun drift possible.
+        //
+        // Si quand même on tombe ici (validator hyper-cas, ne devrait
+        // plus arriver), on marque non-réparable et on flag needs_review.
+        console.warn(
+          `[auto-repair] roman_date_drift detected but Roman numerals are banned upstream — flagging as unrepairable (rare)`,
+        );
+        unrepairable.push("roman_date_drift (banned upstream, manual fix only)");
+        // Conserver le re-run de prepareGamePackage comme avant : si on
+        // est arrivé ici c'est qu'il y a peut-être eu d'autres modifs
+        // (traduction, audio) qui nécessitent un refresh package.
         if (attempted.length > 0 && context.language) {
           console.log(
             `[auto-repair] Re-running prepareGamePackage post-Roman-fix`,

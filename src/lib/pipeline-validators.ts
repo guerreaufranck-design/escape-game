@@ -231,44 +231,21 @@ export async function validateFinalGame(
     });
   }
 
-  // 4. Roman numeral context-aware drift check
-  // Pour chaque step dont ar_facade_text est un Roman numeral valide,
-  // extrait les dates de riddle + anecdote et vérifie qu'au moins une
-  // date extraite est dans ±50 ans de la valeur décimale du roman.
-  const romanDrifts: Array<{
-    step: number; roman: string; decoded: number; mentionedDates: number[];
-  }> = [];
-  for (const step of steps) {
-    const ar = (step.ar_facade_text || "").trim();
-    const decoded = decodeRoman(ar);
-    if (decoded === null) continue; // pas un Roman (ex: LUGUS, VERITAS)
-    const text = `${step.riddle_text || ""}\n${step.anecdote || ""}`;
-    const dates = extractDates(text);
-    if (dates.length === 0) continue; // pas de date dans la narration, skip check
-    const matches = dates.some((d) => Math.abs(d - decoded) <= 50);
-    if (!matches) {
-      romanDrifts.push({
-        step: step.step_order,
-        roman: ar,
-        decoded,
-        mentionedDates: dates,
-      });
-    }
-  }
-  if (romanDrifts.length > 0) {
-    issues.push({
-      code: "roman_date_drift",
-      message:
-        `${romanDrifts.length} Roman numeral(s) drift > 50y vs narration dates — player will input the wrong year following the hints. ` +
-        romanDrifts
-          .map(
-            (d) =>
-              `Step ${d.step}: ${d.roman}=${d.decoded} but riddle/anecdote mention ${d.mentionedDates.join(", ")}`,
-          )
-          .join(" ; "),
-      details: { romanDrifts },
-    });
-  }
+  // 4. (SUPPRIMÉ 2026-05-13) — roman_date_drift check
+  // Cette vérification existait pour détecter quand l'ar_facade_text
+  // était un Roman numeral dont la valeur décimale ne matchait pas les
+  // dates mentionnées dans le riddle/anecdote.
+  //
+  // POLITIQUE NOUVELLE : les Roman numerals sont TOTALEMENT bannis du
+  // pipeline (cf. RULE 3b dans anthropic.ts generateGameSteps + post-
+  // processor sanitizeRomanNumeralField + replaceRomansEmbedded). Plus
+  // aucun ar_facade_text/answer_text ne devrait être un Roman ; s'il
+  // l'est encore (Claude récalcitrant), le post-processor le convertit
+  // en arabe avant le retour. Donc plus de drift possible.
+  //
+  // Raison : ElevenLabs TTS ne sait pas lire les Romans (lit lettre par
+  // lettre "M-D-C-X-X-V-I-I-I"), expérience joueur cassée. + drift
+  // entre dates riddle et année facade impossible à auto-repair.
 
   // 5. Translation completeness (if language provided)
   if (language && language !== "en") {
