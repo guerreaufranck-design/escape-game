@@ -959,22 +959,43 @@ export async function generateGameFromTemplate(
     // insertGameIntoDatabase) consomment des ResearchedLocation. On
     // mappe DiscoveredStop → ResearchedLocation pour ne pas perturber
     // ces helpers — ils restent inchangés.
+    // Per-stop thematic context lookup, keyed by placeId. Populated when
+    // the AI-first (Gemini) discovery succeeded — empty when the legacy
+    // Google Places fallback ran.
+    const thematicByPlaceId = new Map<
+      string,
+      { historicalRole: string; citation: string }
+    >();
+    if (discovery.thematicContext) {
+      for (const t of discovery.thematicContext) {
+        thematicByPlaceId.set(t.placeId, {
+          historicalRole: t.historicalRole,
+          citation: t.citation,
+        });
+      }
+    }
+
     const verifiedLocations: ResearchedLocation[] = discovery.landmarks.map(
-      (s) => ({
-        name: s.name,
-        landmarkName: s.name,
-        latitude: s.lat,
-        longitude: s.lon,
-        whatToObserve: s.description,
-        // "AUTO" = Claude doit inventer la réponse AR (un mot, une
-        // date, un nombre romain) au moment de la génération de
-        // l'énigme. Détecté plus bas par le garde-fou anti-leak.
-        answer: "AUTO",
-        answerType: "name" as const,
-        answerSource: "virtual_ar" as const,
-        source: s.source ?? "google-curated",
-        themeLink: s.description,
-      }),
+      (s) => {
+        const themed = s.placeId ? thematicByPlaceId.get(s.placeId) : undefined;
+        return {
+          name: s.name,
+          landmarkName: s.name,
+          latitude: s.lat,
+          longitude: s.lon,
+          whatToObserve: s.description,
+          // "AUTO" = Claude doit inventer la réponse AR (un mot, une
+          // date, un nombre romain) au moment de la génération de
+          // l'énigme. Détecté plus bas par le garde-fou anti-leak.
+          answer: "AUTO",
+          answerType: "name" as const,
+          answerSource: "virtual_ar" as const,
+          source: s.source ?? "google-curated",
+          themeLink: s.description,
+          historicalRole: themed?.historicalRole,
+          citation: themed?.citation,
+        };
+      },
     );
 
     // Tableaux indexés par step pour propager le mode (radar/narrative)

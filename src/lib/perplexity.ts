@@ -44,6 +44,21 @@ export interface ResearchedLocation {
    * Hidden from players.
    */
   landmarkName?: string;
+  /**
+   * Per-stop thematic ancrage produced by Gemini Deep Research during
+   * the AI-first discovery phase (cf. parcours-discovery.ts). Tells
+   * Claude WHY this place matters for the theme — used to anchor the
+   * anecdote on real documented history rather than invent fiction.
+   *
+   * Example for Centro Studi Fenoglio (theme "Résistance Alba 1944"):
+   *   "Beppe Fenoglio's residence 1928-1959, where he wrote 'I 23
+   *    giorni della città di Alba' chronicling the partisan republic."
+   *
+   * Empty when discovery fell back to Google Places (legacy flow).
+   */
+  historicalRole?: string;
+  /** Source citation (URL or short reference) for the historicalRole. */
+  citation?: string;
 }
 
 /** A stop predefined by the game designer on oddballtrip */

@@ -102,9 +102,20 @@ export async function generateGameSteps(
 - Answer type: ${loc.answerType}
 - Answer source: ${loc.answerSource ?? "physical"} ${loc.answerSource === "virtual_ar" ? "(AR-only: riddle must hint at activating AR camera)" : "(physical: riddle must say where to look on the real monument)"}
 - Source: ${loc.source}
-- Theme link: ${loc.themeLink || "N/A"}`
+- Theme link: ${loc.themeLink || "N/A"}${
+        loc.historicalRole
+          ? `
+- 📜 DOCUMENTED HISTORICAL ROLE: ${loc.historicalRole}${loc.citation ? ` (Source: ${loc.citation})` : ""}`
+          : ""
+      }`
     )
     .join("\n\n");
+
+  // Detect whether the discovery pipeline gave us per-stop documented
+  // history. If yes, we instruct Claude to ANCHOR each anecdote on the
+  // documented role (post-2026-05-15 Gemini-first flow). If no, we fall
+  // back to the historical "fiction libre DANS le thème" mode (legacy).
+  const hasThematicAnchors = locations.some((l) => l.historicalRole);
 
   const stepCount = Math.min(locations.length, 8);
 
@@ -253,7 +264,37 @@ RULE 5 — DISTRIBUTION
 `;
   })();
 
-  const prompt = `${genreOverlay}${verifiedFactsBlock}You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
+  // Block injected when discovery gave us per-stop documented history
+  // (Gemini-first flow, 2026-05-15+). Forces Claude to anchor each
+  // anecdote on the real historical role of that specific place rather
+  // than invent fiction. Empty when the legacy Google-Places fallback
+  // ran instead.
+  const thematicAnchorsBlock = hasThematicAnchors
+    ? `
+═══════════════════════════════════════════════════════════════════════
+PER-STOP DOCUMENTED HISTORY (anchor anecdotes here — DO NOT INVENT)
+═══════════════════════════════════════════════════════════════════════
+Some locations above include a "📜 DOCUMENTED HISTORICAL ROLE" field.
+That field comes from sourced research (with citation). For those stops:
+
+  → The anecdote MUST be grounded in that documented role.
+  → DO NOT invent a fictional history "compatible with the theme" when
+    the real history is provided. If the role says the building was a
+    partisan study centre, the anecdote talks about the partisan study
+    centre, not about a Roman watchtower.
+  → You may compress, dramatize, or rephrase for the audio guide, but
+    you may not contradict or replace the documented facts.
+  → The fiction lives ONLY in the riddle (the AR scene, the magical
+    word, the protagonist's voice) — never in the anecdote.
+
+This is the single most important rule of the 2026-05-15 quality bar.
+It is what separates "we sent the player to a real Resistance memorial"
+from "we sent the player to a hotel with an invented Resistance story".
+═══════════════════════════════════════════════════════════════════════
+`
+    : "";
+
+  const prompt = `${genreOverlay}${verifiedFactsBlock}${thematicAnchorsBlock}You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
 
 I am giving you ${locations.length} researched locations. Your job is to select the best ${stepCount} that form a SAFE WALKING ROUTE (no major roads to cross, all stops within ~10 minutes' walk of each other, ideally a coherent neighbourhood) and craft a single coherent narrative around them.
 

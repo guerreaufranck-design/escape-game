@@ -53,6 +53,21 @@ import {
   selectStopsByGeometry,
   computeAdaptiveMinDist,
 } from "./parcours-selection";
+import { discoverThematicPois } from "./ai-discovery";
+import { validateThematicPois } from "./poi-validation";
+
+/**
+ * Diamètre maximum (mètres) de la "boîte" géographique qui englobe le
+ * point de départ + tous les stops. C'est la contrainte définie avec
+ * le client le 2026-05-15 (post-incident Julien) :
+ *   - on raisonne en DIAMÈTRE pairwise et pas en rayon-depuis-startPoint
+ *   - 3.5 km de diamètre = zone walkable cohérente même quand le
+ *     startPoint est en périphérie de la zone historique
+ *
+ * Appliqué uniquement en walking. En roadtrip on garde l'ancien rayon
+ * adaptatif (jusqu'à 60 km).
+ */
+const DIAMETER_CAP_M = 3_500;
 
 /**
  * Pour un roadtrip, enrichit chaque seedSite avec lat/lon si elles ne
@@ -416,6 +431,29 @@ export interface DiscoverParcoursResult {
    * Vide si Perplexity API absente ou échec.
    */
   verifiedContext?: VerifiedThemeContext;
+  /**
+   * Contexte thématique par-stop, posé par la discovery Gemini quand
+   * elle a réussi. Chaque entrée = {placeId, historicalRole, citation}
+   * pour un stop du parcours final. Claude utilise ces ancrages pour
+   * écrire des anecdotes factuelles sur les VRAIS lieux historiques
+   * plutôt que d'inventer une fiction par-dessus des POIs touristiques.
+   *
+   * Vide si Gemini a échoué et qu'on est tombé sur le fallback Google
+   * Places — dans ce cas, comportement narratif legacy ("fiction libre
+   * DANS le thème").
+   */
+  thematicContext?: Array<{
+    placeId: string;
+    historicalRole: string;
+    citation: string;
+  }>;
+  /**
+   * Quelle source a alimenté le pool de candidats final :
+   *   - "gemini_thematic" : pipeline nominale 2026-05-15 (Gemini → Google)
+   *   - "google_places"   : fallback legacy (Gemini hors-service ou
+   *                         zéro résultat thématique)
+   */
+  discoverySource?: "gemini_thematic" | "google_places";
 }
 
 /**
@@ -470,8 +508,85 @@ export async function discoverParcours(
   const googleTypes = accessibility === "free" ? [...FREE_PLACE_TYPES] : undefined;
 
   console.log(
-    `[discoverParcours] Starting GOOGLE-FIRST discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m, widening=${widening}x, accessibility=${accessibility}, transportMode=${transportMode}${isRoadtrip ? `, seedSites=${params.roadtripSeedSites?.length ?? 0}` : ""})`,
+    `[discoverParcours] Starting discovery for "${params.theme}" in ${params.city}, startPoint=${params.startPoint.lat.toFixed(4)},${params.startPoint.lon.toFixed(4)}, stopCount=${params.stopCount} (min=${minStops}, radius=${radiusM}m, maxHop=${maxInterStopM}m, widening=${widening}x, accessibility=${accessibility}, transportMode=${transportMode}${isRoadtrip ? `, seedSites=${params.roadtripSeedSites?.length ?? 0}` : ""})`,
   );
+
+  // ============================================
+  // PHASE 0 : AI-FIRST thematic discovery (Gemini)
+  // ============================================
+  // 2026-05-15 — incident Julien Alba. Pipeline Google-first sortait des
+  // hôtels modernes pour un jeu Résistance parce que c'est ce que Google
+  // Places retourne en `type=tourist_attraction` triés par notoriété.
+  // Les vrais lieux de mémoire (Monumento alla Liberazione, Centro Studi
+  // Fenoglio, Sala della Resistenza...) n'étaient même pas dans le pool.
+  //
+  // Nouvelle architecture : Gemini 2.5 Pro avec Google Search grounding
+  // énumère les lieux thématiquement pertinents (avec source citation),
+  // puis Google Maps Geocoding canonicalise les GPS. La fiction n'est
+  // plus brodée sur des hôtels — elle est ancrée sur des lieux réels.
+  //
+  // Walking uniquement. Roadtrip reste sur l'ancien flow (Gemini ne sait
+  // pas bien découvrir des POIs distants sur 30-60 km — c'est plus du
+  // travail "trace ce road trip" qui demande un autre prompt).
+  let aiCandidates: NearbyCandidate[] = [];
+  let thematicContext: Array<{
+    placeId: string;
+    historicalRole: string;
+    citation: string;
+  }> = [];
+  let discoverySource: "gemini_thematic" | "google_places" = "google_places";
+
+  if (!isRoadtrip) {
+    try {
+      const rawPois = await discoverThematicPois({
+        city: params.city,
+        country: params.country,
+        title: params.theme, // theme tag = closest thing to title we have here
+        theme: params.theme,
+        themeDescription: params.themeDescription,
+        startPoint: params.startPoint,
+        stopCount: params.stopCount,
+        diameterCapM: DIAMETER_CAP_M,
+      });
+
+      if (rawPois.length > 0) {
+        const validation = await validateThematicPois(rawPois, {
+          city: params.city,
+          country: params.country,
+          startPoint: params.startPoint,
+          diameterCapM: DIAMETER_CAP_M,
+        });
+
+        console.log(
+          `[discoverParcours] Gemini discovery: ${rawPois.length} raw → ${validation.candidates.length} validated (${validation.rejected.length} rejected during validation)`,
+        );
+
+        if (validation.candidates.length >= minStops) {
+          aiCandidates = validation.candidates;
+          thematicContext = validation.themedContext;
+          discoverySource = "gemini_thematic";
+          // Les rejets de validation alimentent le log audit
+          for (const r of validation.rejected) {
+            rejected.push({ name: r.name, reason: r.reason });
+          }
+        } else {
+          console.warn(
+            `[discoverParcours] Gemini pool too small (${validation.candidates.length} < ${minStops}) — falling back to Google Places legacy flow`,
+          );
+        }
+      } else {
+        console.warn(
+          `[discoverParcours] Gemini returned 0 POIs — falling back to Google Places legacy flow`,
+        );
+      }
+    } catch (err) {
+      console.warn(
+        `[discoverParcours] Gemini discovery threw: ${err instanceof Error ? err.message : err} — falling back to Google Places legacy flow`,
+      );
+    }
+  }
+
+  const useGeminiPool = discoverySource === "gemini_thematic";
 
   // ============================================
   // PHASE 1 : Google Places + Perplexity Deep Research (parallèle)
@@ -517,24 +632,29 @@ export async function discoverParcours(
   }
 
   // Discovery : 1 search startPoint + N searches per seedSite (radius 3 km)
-  const discoveryCalls: Array<Promise<NearbyCandidate[]>> = [
-    discoverNearbyLandmarks(params.startPoint, {
-      radiusM: radiusM,
-      limit: candidateLimit,
-      types: googleTypes,
-    }),
-  ];
-  // Mini-nearbysearches centrés sur chaque seedSite enrichi.
-  // 3 km de rayon = couvre la zone "site phare + alentours immédiats"
-  // sans déborder sur d'autres clusters. Limit 30 par seedSite (Tossa
-  // de Mar village + Costa Brava côte n'en a pas plus thématiquement).
-  for (const seed of enrichedSeedSites) {
+  // Skip si Gemini a déjà fourni un pool thématique validé — pas la
+  // peine de re-lister Google Places, on ne va pas s'en servir.
+  const discoveryCalls: Array<Promise<NearbyCandidate[]>> = [];
+  if (!useGeminiPool) {
     discoveryCalls.push(
-      discoverNearbyLandmarks(
-        { lat: seed.lat, lon: seed.lon },
-        { radiusM: 3_000, limit: 30, types: googleTypes },
-      ),
+      discoverNearbyLandmarks(params.startPoint, {
+        radiusM: radiusM,
+        limit: candidateLimit,
+        types: googleTypes,
+      }),
     );
+    // Mini-nearbysearches centrés sur chaque seedSite enrichi.
+    // 3 km de rayon = couvre la zone "site phare + alentours immédiats"
+    // sans déborder sur d'autres clusters. Limit 30 par seedSite (Tossa
+    // de Mar village + Costa Brava côte n'en a pas plus thématiquement).
+    for (const seed of enrichedSeedSites) {
+      discoveryCalls.push(
+        discoverNearbyLandmarks(
+          { lat: seed.lat, lon: seed.lon },
+          { radiusM: 3_000, limit: 30, types: googleTypes },
+        ),
+      );
+    }
   }
 
   const allDiscoveryResults = await Promise.allSettled([
@@ -549,10 +669,13 @@ export async function discoverParcours(
   ]);
 
   // Aggregate + dedup les nearbysearches (multi-centres)
-  let googleCandidates: NearbyCandidate[] = [];
+  // Si Gemini a fourni un pool thématique, on l'utilise tel quel et on
+  // ignore les sous-recherches Google Places (qui ont été skippées plus
+  // haut). Sinon, comportement legacy : on agrège les multi-centres.
+  let googleCandidates: NearbyCandidate[] = useGeminiPool ? aiCandidates : [];
   const verifiedCtxResult = allDiscoveryResults[1];
 
-  if (allDiscoveryResults[0].status === "fulfilled") {
+  if (!useGeminiPool && allDiscoveryResults[0].status === "fulfilled") {
     const seenPlaceIds = new Set<string>();
     for (const callResult of allDiscoveryResults[0].value) {
       if (callResult.status === "fulfilled") {
@@ -581,9 +704,9 @@ export async function discoverParcours(
     // mécaniquement plus loin dans le tri, mais sont quand même dans
     // le pool — Claude peut les choisir.
     googleCandidates.sort((a, b) => a.distanceM - b.distanceM);
-  } else {
+  } else if (!useGeminiPool) {
     console.warn(
-      `[discoverParcours] Multi-center nearbysearch threw: ${allDiscoveryResults[0].reason instanceof Error ? allDiscoveryResults[0].reason.message : allDiscoveryResults[0].reason}`,
+      `[discoverParcours] Multi-center nearbysearch threw: ${allDiscoveryResults[0].status === "rejected" ? (allDiscoveryResults[0].reason instanceof Error ? allDiscoveryResults[0].reason.message : allDiscoveryResults[0].reason) : "(no calls dispatched)"}`,
     );
   }
 
@@ -597,7 +720,7 @@ export async function discoverParcours(
   }
 
   console.log(
-    `[discoverParcours] Google nearbysearch returned ${googleCandidates.length} candidate(s) within ${radiusM}m`,
+    `[discoverParcours] Candidate pool ready: ${googleCandidates.length} POIs from "${discoverySource}" source (within ${radiusM}m)`,
   );
   if (verifiedContext) {
     console.log(
@@ -1073,7 +1196,17 @@ export async function discoverParcours(
   const radarCount = ordered.filter((s) => s.stopMode === "radar").length;
   const narrativeCount = ordered.filter((s) => s.stopMode === "narrative").length;
   console.log(
-    `[discoverParcours] DONE in ${Math.round(durationMs / 1000)}s — ${ordered.length} landmarks (${radarCount} radar, ${narrativeCount} narrative, ${rejected.length} rejected)`,
+    `[discoverParcours] DONE in ${Math.round(durationMs / 1000)}s — ${ordered.length} landmarks (${radarCount} radar, ${narrativeCount} narrative, ${rejected.length} rejected) — source=${discoverySource}`,
+  );
+
+  // Filter the thematic context to only the stops that survived all
+  // the selection/dedup/walkability passes. Downstream narrative gen
+  // joins by placeId.
+  const survivingPlaceIds = new Set(
+    ordered.map((s) => s.placeId).filter((p): p is string => Boolean(p)),
+  );
+  const filteredThematicContext = thematicContext.filter((t) =>
+    survivingPlaceIds.has(t.placeId),
   );
 
   return {
@@ -1081,6 +1214,8 @@ export async function discoverParcours(
     landmarks: ordered,
     rejected,
     verifiedContext,
+    thematicContext: filteredThematicContext.length > 0 ? filteredThematicContext : undefined,
+    discoverySource,
   };
 }
 
