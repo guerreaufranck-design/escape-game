@@ -386,6 +386,13 @@ export interface PipelineResult {
    *  succès dans le modèle intent-first. oddballtrip s'en sert pour
    *  rafraîchir sa fiche produit. */
   landmarks?: PublishedLandmark[];
+  /**
+   * Quelle source a alimenté la discovery — propagé depuis
+   * DiscoverParcoursResult pour observabilité admin. Permet de
+   * détecter en prod si un jeu est tombé sur le fallback Google
+   * Places legacy au lieu de Gemini Pro thématique.
+   */
+  discoverySource?: "gemini_thematic" | "google_places";
   /** Candidats Perplexity rejetés au géocodage ou par le filtre
    *  walkability. Loggés pour audit, non bloquants si on a réussi
    *  à publier le jeu. */
@@ -1383,6 +1390,7 @@ export async function generateGameFromTemplate(
       creationDurationMs,
       landmarks,
       adaptedNarrative,
+      discoverySource: discovery.discoverySource,
       ...(needsReview ? { needsReview: true, reviewReason } : {}),
       // droppedStops exposé seulement si la discovery a rejeté des
       // candidats (pour audit côté oddballtrip — non actionnable, juste
