@@ -241,16 +241,20 @@ export default function PlayPage() {
     showFinalCode,
   ]);
 
-  // Auto-narrate anecdote when it appears (uses ElevenLabs MP3 if available)
+  // Auto-narrate anecdote when it appears (uses ElevenLabs MP3 if available).
+  // Conditions : anecdote visible ET (validation réussie OU skip déclenché).
+  // Avant 2026-05-15 : seul stepSuccess déclenchait l'audio → en cas de
+  // skip le joueur lisait l'anecdote en silence. Corrigé pour skipAnswer aussi.
   useEffect(() => {
-    if (anecdote?.text && stepSuccess) {
+    if (anecdote?.text && (stepSuccess || skipAnswer)) {
       const t = setTimeout(() => {
         setLastAutoNarrated(""); // Reset to allow anecdote after riddle
         autoSpeak(anecdote.text, gameState?.audioMap?.anecdote);
       }, 500);
       return () => clearTimeout(t);
     }
-  }, [anecdote?.text, stepSuccess]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [anecdote?.text, stepSuccess, skipAnswer]);
 
   // Auto-narrate scenario on briefing screen
   useEffect(() => {
@@ -537,6 +541,17 @@ export default function PlayPage() {
         setSkipCompleted(!!data.completed);
         setHints([]);
 
+        // Afficher l'anecdote historique aussi en cas de skip — même
+        // politique que la validation. Le joueur qui skip mérite de
+        // découvrir le contenu pédagogique. (Bug fixé 2026-05-15 :
+        // avant, anecdote affichée uniquement après validate.)
+        if (data.anecdote) {
+          setAnecdote({
+            title: data.stepTitle || tt('play.didYouKnow', locale) || "Le saviez-vous ?",
+            text: data.anecdote,
+          });
+        }
+
         // Pre-fetch next step (background) — same trick as validateStep
         // so the player isn't blocked on a 30-40s translation when they
         // tap "Continue" after the skip-reveal screen.
@@ -555,6 +570,8 @@ export default function PlayPage() {
       setNotebook((prev) => ({ ...prev, [gameState.currentStep]: skipAnswer }));
     }
     setSkipAnswer(null);
+    setAnecdote(null); // clear anecdote (était affichée dans le skip overlay)
+    narration.stop();  // arrêter audio anecdote en cours si lecture
     if (skipCompleted) {
       setShowFinalCode(true);
     } else {
@@ -972,8 +989,8 @@ export default function PlayPage() {
 
       {/* Skip answer overlay */}
       {skipAnswer && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="max-w-sm w-full space-y-4">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="max-w-sm w-full space-y-4 my-8">
             <Card className="bg-slate-900 border-orange-500/30">
               <CardContent className="pt-6 text-center space-y-3">
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-500/10">
@@ -984,6 +1001,40 @@ export default function PlayPage() {
                 <p className="text-2xl font-bold text-orange-400">{skipAnswer}</p>
               </CardContent>
             </Card>
+
+            {/* Anecdote card — affichée aussi en cas de skip pour ne pas
+                priver le joueur du contenu pédagogique historique.
+                (Bug fixé 2026-05-15 incident Julien Alba.) */}
+            {anecdote && (
+              <Card className="bg-slate-900/95 border-orange-800/50">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">📖</span>
+                      <CardTitle className="text-sm text-orange-300">
+                        {tt('play.didYouKnow', locale)}
+                      </CardTitle>
+                    </div>
+                    {narration.supported && (
+                      <NarrationButton
+                        text={anecdote.text}
+                        speaking={narration.speaking}
+                        currentText={narrationText}
+                        onSpeak={(t) => handleSpeak(t, gameState?.audioMap?.anecdote)}
+                        variant="pill"
+                        locale={locale}
+                      />
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-300 leading-relaxed">
+                    {anecdote.text}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
             <Button
               size="lg"
               className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold h-12 rounded-xl"

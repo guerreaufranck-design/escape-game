@@ -1,7 +1,65 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { t, detectLocale } from "@/lib/i18n";
+import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
+import { translateStepFields } from "@/lib/translate-service";
 import { calculateScore } from "@/lib/scoring";
+
+/**
+ * Helper : extrait l'anecdote + le titre traduits du step pour la locale
+ * joueur. Mirror exact de la logique dans /validate-step/route.ts pour
+ * que le SKIP affiche la MÊME anecdote que le VALIDATE.
+ *
+ * Bug fixé 2026-05-15 (incident Julien Alba) : avant ce commit le skip
+ * ne renvoyait que `answer`, le client perdait l'anecdote historique.
+ * Le joueur qui skip continue de mériter le contenu pédagogique — c'est
+ * exactement l'esprit "skip = filet de sécurité, pas punition".
+ */
+async function resolveAnecdoteAndTitle(
+  step: {
+    id: string;
+    anecdote: unknown;
+    title: unknown;
+  },
+  locale: string,
+): Promise<{ anecdoteText: string | null; stepTitleText: string }> {
+  let anecdoteText = step.anecdote ? t(step.anecdote, locale) : null;
+  let stepTitleText = t(step.title, locale);
+
+  if (!isStaticLocale(locale)) {
+    const enFields: Record<string, string> = {};
+    const enAnecdote = step.anecdote
+      ? typeof step.anecdote === "object"
+        ? (step.anecdote as Record<string, string>).en ||
+          (step.anecdote as Record<string, string>).fr ||
+          Object.values(step.anecdote as Record<string, string>)[0] ||
+          ""
+        : String(step.anecdote)
+      : "";
+    const enTitle =
+      typeof step.title === "object"
+        ? (step.title as Record<string, string>).en ||
+          (step.title as Record<string, string>).fr ||
+          Object.values(step.title as Record<string, string>)[0] ||
+          ""
+        : String(step.title);
+    if (enAnecdote) enFields.anecdote = enAnecdote;
+    if (enTitle) enFields.title = enTitle;
+    if (Object.keys(enFields).length > 0) {
+      try {
+        const translated = await translateStepFields(
+          step.id,
+          enFields,
+          locale,
+        );
+        if (translated.anecdote) anecdoteText = translated.anecdote;
+        if (translated.title) stepTitleText = translated.title;
+      } catch {
+        /* keep fallback */
+      }
+    }
+  }
+  return { anecdoteText, stepTitleText };
+}
 
 // Skip is no longer a punishment — it's a safety net so a player who
 // can't crack a step still gets to learn the answer and continue the
@@ -123,11 +181,21 @@ export async function POST(
         })
         .eq("id", sessionId);
 
+      // Résoudre + traduire l'anecdote ET le titre pour le client
+      // (même politique que validate-step — skip ne doit pas priver
+      // le joueur du contenu pédagogique).
+      const { anecdoteText, stepTitleText } = await resolveAnecdoteAndTitle(
+        step,
+        locale,
+      );
+
       return NextResponse.json({
         success: true,
         skipped: true,
         completed: true,
         answer: t(step.answer_text, locale),
+        anecdote: anecdoteText,
+        stepTitle: stepTitleText,
         penaltyAdded: SKIP_PENALTY_SECONDS,
       });
     }
@@ -141,12 +209,20 @@ export async function POST(
       })
       .eq("id", sessionId);
 
+    // Résoudre + traduire l'anecdote pour le client (idem ci-dessus).
+    const { anecdoteText, stepTitleText } = await resolveAnecdoteAndTitle(
+      step,
+      locale,
+    );
+
     return NextResponse.json({
       success: true,
       skipped: true,
       completed: false,
       nextStep: stepOrder + 1,
       answer: t(step.answer_text, locale),
+      anecdote: anecdoteText,
+      stepTitle: stepTitleText,
       penaltyAdded: SKIP_PENALTY_SECONDS,
     });
   } catch {
