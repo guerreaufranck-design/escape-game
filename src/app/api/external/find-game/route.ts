@@ -9,10 +9,28 @@ export async function OPTIONS() {
 /**
  * GET /api/external/find-game?slug=la-citadelle-de-navarre
  *
- * Called by oddballtrip to check if a game has been generated.
- * Searches published games by matching slug keywords against title/city.
+ * Called by oddballtrip to check if a game has been generated and published.
  *
- * Returns the gameId if found, or 404 if not.
+ * ═══════════════════════════════════════════════════════════════════════
+ *  POLITIQUE 2026-05-15 — EXACT SLUG MATCH ONLY
+ * ═══════════════════════════════════════════════════════════════════════
+ *
+ * AVANT (legacy) : si le slug exact n'existait pas en is_published=true,
+ * on faisait un fuzzy match keyword sur title+city. ÇA A CASSÉ EN PROD :
+ * Julien Barras a acheté "la-resistance-d-alba" (Alba, Italie). La
+ * pipeline n'avait pas encore généré le game. Le fuzzy match a matché
+ * "Albarracín" (Espagne, vieux jeu) parce que "alba" est inclus dans
+ * "albarracín". Le code activation a été lié au mauvais game.
+ *
+ * MAINTENANT : on retourne 404 STRICT si le slug exact n'est pas trouvé.
+ * OddballTrip doit poller cet endpoint jusqu'à ce que la pipeline finisse
+ * et que is_published=true. C'est le seul comportement qui garantit
+ * qu'un code activation est lié au bon game.
+ *
+ * Conséquence pour OddballTrip : ils DOIVENT implémenter le polling
+ * côté eux (s'ils ne l'avaient pas déjà). Polling typique :
+ *   - Toutes les 30s pendant 30 min après l'achat
+ *   - Après 30 min sans 200, alerte opérateur
  */
 export async function GET(request: NextRequest) {
   if (!validateApiKey(request)) {
@@ -32,16 +50,18 @@ export async function GET(request: NextRequest) {
 
   const supabase = createAdminClient();
 
-  // 1. Try exact slug match first (fast path for pipeline-generated games)
+  // EXACT slug match — la seule politique valide.
   const { data: exactMatch } = await supabase
     .from("games")
     .select("id, title, city")
     .eq("slug", slug)
     .eq("is_published", true)
-    .single();
+    .maybeSingle();
 
   if (exactMatch) {
-    console.log(`[find-game] EXACT slug match "${slug}" → gameId=${exactMatch.id}`);
+    console.log(
+      `[find-game] EXACT slug match "${slug}" → gameId=${exactMatch.id}`,
+    );
     return NextResponse.json(
       {
         found: true,
@@ -50,114 +70,77 @@ export async function GET(request: NextRequest) {
         city: exactMatch.city,
         slug,
       },
-      { headers: corsHeaders }
+      { headers: corsHeaders },
     );
   }
 
-  // 2. Fallback: keyword matching for legacy games without slug
-  const { data: games, error } = await supabase
+  // PAS DE FUZZY MATCH. 404 strict. OddballTrip doit poller.
+  //
+  // (Diagnostic) Avant de retourner 404, on vérifie s'il y a un game
+  // avec ce slug MAIS is_published=false (= pipeline en cours).
+  // Si oui, on retourne un signal explicite "pending" pour qu'OddballTrip
+  // sache qu'il doit attendre plutôt que de paniquer.
+  const { data: pendingGame } = await supabase
     .from("games")
-    .select("id, title, city, is_published")
-    .eq("is_published", true);
+    .select("id, needs_review, created_at")
+    .eq("slug", slug)
+    .eq("is_published", false)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-  if (error) {
-    console.error("[find-game] Query error:", error);
+  if (pendingGame) {
+    const ageMin =
+      (Date.now() - new Date(pendingGame.created_at).getTime()) / 60_000;
+    console.log(
+      `[find-game] PENDING slug="${slug}" gameId=${pendingGame.id} age=${Math.round(ageMin)}min needs_review=${pendingGame.needs_review}`,
+    );
     return NextResponse.json(
-      { error: "Database error" },
-      { status: 500, headers: corsHeaders }
+      {
+        found: false,
+        pending: true,
+        needs_review: pendingGame.needs_review,
+        age_min: Math.round(ageMin),
+        slug,
+        hint: pendingGame.needs_review
+          ? "Game is awaiting human review — operator must release it manually."
+          : "Game is being generated — keep polling every 30s.",
+      },
+      { status: 202, headers: corsHeaders }, // 202 Accepted = en cours
     );
   }
 
-  if (!games || games.length === 0) {
-    return NextResponse.json(
-      { found: false, slug },
-      { status: 404, headers: corsHeaders }
-    );
-  }
-
-  // Extract search keywords from slug: "la-citadelle-de-navarre" → ["citadelle", "navarre"]
-  const keywords = slug
-    .toLowerCase()
-    .split("-")
-    .filter((w) => w.length > 3 && !["les", "des", "the", "and", "del", "las", "los", "pour", "dans", "avec", "from"].includes(w));
-
-  // Extract a clean display title (for API response)
-  function extractTitle(title: unknown, lang = "en"): string {
-    if (typeof title === "string") {
-      try {
-        const parsed = JSON.parse(title);
-        if (typeof parsed === "object" && parsed !== null) {
-          return parsed[lang] || parsed.en || parsed.fr || Object.values(parsed)[0] || title;
-        }
-      } catch { /* not JSON */ }
-      return title;
-    }
-    if (typeof title === "object" && title !== null) {
-      const obj = title as Record<string, string>;
-      return obj[lang] || obj.en || obj.fr || Object.values(obj)[0] || "";
-    }
-    return String(title || "");
-  }
-
-  // Extract title text from each game (handles both string and JSONB titles)
-  function getTitleText(title: unknown): string {
-    if (typeof title === "string") {
-      // Could be a plain string or a JSON string
-      try {
-        const parsed = JSON.parse(title);
-        if (typeof parsed === "object" && parsed !== null) {
-          return Object.values(parsed).join(" ").toLowerCase();
-        }
-      } catch {
-        // Not JSON, use as-is
-      }
-      return title.toLowerCase();
-    }
-    if (typeof title === "object" && title !== null) {
-      return Object.values(title).join(" ").toLowerCase();
-    }
-    return "";
-  }
-
-  // Score each game by keyword matches
-  let bestMatch: (typeof games)[0] | null = null;
-  let bestScore = 0;
-
-  for (const game of games) {
-    const titleText = getTitleText(game.title);
-    const cityText = (game.city || "").toLowerCase();
-    const searchText = `${titleText} ${cityText}`;
-
-    let score = 0;
-    for (const kw of keywords) {
-      if (searchText.includes(kw)) score++;
-    }
-
-    if (score > bestScore) {
-      bestScore = score;
-      bestMatch = game;
-    }
-  }
-
-  if (!bestMatch || bestScore === 0) {
-    console.log(`[find-game] NO MATCH for slug="${slug}" keywords=[${keywords.join(",")}] games=${games.length}`);
-    // Log top 3 game titles for debugging
-    games.slice(0, 3).forEach((g) => console.log(`[find-game]   game: title=${JSON.stringify(g.title).slice(0, 80)} city=${g.city}`));
-    return NextResponse.json(
-      { found: false, slug },
-      { status: 404, headers: corsHeaders }
-    );
-  }
-
-  console.log(`[find-game] MATCH slug="${slug}" → gameId=${bestMatch.id} title=${JSON.stringify(bestMatch.title).slice(0, 80)} score=${bestScore}/${keywords.length}`);
+  console.log(
+    `[find-game] NOT FOUND slug="${slug}" — no published or pending game with this slug`,
+  );
   return NextResponse.json(
     {
-      found: true,
-      gameId: bestMatch.id,
-      title: extractTitle(bestMatch.title),
-      city: bestMatch.city,
+      found: false,
+      pending: false,
       slug,
+      hint:
+        "No game exists with this slug. Either it has not been generated yet (call /api/games/generate first) or the slug is wrong.",
     },
-    { headers: corsHeaders }
+    { status: 404, headers: corsHeaders },
   );
+}
+
+/** Extract a clean display title from a games.title (string or JSONB). */
+function extractTitle(title: unknown, lang = "en"): string {
+  if (typeof title === "string") {
+    try {
+      const parsed = JSON.parse(title);
+      if (typeof parsed === "object" && parsed !== null) {
+        return parsed[lang] || parsed.en || parsed.fr || Object.values(parsed)[0] || title;
+      }
+    } catch {
+      /* not JSON */
+    }
+    return title;
+  }
+  if (typeof title === "object" && title !== null) {
+    const obj = title as Record<string, string>;
+    return obj[lang] || obj.en || obj.fr || Object.values(obj)[0] || "";
+  }
+  return String(title || "");
 }
