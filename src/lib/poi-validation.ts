@@ -19,6 +19,87 @@
 import { geocodeLocation, haversineMeters, type NearbyCandidate } from "./geocode";
 import type { RawThematicPoi } from "./ai-discovery";
 
+/**
+ * Pure address geocoder for Gemini-supplied POIs. Bypasses the name-
+ * match heuristic used by `geocodeLocation`, which is meant for
+ * landmark-name lookups and is overly strict here: Gemini gives us a
+ * postal address ("Piazza Risorgimento, 1, 12051 Alba CN, Italy") plus
+ * a separate name ("Palazzo Comunale"). Google's geocoder canonicalizes
+ * the address to "Comune di Alba, Piazza Risorgimento 1" — that's the
+ * SAME building, but the token-overlap match against "Palazzo Comunale"
+ * fails and the result gets dropped.
+ *
+ * For Gemini-fed POIs we trust the ADDRESS as primary identifier, not
+ * the name. The address is what Gemini got from Google Search grounding,
+ * so it's already been seen on a Google-indexed page. Returns null
+ * only when Google Geocoding finds nothing matching at all, or when
+ * the result lies outside the requested zone.
+ */
+async function geocodeAddress(
+  address: string,
+  referencePoint: { lat: number; lon: number },
+  maxDistanceM: number,
+): Promise<{ lat: number; lon: number; displayName: string; placeId: string } | null> {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey) return null;
+  const url = new URL("https://maps.googleapis.com/maps/api/geocode/json");
+  url.searchParams.set("address", address);
+  url.searchParams.set("key", apiKey);
+  // bias around the start point — same syntax as geocode.ts uses for
+  // viaGoogleGeocoding (location bias is "lat,lon,radiusMeters").
+  url.searchParams.set("bounds", boundingBoxAround(referencePoint, maxDistanceM));
+
+  try {
+    const res = await fetch(url.toString());
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      status: string;
+      results?: Array<{
+        geometry?: { location?: { lat: number; lng: number }; location_type?: string };
+        place_id?: string;
+        formatted_address?: string;
+      }>;
+    };
+    if (data.status !== "OK" || !data.results?.length) return null;
+    const top = data.results[0];
+    const loc = top.geometry?.location;
+    if (!loc || typeof loc.lat !== "number" || typeof loc.lng !== "number") return null;
+
+    // Reject neighbourhood-level approximations (would put player 100+m off)
+    if (top.geometry?.location_type === "APPROXIMATE") return null;
+
+    const lat = loc.lat;
+    const lon = loc.lng;
+    const distance = haversineMeters({ lat, lon }, referencePoint);
+    if (distance > maxDistanceM) return null;
+
+    return {
+      lat,
+      lon,
+      displayName: top.formatted_address ?? address,
+      placeId: top.place_id ? `google:${top.place_id}` : `geocoded:${address}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Rough bounding box around a point — used to bias geocoding rather
+ *  than filter. We still validate distance after the call. */
+function boundingBoxAround(
+  refPoint: { lat: number; lon: number },
+  radiusM: number,
+): string {
+  // 1° latitude ≈ 111 km. Convert radius to degrees.
+  const latDelta = radiusM / 111_000;
+  const lonDelta =
+    radiusM /
+    (111_000 * Math.max(0.01, Math.cos((refPoint.lat * Math.PI) / 180)));
+  const sw = `${(refPoint.lat - latDelta).toFixed(6)},${(refPoint.lon - lonDelta).toFixed(6)}`;
+  const ne = `${(refPoint.lat + latDelta).toFixed(6)},${(refPoint.lon + lonDelta).toFixed(6)}`;
+  return `${sw}|${ne}`;
+}
+
 /** Max acceptable distance between Gemini's hint coords and Google's
  *  canonical coords. Above this, we suspect Gemini hallucinated a
  *  different place with a similar name (e.g. another "Liceo Govone"
@@ -70,37 +151,74 @@ export async function validateThematicPois(
   const rejected: ValidationResult["rejected"] = [];
   const themedContext: ValidationResult["themedContext"] = [];
 
-  // Parallel geocoding — geocodeLocation has its own per-call dedup
-  // cache so concurrency is safe and cheap.
+  // Parallel geocoding. Two-tier strategy:
+  //   1. Address-first via Google Geocoding API directly (no name-match
+  //      heuristic — the address IS the identifier here).
+  //   2. Fallback to name-based geocodeLocation only if address lookup
+  //      fails (rare: Gemini got the address right ~95% of the time).
   const tasks = rawPois.map(async (raw) => {
-    // Try address first (most specific), then fall back to name.
-    // geocodeLocation handles Google Places → Google Geocoding → Nominatim
-    // cascade with name-match + distance validation built in.
-    const geo =
-      (await geocodeLocation(raw.address, params.city, params.country, {
-        referencePoint: params.startPoint,
-        maxDistanceM: params.diameterCapM,
-      })) ||
-      (await geocodeLocation(raw.name, params.city, params.country, {
-        referencePoint: params.startPoint,
-        maxDistanceM: params.diameterCapM,
-      }));
+    const addressGeo = await geocodeAddress(
+      raw.address,
+      params.startPoint,
+      params.diameterCapM,
+    );
 
-    if (!geo) {
-      return {
-        ok: false as const,
-        raw,
-        reason: "no geocode match within diameter cap",
-      };
+    let lat: number;
+    let lon: number;
+    let displayName: string;
+    let placeId: string;
+
+    if (addressGeo) {
+      ({ lat, lon, displayName, placeId } = addressGeo);
+    } else {
+      // Three-step fallback chain — robust across environments:
+      //   2. geocodeLocation(address) — same Google chain but with the
+      //      namesMatch guard. Works when GOOGLE_MAPS_API_KEY is missing
+      //      (falls down to Nominatim).
+      //   3. geocodeLocation(name) — last resort, may fail namesMatch.
+      const addressFallback = await geocodeLocation(
+        raw.address,
+        params.city,
+        params.country,
+        {
+          referencePoint: params.startPoint,
+          maxDistanceM: params.diameterCapM,
+        },
+      );
+      const nameFallback =
+        addressFallback ??
+        (await geocodeLocation(raw.name, params.city, params.country, {
+          referencePoint: params.startPoint,
+          maxDistanceM: params.diameterCapM,
+        }));
+
+      if (!nameFallback) {
+        return {
+          ok: false as const,
+          raw,
+          reason: "no geocode match (Google address + Google/Nominatim address + Google/Nominatim name all failed)",
+        };
+      }
+      if (nameFallback.confidence === "low") {
+        return {
+          ok: false as const,
+          raw,
+          reason: `geocode confidence "low" — neighbourhood-level only`,
+        };
+      }
+      lat = nameFallback.lat;
+      lon = nameFallback.lon;
+      displayName = nameFallback.displayName;
+      placeId = nameFallback.externalId ?? `geocoded:${raw.name}`;
     }
 
-    if (geo.confidence === "low") {
-      return {
-        ok: false as const,
-        raw,
-        reason: `geocode confidence "low" — neighbourhood-level only, would put player 100+ m off`,
-      };
-    }
+    const geo = {
+      lat,
+      lon,
+      displayName,
+      externalId: placeId,
+      confidence: "high" as const,
+    };
 
     // Cross-check Gemini's hint vs Google's canonical coords. Big drift =
     // probable hallucination of a different place with similar name.
@@ -128,12 +246,12 @@ export async function validateThematicPois(
       lon: geo.lon,
     });
 
-    const placeId = geo.externalId ?? `geocoded:${raw.name}`;
+    const candidatePlaceId = geo.externalId ?? `geocoded:${raw.name}`;
     const candidate: NearbyCandidate = {
       name: raw.name,
       lat: geo.lat,
       lon: geo.lon,
-      placeId,
+      placeId: candidatePlaceId,
       types: ["thematic"], // tagged for downstream debug
       address: geo.displayName,
       distanceM: distanceFromStart,
@@ -144,7 +262,7 @@ export async function validateThematicPois(
       raw,
       candidate,
       themedEntry: {
-        placeId,
+        placeId: candidatePlaceId,
         historicalRole: raw.historicalRole,
         citation: raw.citation,
       },
