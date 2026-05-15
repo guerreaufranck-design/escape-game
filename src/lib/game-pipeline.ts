@@ -1460,21 +1460,26 @@ async function insertGameIntoDatabase(
     needs_review: needsReview,
     review_reason: reviewReason ?? null,
     // ── ROADTRIP (contrat OddballTrip 2026-05-10, migration 024) ──
-    // Walking par défaut → transport_mode='walking', autres NULL,
-    // code_validity_hours=24h. Toutes les fiches existantes restent
-    // identiques (default DB).
     transport_mode: template.transportMode ?? "walking",
     radius_km: template.radiusKm ?? null,
     recommended_days_min: template.recommendedDaysMin ?? null,
     recommended_days_max: template.recommendedDaysMax ?? null,
-    // TTL du code activation. Walking = 24h (migration 013).
-    // Roadtrip = (recommendedDaysMax + 7) × 24, soit ~264h pour 4 jours.
-    // Si pas de recommendedDaysMax mais transportMode roadtrip, fallback
-    // à 168h (7 jours, marge confortable).
+    // TTL du code activation.
+    //
+    // Politique 2026-05-15 — VALIDITÉ 7 JOURS PAR DÉFAUT (suite incident
+    // Julien Alba qui a fait une pause déjeuner italienne + pluie) :
+    //   - Walking : 168h (7 jours) — couvre vacances, mauvais temps,
+    //                                 reprise sur plusieurs jours.
+    //   - Roadtrip : (recommendedDaysMax + 7) × 24, soit ~264h pour 4j,
+    //                ~336h pour 7j. Cohérent avec la durée prévue.
+    //
+    // Avant : walking=24h. Trop court — un client qui achète le matin
+    // et veut faire le jeu le soir après mauvais temps : game over.
+    // Standard du marché audio-tour (Voicemap, Detour, izi) = 7 jours.
     code_validity_hours: (() => {
       const isRoadtrip =
         template.transportMode === "driving" || template.transportMode === "mixed";
-      if (!isRoadtrip) return 24;
+      if (!isRoadtrip) return 168; // walking : 7 jours
       const max = template.recommendedDaysMax;
       if (typeof max === "number" && max >= 1) {
         return (max + 7) * 24;
