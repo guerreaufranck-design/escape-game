@@ -460,6 +460,19 @@ export interface DiscoverParcoursResult {
    *                         zéro résultat thématique)
    */
   discoverySource?: "gemini_thematic" | "google_places";
+  /**
+   * Mode de transport effectif après auto-escalation (vision 2026-05-16).
+   * Peut différer du `transportMode` reçu en input si le mode walking
+   * n'a pas trouvé assez de POIs dans 3.5 km et qu'on a escaladé à
+   * mixed (15 km) ou driving (30 km). Le pipeline utilise cette
+   * valeur pour mettre à jour games.transport_mode au moment de
+   * l'INSERT, garantissant que la fiche produit OddballTrip reflète
+   * la réalité (le client achète "tour à pied" et reçoit "tour mixte"
+   * si l'algorithme l'a escaladé — à signaler côté OddballTrip).
+   */
+  escalatedTransportMode?: "walking" | "mixed" | "driving";
+  /** Diamètre effectif (mètres) utilisé après escalation. */
+  escalatedDiameterM?: number;
 }
 
 /**
@@ -544,7 +557,57 @@ export async function discoverParcours(
   }> = [];
   let discoverySource: "gemini_thematic" | "google_places" = "google_places";
 
-  if (!isRoadtrip) {
+  // Diamètre dynamique selon mode :
+  //   - walking : 3.5 km initial, auto-escaladable à 15 km puis 30 km
+  //     si Gemini ne trouve pas assez de matière dans le rayon serré.
+  //   - mixed/driving : (radiusKm × 2), plafonné à 60 km
+  //     pour absorber les jeux régionaux (Cap Sounion, Costa Brava,
+  //     Egine entière avec Temple Aphaia + Paliachora à 12 km).
+  //
+  // Vision 2026-05-16-ter — AUTO-ESCALADE :
+  // Si un mode walking ne trouve PAS assez de sites patrimoniaux dans
+  // 3.5 km (cas Egine : centre-ville pauvre, sites majeurs à 12 km),
+  // on n'abandonne pas — on élargit progressivement à mixed (15 km)
+  // puis driving (30 km). Le jeu publie en mode adapté avec un flag
+  // `transportModeEscalated` pour l'admin et la fiche produit.
+  //
+  // Avant : Gemini patrimoine-first GATED sur walking → mixed/driving
+  // retombait sur Google Places legacy = hôtels modernes au lieu de
+  // mémoriaux. Maintenant Gemini tourne pour TOUS les modes.
+
+  /** Niveaux d'escalade quand walking ne suffit pas. */
+  const ESCALATION_LADDER: Array<{
+    label: "walking" | "mixed" | "driving";
+    diameterM: number;
+    minPoisRequired: number;
+  }> = isRoadtrip
+    ? [
+        {
+          label: (transportMode as "mixed" | "driving"),
+          diameterM: Math.min(Math.round((params.radiusKm ?? 30) * 2 * 1000), 60_000),
+          minPoisRequired: minStops,
+        },
+      ]
+    : [
+        { label: "walking", diameterM: DIAMETER_CAP_M, minPoisRequired: minStops },
+        { label: "mixed", diameterM: 15_000, minPoisRequired: minStops },
+        { label: "driving", diameterM: 30_000, minPoisRequired: minStops },
+      ];
+
+  let escalatedMode: "walking" | "mixed" | "driving" = isRoadtrip
+    ? (transportMode as "mixed" | "driving")
+    : "walking";
+  let escalatedDiameterM = ESCALATION_LADDER[0].diameterM;
+  let geminiDiameterCapM = ESCALATION_LADDER[0].diameterM;
+
+  for (const tier of ESCALATION_LADDER) {
+    geminiDiameterCapM = tier.diameterM;
+    escalatedMode = tier.label;
+    escalatedDiameterM = tier.diameterM;
+    console.log(
+      `[discoverParcours] Trying tier: ${tier.label} (diameter ${Math.round(tier.diameterM / 1000)} km, min ${tier.minPoisRequired} POIs)`,
+    );
+
     try {
       const rawPois = await discoverThematicPois({
         city: params.city,
@@ -554,7 +617,7 @@ export async function discoverParcours(
         themeDescription: params.themeDescription,
         startPoint: params.startPoint,
         stopCount: params.stopCount,
-        diameterCapM: DIAMETER_CAP_M,
+        diameterCapM: tier.diameterM,
       });
 
       if (rawPois.length > 0) {
@@ -562,7 +625,7 @@ export async function discoverParcours(
           city: params.city,
           country: params.country,
           startPoint: params.startPoint,
-          diameterCapM: DIAMETER_CAP_M,
+          diameterCapM: geminiDiameterCapM,
         });
 
         console.log(
@@ -601,7 +664,7 @@ export async function discoverParcours(
               themeDescription: params.themeDescription,
               startPoint: params.startPoint,
               stopCount: targetFill,
-              diameterCapM: DIAMETER_CAP_M,
+              diameterCapM: geminiDiameterCapM,
             },
             excluded,
             targetFill,
@@ -612,7 +675,7 @@ export async function discoverParcours(
               city: params.city,
               country: params.country,
               startPoint: params.startPoint,
-              diameterCapM: DIAMETER_CAP_M,
+              diameterCapM: geminiDiameterCapM,
             });
             console.log(
               `[discoverParcours] Gemini Pass 2 (patrimonial fill): ${fillPois.length} raw → ${fillValidation.candidates.length} validated`,
@@ -647,25 +710,38 @@ export async function discoverParcours(
           aiCandidates = mergedCandidates;
           thematicContext = mergedContext;
           discoverySource = "gemini_thematic";
-          // Les rejets de validation alimentent le log audit
           for (const r of mergedRejected) {
             rejected.push({ name: r.name, reason: r.reason });
           }
+          console.log(
+            `[discoverParcours] ✅ Tier "${tier.label}" succeeded with ${mergedCandidates.length} POIs (cap ${Math.round(tier.diameterM / 1000)} km). Break escalation.`,
+          );
+          break; // sort de la boucle ESCALATION_LADDER
         } else {
           console.warn(
-            `[discoverParcours] Gemini pool too small even after Pass 2 (${mergedCandidates.length} < ${minStops}) — falling back to Google Places legacy flow`,
+            `[discoverParcours] Tier "${tier.label}" insufficient (${mergedCandidates.length}/${minStops}). Will escalate to next tier if available.`,
           );
         }
       } else {
         console.warn(
-          `[discoverParcours] Gemini returned 0 POIs — falling back to Google Places legacy flow`,
+          `[discoverParcours] Tier "${tier.label}" — Gemini returned 0 POIs. Will escalate to next tier if available.`,
         );
       }
     } catch (err) {
       console.warn(
-        `[discoverParcours] Gemini discovery threw: ${err instanceof Error ? err.message : err} — falling back to Google Places legacy flow`,
+        `[discoverParcours] Tier "${tier.label}" threw: ${err instanceof Error ? err.message : err}. Will escalate to next tier if available.`,
       );
     }
+  } // end ESCALATION_LADDER for-loop
+
+  if (aiCandidates.length === 0) {
+    console.warn(
+      `[discoverParcours] All escalation tiers exhausted (walking → mixed → driving). Falling back to Google Places legacy flow.`,
+    );
+  } else if (escalatedMode !== (transportMode as string)) {
+    console.warn(
+      `[discoverParcours] AUTO-ESCALATION : transport mode "${transportMode}" → "${escalatedMode}" (diameter ${Math.round(escalatedDiameterM / 1000)} km). Site density too low for original mode.`,
+    );
   }
 
   const useGeminiPool = discoverySource === "gemini_thematic";
@@ -1298,6 +1374,8 @@ export async function discoverParcours(
     verifiedContext,
     thematicContext: filteredThematicContext.length > 0 ? filteredThematicContext : undefined,
     discoverySource,
+    escalatedTransportMode: escalatedMode,
+    escalatedDiameterM,
   };
 }
 

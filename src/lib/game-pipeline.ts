@@ -1428,12 +1428,29 @@ export async function generateGameFromTemplate(
     // ============================================
     // STEP 7 : Insert DB
     // ============================================
+    // Si la discovery a escaladé le mode (walking → mixed/driving parce
+    // que pas assez de sites dans le rayon serré), on REFLÈTE ce mode
+    // dans la DB. La fiche produit OddballTrip devra signaler au client
+    // "tour mixte à pied et voiture" au lieu de "walking tour" — sinon
+    // décalage attentes/réalité.
+    const effectiveTransportMode =
+      discovery.escalatedTransportMode &&
+      discovery.escalatedTransportMode !== (template.transportMode ?? "walking")
+        ? discovery.escalatedTransportMode
+        : (template.transportMode ?? "walking");
+    if (effectiveTransportMode !== (template.transportMode ?? "walking")) {
+      console.warn(
+        `[Pipeline] Transport mode auto-escalated : "${template.transportMode}" → "${effectiveTransportMode}" (insufficient density in original radius). OddballTrip product page should be updated to match.`,
+      );
+    }
+
     const gameId = await insertGameIntoDatabase(
       {
         ...template,
         narrative: effectiveNarrative,
         themeDescription: effectiveThemeDescription,
         difficulty: effectiveDifficulty,
+        transportMode: effectiveTransportMode,
       },
       steps,
       [],

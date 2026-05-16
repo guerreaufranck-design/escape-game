@@ -124,7 +124,11 @@ export async function discoverPatrimonialFill(
       ? `\n\nALREADY CHOSEN (do NOT repeat these) :\n${excludedNames.map((n) => `  - ${n}`).join("\n")}`
       : "";
 
-  const prompt = `You are completing an outdoor walking-game with the city's MOST IMPORTANT MONUMENTS.
+  const isRegional = diameterM > 5_000;
+  const tourLabel = isRegional
+    ? "outdoor regional tour (sites can be 5-15 km apart, partly walked, partly driven)"
+    : "outdoor walking-game (walkable distances between stops)";
+  const prompt = `You are completing an ${tourLabel} with the area's MOST IMPORTANT MONUMENTS.
 
 GAME CONTEXT
   Title: "${params.title}"
@@ -252,7 +256,14 @@ function buildPrompt(
   diameterM: number,
   count: number,
 ): string {
-  return `You are a heritage-and-place researcher building an outdoor walking game.
+  // Mode régional (roadtrip/mixed) quand le diamètre dépasse ~5 km.
+  // À cette échelle "walking game" n'a plus de sens, c'est un parcours
+  // partiellement à pied + voiture (les sites sont éparpillés).
+  const isRegional = diameterM > 5_000;
+  const modeLabel = isRegional
+    ? "outdoor regional tour (partly walking, partly driving — sites can be 5-15 km apart)"
+    : "outdoor walking game (player moves on foot between stops within a few hundred meters)";
+  return `You are a heritage-and-place researcher building an ${modeLabel}.
 
 GAME
   Title: "${params.title}"
