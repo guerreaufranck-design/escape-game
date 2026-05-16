@@ -146,7 +146,31 @@ async function handleRegenerate(request: NextRequest): Promise<NextResponse> {
     );
   }
 
-  let body: { slug?: string; gameId?: string; resetSessions?: boolean };
+  let body: {
+    slug?: string;
+    gameId?: string;
+    resetSessions?: boolean;
+    // MODE "CREATE FROM SCRATCH" (vision 2026-05-16 — bypass webhook
+    // OddballTrip quand celui-ci est cassé). Tous les params requis pour
+    // lancer la pipeline sans avoir besoin d'un game existant en DB.
+    create?: {
+      slug: string;
+      title: string;
+      city: string;
+      country?: string;
+      themeDescription: string;
+      narrative?: string;
+      difficulty?: number;
+      estimatedDurationMin?: number;
+      stopCount?: number;
+      transportMode?: "walking" | "driving" | "mixed";
+      radiusKm?: number;
+      recommendedDaysMin?: number;
+      recommendedDaysMax?: number;
+      language?: string;
+      startPointText?: string;
+    };
+  };
   try {
     body = await request.json();
   } catch {
@@ -156,9 +180,78 @@ async function handleRegenerate(request: NextRequest): Promise<NextResponse> {
     );
   }
 
+  // ─── MODE CREATE — game from scratch (pas besoin de slug existant) ───
+  if (body.create) {
+    const c = body.create;
+    if (!c.slug || !c.title || !c.city) {
+      return NextResponse.json(
+        { error: "create.{slug,title,city} requis" },
+        { status: 400 },
+      );
+    }
+    const tpl: GameTemplate = {
+      slug: c.slug,
+      city: c.city,
+      country: c.country ?? inferCountryFromCity(c.city) ?? "",
+      theme: c.title,
+      themeDescription: c.themeDescription,
+      narrative:
+        c.narrative ??
+        `An outdoor adventure called "${c.title}", set in ${c.city}. ${c.themeDescription}`,
+      difficulty: c.difficulty ?? 3,
+      estimatedDurationMin: c.estimatedDurationMin ?? 135,
+      stopCount: c.stopCount ?? 8,
+      transportMode: c.transportMode ?? "walking",
+      radiusKm: c.radiusKm,
+      recommendedDaysMin: c.recommendedDaysMin,
+      recommendedDaysMax: c.recommendedDaysMax,
+      language: c.language,
+      startPointText: c.startPointText,
+    };
+    console.log(
+      `[regenerate-game] CREATE mode: slug=${tpl.slug} city=${tpl.city} mode=${tpl.transportMode} stopCount=${tpl.stopCount}`,
+    );
+    const result = await generateGameFromTemplate(tpl);
+    if (!result.success || !result.gameId) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `Pipeline a échoué: ${result.error ?? "(no message)"}`,
+          durationSec: Math.round((Date.now() - t0) / 1000),
+          mode: "create",
+        },
+        { status: 500 },
+      );
+    }
+    const newGameId = result.gameId;
+    const supabaseLocal = createAdminClient();
+    const { data: newSteps } = await supabaseLocal
+      .from("game_steps")
+      .select("step_order, title, latitude, longitude")
+      .eq("game_id", newGameId)
+      .order("step_order", { ascending: true });
+    const stops = (newSteps ?? []).map((s) => ({
+      order: s.step_order,
+      name: typeof s.title === "string" ? s.title : JSON.stringify(s.title),
+      lat: s.latitude,
+      lon: s.longitude,
+    }));
+    return NextResponse.json({
+      ok: true,
+      mode: "create",
+      newGameId,
+      slug: tpl.slug,
+      stopCount: stops.length,
+      stops,
+      discoverySource: result.discoverySource ?? "unknown",
+      durationSec: Math.round((Date.now() - t0) / 1000),
+    });
+  }
+
+  // ─── MODE REGENERATE — slug ou gameId existant requis ───
   if (!body.slug && !body.gameId) {
     return NextResponse.json(
-      { error: "Fournir { slug } ou { gameId }" },
+      { error: "Fournir { slug } ou { gameId } ou { create: {...} }" },
       { status: 400 },
     );
   }
@@ -171,7 +264,6 @@ async function handleRegenerate(request: NextRequest): Promise<NextResponse> {
   if (body.gameId) {
     oldQuery = oldQuery.eq("id", body.gameId);
   } else if (body.slug) {
-    // Le slug n'est pas UNIQUE en DB — on prend le plus récent published.
     oldQuery = oldQuery
       .eq("slug", body.slug)
       .order("created_at", { ascending: false });
