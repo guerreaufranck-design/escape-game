@@ -1095,6 +1095,42 @@ export async function generateGameFromTemplate(
       discovery.verifiedContext,
     );
 
+    // Garde anti-DUPLICATE indices (vision 2026-05-16, suite bug Séville
+    // avec 2 stops sur AURUM). Claude doit avoir respecté INV-1, on
+    // re-vérifie côté code. Si doublon détecté, on log un warn et on
+    // tente de désambiguïser en suffixant le 2e occurrence — c'est un
+    // patch d'urgence, le vrai fix c'est le prompt INV-1 renforcé.
+    {
+      const seen = new Set<string>();
+      const dupes: string[] = [];
+      for (let i = 0; i < steps.length; i++) {
+        const ans = (steps[i].answer_text || "").trim().toUpperCase();
+        if (!ans) continue;
+        if (seen.has(ans)) {
+          dupes.push(ans);
+          // Désambiguïsation simple : ajouter le step_order en suffixe
+          // (e.g. AURUM → AURUM_2). Ce n'est pas idéal narrativement,
+          // mais préserve l'unicité pour l'énigme finale. Le post-mortem
+          // se fait via prompt strengthening.
+          const newAns = `${ans}_${i + 1}`;
+          steps[i] = {
+            ...steps[i],
+            answer_text: newAns,
+            ar_facade_text: newAns,
+          };
+          console.warn(
+            `[Pipeline] DUPLICATE INDICE detected at step ${i + 1} ("${ans}") — appended suffix → "${newAns}". Prompt INV-1 should be reinforced.`,
+          );
+        }
+        seen.add(ans);
+      }
+      if (dupes.length > 0) {
+        console.warn(
+          `[Pipeline] ${dupes.length} duplicate indice(s) had to be patched: ${dupes.join(", ")}. Investigate prompt drift.`,
+        );
+      }
+    }
+
     // Garde anti-AUTO leak : si Claude a renvoyé le placeholder "AUTO"
     // (au lieu d'inventer un mot thématique), on régénère ce stop avec
     // un brief plus strict. On checke `answer_text` ET `ar_facade_text`

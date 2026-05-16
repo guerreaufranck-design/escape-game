@@ -646,10 +646,22 @@ ${buildCharacterSelectionGuidance(stepCount)}
 GAME-WIDE INVARIANTS (apply across the whole array of ${stepCount} steps)
 ═══════════════════════════════════════════════════════════════════════
 
-INV-1 UNIQUE ANSWERS — every answer_text in the array MUST be unique. No
-two steps share the same answer. If you find yourself producing a
-duplicate, change one of them — pick a different year, a different word,
-a different roman numeral.
+INV-1 UNIQUE ANSWERS — CRITICAL, ENFORCED BY POST-VALIDATOR
+
+Every answer_text in the array of ${stepCount} steps MUST be UNIQUE.
+NEVER use the same word twice. If you instinctively chose AURUM for
+two different "gold-themed" stops, REWRITE ONE — pick a synonym, a
+specific aspect, or a related concept (e.g. one stop becomes AURUM,
+the other becomes DIVITIAE / TESORO / OPULENTIA / SPLENDOR / REGIA…).
+
+VERIFICATION STEP — BEFORE writing the JSON output :
+  1. List all ${stepCount} answer_text values you plan to use
+  2. Check : are they all DISTINCT ?
+  3. If any duplicate, change one immediately
+
+This rule has been violated in past games (2 stops with AURUM each).
+The final-riddle generator REFUSES to work with duplicate indices and
+throws a build error. Don't let it happen.
 
 INV-2 CHARACTER DIVERSITY — across the ${stepCount} steps you MUST use at
 least ${Math.min(5, stepCount)} DISTINCT ar_character_type values from the
@@ -1899,8 +1911,18 @@ ACCEPTED MECHANISMS (pick ONE) :
   M1 — ACROSTIC : the first letter of each indice (taken in stop order)
        spells the answer.
        Example : indices = [VERITAS, ALBA, LIBERTAS, LUX, EROS] → "VALLE"
-       Requires : the indices' first letters form an actual word/name
-       directly related to the theme or city.
+
+       STRICT RULES FOR M1 (read carefully — past games failed here) :
+       a) EVERY indice MUST start with an A-Z LETTER. If any indice is a
+          number (e.g. "1248", "43", "177") OR starts with a non-letter
+          character, M1 is FORBIDDEN. Use M2, M3, or M4 instead.
+       b) The resulting word MUST be a REAL recognizable word in
+          Latin/French/English/Spanish/Italian OR a real proper noun
+          (city, person, named concept). NEVER output a meaningless
+          string like "FAVAGIS", "CSSACFMV", or any concatenation that
+          doesn't resolve to a known word — those are AUTOMATIC FAILURES.
+       c) BEFORE finalizing, write the letters in order and check:
+          "Does this spell a real word ?" If no, switch to M2/M3/M4.
 
   M2 — COMMON CONCEPT : all (or most) indices are FACETS of one named
        thing. The answer is that thing's most canonical name.
@@ -1926,17 +1948,29 @@ ACCEPTED MECHANISMS (pick ONE) :
                  in a Roman persecution context → answer = "177".
 
 DERIVATION CHECKLIST (apply BEFORE choosing the answer)
+  ☐ Are ALL ${params.steps.length} indices UNIQUE ? (no duplicates like
+    AURUM appearing twice — that's a generation bug upstream, but
+    if you see it, REJECT the puzzle and STOP. Output a JSON error
+    instead of a final riddle.)
   ☐ Can I explain why ≥ 4 of the ${params.steps.length} indices point
     to the answer using my chosen mechanism, in ONE clear sentence each ?
   ☐ Is the answer 1-3 words OR a 3-4 digit number ?
-  ☐ If acrostic (M1), do the first letters in stop order spell EXACTLY
-    the answer with no extra letters / no skipped letters ?
+  ☐ If M1 acrostic : do ALL indices start with letters A-Z (no numbers) ?
+    AND do the first letters spell a REAL word/name (not a random
+    string like "FAVAGIS" or "CSSACFMV") ?
   ☐ Is the answer a name a typical player could RECOGNIZE (not a niche
-    Latin neologism) ?
+    Latin neologism, not a fake-sounding constructed word) ?
   ☐ Have I AVOIDED loose poetic associations like "renaissance",
     "harmony", "eternal" — generic words that fit ANY theme ?
 
-If you cannot tick all 5 boxes, REVISE your answer until you can.
+If you cannot tick all 6 boxes, REVISE your answer until you can.
+
+INDICE UNIQUENESS CHECK (do this FIRST)
+  List the ${params.steps.length} indices : ${params.steps.map(s => s.answer).join(", ")}
+  Are they all UNIQUE ? If you spot a duplicate, output this JSON instead :
+    { "error": "duplicate_indices", "details": "<which indice repeats>" }
+  This signals to the pipeline that the stops generation was buggy and
+  should be re-run. Do NOT try to "make do" with duplicates.
 
 EXAMPLES of strong final answers (different mechanisms, different games)
   - "LUGDUNUM" (M3 — Lyon's Roman name, when indices all point to its
@@ -2000,35 +2034,98 @@ Output ONLY the JSON object.`;
   const text = message.content[0].type === "text" ? message.content[0].text : "";
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("generateFinalRiddle: no JSON in Claude response");
-  const parsed = JSON.parse(match[0]) as FinalRiddleResult & {
+  const parsed = JSON.parse(match[0]) as Partial<FinalRiddleResult> & {
     mechanism?: string;
     derivation_check?: string;
+    error?: string;
+    details?: string;
   };
+
+  // 1. Claude a explicitement signalé un problème en amont (duplicate indices)
+  if (parsed.error) {
+    throw new Error(
+      `generateFinalRiddle: Claude refused to generate (${parsed.error}: ${parsed.details ?? ""}). Stops should be regenerated upstream.`,
+    );
+  }
+
   if (!parsed.riddle || !parsed.answer || !parsed.explanation) {
     throw new Error(
       "generateFinalRiddle: incomplete response (missing one of riddle/answer/explanation)",
     );
   }
-  // Audit log : tells admin which mechanism Claude used + its derivation
-  // sentence. Visible in Vercel logs, useful for diagnosing weak answers.
+
   console.log(
     `[generateFinalRiddle] mechanism=${parsed.mechanism ?? "?"} answer="${parsed.answer}" derivation="${parsed.derivation_check ?? "(missing)"}"`,
   );
 
-  // Sanity check : reject "weak" generic words that fit ANY theme. If
-  // Claude slipped through the prompt constraints, we throw — the caller
-  // catches and the pipeline continues without final_riddle (the player
-  // still gets stops + epilogue, just no final puzzle). Better than
-  // shipping a wrong answer.
+  const normalizedAnswer = parsed.answer.trim().toLowerCase();
+
+  // 2. Garde-fou mots vagues "any-theme-fits"
   const WEAK_ANSWERS = new Set([
     "renaissance", "harmonie", "harmony", "destinée", "destinee", "destiny",
     "éternité", "eternity", "unity", "unité", "memory", "mémoire",
     "victory", "freedom", "liberty", "secret", "mystère", "mystery",
+    "magic", "magie", "wonder", "merveille", "essence", "spirit", "esprit",
+    "soul", "âme", "ame", "journey", "voyage", "discovery", "découverte",
+    "decouverte",
   ]);
-  const normalizedAnswer = parsed.answer.trim().toLowerCase();
   if (WEAK_ANSWERS.has(normalizedAnswer)) {
     throw new Error(
       `generateFinalRiddle: weak generic answer "${parsed.answer}" rejected (mechanism=${parsed.mechanism}). The pipeline should retry or skip the final riddle.`,
+    );
+  }
+
+  // 3. Garde-fou acrostic foireux : pour un answer SHORT en lettres uniquement,
+  // on vérifie que ces lettres = premières lettres des indices dans l'ordre.
+  // Bug observé Séville (2026-05-16) : answer="favagis" formé de F-1-A-V-A-G-I-S
+  // où le "1" venait du nombre "1248" (impossible en acrostic) + AURUM dupliqué.
+  if (
+    parsed.mechanism === "M1" &&
+    /^[a-zà-ÿ]{2,}$/i.test(normalizedAnswer) &&
+    normalizedAnswer.length === params.steps.length
+  ) {
+    const firstLetters = params.steps
+      .map((s) => (s.answer || "").trim().charAt(0).toLowerCase())
+      .join("");
+    if (firstLetters !== normalizedAnswer) {
+      throw new Error(
+        `generateFinalRiddle: M1 acrostic mismatch — expected first letters "${firstLetters}" but got answer "${normalizedAnswer}". The mechanism is broken.`,
+      );
+    }
+    // Vérifier qu'aucun indice ne commence par un chiffre
+    const hasNumericIndice = params.steps.some((s) =>
+      /^\d/.test((s.answer || "").trim()),
+    );
+    if (hasNumericIndice) {
+      throw new Error(
+        `generateFinalRiddle: M1 acrostic forbidden when some indices are numbers (1248, 177, etc.). Should have picked M3 or M4.`,
+      );
+    }
+  }
+
+  // 4. Garde-fou "fake latin word" : un mot court qui n'est dans aucun
+  // dictionnaire est suspect. Heuristique simple : si l'answer fait
+  // 5-9 lettres et contient beaucoup de consonnes non-formables, on rejette.
+  // Liste de tokens fake-latin déjà rencontrés :
+  const KNOWN_FAKE_TOKENS = new Set([
+    "favagis", "geverus", "loritas", "vinctum",
+  ]);
+  if (KNOWN_FAKE_TOKENS.has(normalizedAnswer)) {
+    throw new Error(
+      `generateFinalRiddle: fake-latin token "${parsed.answer}" rejected (known constructed neologism).`,
+    );
+  }
+
+  // 5. Sanity check sur explanation : doit citer ≥ 4 indices pour prouver
+  // la dérivation. Si Claude n'arrive pas à citer 4 indices, l'answer
+  // est probablement faible.
+  const explanationLower = parsed.explanation.toLowerCase();
+  const indicesCited = params.steps.filter((s) =>
+    s.answer && explanationLower.includes(s.answer.toLowerCase()),
+  ).length;
+  if (indicesCited < 4) {
+    throw new Error(
+      `generateFinalRiddle: explanation cites only ${indicesCited}/${params.steps.length} indices — derivation is too thin. Re-roll.`,
     );
   }
 
