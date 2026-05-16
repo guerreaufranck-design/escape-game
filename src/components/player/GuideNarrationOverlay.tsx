@@ -47,6 +47,46 @@ interface GuideNarrationOverlayProps {
 
 const CLOSE_DELAY_MS = 1200; // let the last word breathe before auto-close
 
+/**
+ * Base URL pour les sprites AR dans Supabase Storage. Bucket public.
+ * Les sprites attendus : guide_male, guide_female, monk, ghost, etc.
+ * Convention : nom de l'archétype → fichier .png.
+ */
+const SPRITE_BASE_URL =
+  "https://sijpbarxxcdkodhfrdyx.supabase.co/storage/v1/object/public/ar-sprites";
+
+/**
+ * Mappe un archétype AR vers son URL de sprite.
+ * Si l'archétype est inconnu ou null, retourne null (fallback emoji micro).
+ */
+export function arCharacterSpriteUrl(
+  characterType: string | null | undefined,
+): string | null {
+  if (!characterType) return null;
+  const cleaned = characterType.trim().toLowerCase();
+  if (!cleaned || cleaned === "default") return null;
+  // Whitelist sécurisée — on n'expose que les sprites connus pour
+  // éviter qu'une chaîne malicieuse en DB devienne une URL externe.
+  const known = new Set([
+    "guide_male",
+    "guide_female",
+    "monk",
+    "knight",
+    "witch",
+    "sailor",
+    "detective",
+    "ghost",
+    "scholar",
+    "priestess",
+    "merchant",
+    "warrior",
+    "druid",
+    "alchemist",
+  ]);
+  if (!known.has(cleaned)) return null;
+  return `${SPRITE_BASE_URL}/${cleaned}.png`;
+}
+
 export function GuideNarrationOverlay({
   open,
   text,

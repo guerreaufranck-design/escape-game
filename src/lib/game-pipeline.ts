@@ -1345,24 +1345,44 @@ export async function generateGameFromTemplate(
         );
         return null;
       }),
-      generateFinalRiddle({
-        title: template.theme,
-        city: template.city,
-        country: template.country,
-        theme: template.theme,
-        themeDescription: effectiveThemeDescription,
-        steps: steps.map((s, i) => ({
-          stepOrder: i + 1,
-          title: s.title,
-          answer: s.answer_text,
-          anecdote: s.anecdote,
-        })),
-      }).catch((err) => {
-        console.warn(
-          `[Pipeline] Final riddle generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
-        );
+      (async () => {
+        // Retry-with-rejection-fallback for final riddle generation
+        // (2026-05-16). If the 1st attempt returns a weak/generic answer
+        // ("renaissance", "harmony", etc.) we reject it via the sanity
+        // check inside generateFinalRiddle, and retry ONCE here. If the
+        // 2nd attempt also fails we publish without final riddle (the
+        // player still gets all stops + epilogue, just no final puzzle).
+        const finalRiddleArgs = {
+          title: template.theme,
+          city: template.city,
+          country: template.country,
+          theme: template.theme,
+          themeDescription: effectiveThemeDescription,
+          steps: steps.map((s, i) => ({
+            stepOrder: i + 1,
+            title: s.title,
+            answer: s.answer_text,
+            anecdote: s.anecdote,
+          })),
+        };
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            return await generateFinalRiddle(finalRiddleArgs);
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            if (attempt < 1) {
+              console.warn(
+                `[Pipeline] Final riddle attempt ${attempt + 1} rejected (${msg.slice(0, 120)}). Retrying once...`,
+              );
+            } else {
+              console.warn(
+                `[Pipeline] Final riddle generation failed after retries (${msg.slice(0, 120)}) — game will publish without final puzzle.`,
+              );
+            }
+          }
+        }
         return null;
-      }),
+      })(),
     ]);
 
     console.log(

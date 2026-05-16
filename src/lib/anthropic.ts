@@ -1882,47 +1882,106 @@ GAME
   Theme: ${params.theme}
   Theme description: ${params.themeDescription}
 
-STOPS (each gave the player an "indice" — the answer they typed):
+STOPS (each gave the player a one-word "indice" they typed into their notebook):
 ${stepsList}
 
-TASK
-  Design the FINAL RIDDLE the player faces after the last stop. It must:
-  1. Tie all stop answers together into ONE concept / word / short phrase
-     that the player can DEDUCE from their notebook.
-  2. The final answer must be SHORT (1-4 words, single number, or single
-     date), case-insensitive, accent-insensitive.
-  3. The player has only 2 attempts — make the riddle solvable but not
-     trivial. A motivated player who paid attention should crack it.
+═══════════════════════════════════════════════════════════════════════
+TASK — Generate a final riddle + answer + explanation
+═══════════════════════════════════════════════════════════════════════
 
-EXAMPLES OF GOOD FINAL ANSWERS
-  - The Latin phrase that ties together the 8 single-word answers
-  - The year of the defining event (deduced from dates scattered across stops)
-  - The full name of the figure mentioned at each stop
-  - A motto / inscription common to several stops
-  - A geographical concept (the river that runs under the city, the wind
-    that shaped the architecture)
+THE FINAL ANSWER MUST BE DERIVABLE FROM THE INDICES VIA A CLEAR,
+EXPLICIT MECHANISM. Pick exactly ONE mechanism from the list below
+and apply it RIGOROUSLY. Do NOT mix mechanisms. Do NOT invent loose
+"renaissance"-style associations.
+
+ACCEPTED MECHANISMS (pick ONE) :
+
+  M1 — ACROSTIC : the first letter of each indice (taken in stop order)
+       spells the answer.
+       Example : indices = [VERITAS, ALBA, LIBERTAS, LUX, EROS] → "VALLE"
+       Requires : the indices' first letters form an actual word/name
+       directly related to the theme or city.
+
+  M2 — COMMON CONCEPT : all (or most) indices are FACETS of one named
+       thing. The answer is that thing's most canonical name.
+       Example : indices about light + sun + dawn + golden + warmth →
+                 answer = "SOLEIL" (or the local-language equivalent).
+       Requires : you can write a sentence linking ≥ 4 indices directly
+                  to that one named answer, no metaphorical leap needed.
+
+  M3 — CONTAINED CITY / PERSON / EVENT NAME : the indices, when taken
+       together, all point to the historical/cultural identity of
+       a place, person, or named event. The answer IS that name.
+       Example : indices = [LUGUS, VERITAS, ARENA, MEMORIA, FIDES] all
+                 tied to ${params.city}'s ancient identity → answer is
+                 the city's ROMAN NAME (e.g. "LUGDUNUM" for Lyon,
+                 "AQUAE SEXTIAE" for Aix-en-Provence, "ALBA POMPEIA"
+                 for Alba).
+       Requires : the indices form a thematic web around that single
+                  named target, AND that name is short (1-3 words).
+
+  M4 — KEY YEAR / NUMBER : the indices span a defining event and the
+       answer is the year of that event (4 digits).
+       Example : indices = [REVOLT, BLANDINA, MARTYRDOM, CHRISTIAN, …]
+                 in a Roman persecution context → answer = "177".
+
+DERIVATION CHECKLIST (apply BEFORE choosing the answer)
+  ☐ Can I explain why ≥ 4 of the ${params.steps.length} indices point
+    to the answer using my chosen mechanism, in ONE clear sentence each ?
+  ☐ Is the answer 1-3 words OR a 3-4 digit number ?
+  ☐ If acrostic (M1), do the first letters in stop order spell EXACTLY
+    the answer with no extra letters / no skipped letters ?
+  ☐ Is the answer a name a typical player could RECOGNIZE (not a niche
+    Latin neologism) ?
+  ☐ Have I AVOIDED loose poetic associations like "renaissance",
+    "harmony", "eternal" — generic words that fit ANY theme ?
+
+If you cannot tick all 5 boxes, REVISE your answer until you can.
+
+EXAMPLES of strong final answers (different mechanisms, different games)
+  - "LUGDUNUM" (M3 — Lyon's Roman name, when indices all point to its
+    foundation, gods, arenas, sacred sites)
+  - "BLANDINE" (M3 — when indices all relate to the 177 AD Christian
+    martyrs of Lyon)
+  - "ARTHUR" (M3 — when indices are sword, lake, round table, merlin)
+  - "1492" (M4 — when indices relate to discovery, queen Isabella,
+    Andalusia, ocean, Cordoba)
+  - "VICTOIRE" (M2 — when indices are flame, courage, hope, freedom,
+    return, all aspects of Liberation)
+  - "ROSE" (M1 acrostic — indices spelling R-O-S-E in stop order)
+
+EXAMPLES of WEAK answers (NEVER produce these)
+  - "renaissance" — too generic, fits any old European city
+  - "harmonie" — abstract, no real derivation
+  - "destinée" — empty poetry
+  - Any English word ending in -ity / -ness / -hood that abstracts away
+    from concrete facts
 
 EXPLANATION
-  Write 2-3 short paragraphs that:
-  - State the answer
-  - Explain WHY it's the answer (cite 2-3 stops as evidence)
-  - End on a moving / inspiring beat about ${params.city} or the theme
+  Write 2-3 short paragraphs that :
+  1. STATE the answer clearly.
+  2. Walk through the derivation : "The first indice X means..., the
+     second Y points to..., together they reveal Z." Cite at least 4
+     stops by their indice value.
+  3. End with a moving beat about ${params.city} or the theme.
 
-  This explanation is played in TWO scenarios:
-    A. The player got it right → as celebration + closure
-    B. The player failed 2 attempts → as "here is what you missed" reveal
-  Write it so both scenarios feel natural.
+  Played in TWO scenarios :
+    A. Player got it right → celebration + closure
+    B. Player failed 2 attempts → "here is what you missed" reveal
+  Write so both scenarios feel natural.
 
 STYLE
   - English (translation handled downstream).
   - No Roman numerals in answer.
-  - Riddle 2-4 sentences, evocative.
+  - Riddle 2-4 sentences, evocative, ending with a question mark.
   - Explanation 200-300 words.
 
-OUTPUT — strict JSON, no markdown:
+OUTPUT — strict JSON, no markdown :
 {
+  "mechanism": "M1" | "M2" | "M3" | "M4",
+  "derivation_check": "<one-sentence proof that ≥ 4 indices link to the answer>",
   "riddle": "<2-4 sentences ending with a question mark>",
-  "answer": "<the expected answer, lowercase, no accents — 1-4 words>",
+  "answer": "<the expected answer, lowercase, no accents — 1-3 words OR a number>",
   "explanation": "<200-300 words, plain text with \\n\\n for paragraph breaks>"
 }
 
@@ -1931,21 +1990,51 @@ Output ONLY the JSON object.`;
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
     max_tokens: 2048,
-    temperature: 0.65,
+    // Temperature lowered to 0.25 for the final riddle. Higher values
+    // produced too-creative leaps ("renaissance" for Lugdunum where
+    // indices clearly pointed to LUGDUNUM itself). We want consistency
+    // and rigor here, not poetic flair.
+    temperature: 0.25,
     messages: [{ role: "user", content: prompt }],
   });
   const text = message.content[0].type === "text" ? message.content[0].text : "";
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) throw new Error("generateFinalRiddle: no JSON in Claude response");
-  const parsed = JSON.parse(match[0]) as FinalRiddleResult;
+  const parsed = JSON.parse(match[0]) as FinalRiddleResult & {
+    mechanism?: string;
+    derivation_check?: string;
+  };
   if (!parsed.riddle || !parsed.answer || !parsed.explanation) {
     throw new Error(
       "generateFinalRiddle: incomplete response (missing one of riddle/answer/explanation)",
     );
   }
+  // Audit log : tells admin which mechanism Claude used + its derivation
+  // sentence. Visible in Vercel logs, useful for diagnosing weak answers.
+  console.log(
+    `[generateFinalRiddle] mechanism=${parsed.mechanism ?? "?"} answer="${parsed.answer}" derivation="${parsed.derivation_check ?? "(missing)"}"`,
+  );
+
+  // Sanity check : reject "weak" generic words that fit ANY theme. If
+  // Claude slipped through the prompt constraints, we throw — the caller
+  // catches and the pipeline continues without final_riddle (the player
+  // still gets stops + epilogue, just no final puzzle). Better than
+  // shipping a wrong answer.
+  const WEAK_ANSWERS = new Set([
+    "renaissance", "harmonie", "harmony", "destinée", "destinee", "destiny",
+    "éternité", "eternity", "unity", "unité", "memory", "mémoire",
+    "victory", "freedom", "liberty", "secret", "mystère", "mystery",
+  ]);
+  const normalizedAnswer = parsed.answer.trim().toLowerCase();
+  if (WEAK_ANSWERS.has(normalizedAnswer)) {
+    throw new Error(
+      `generateFinalRiddle: weak generic answer "${parsed.answer}" rejected (mechanism=${parsed.mechanism}). The pipeline should retry or skip the final riddle.`,
+    );
+  }
+
   return {
     riddle: parsed.riddle.trim(),
-    answer: parsed.answer.trim().toLowerCase(),
+    answer: normalizedAnswer,
     explanation: parsed.explanation.trim(),
   };
 }

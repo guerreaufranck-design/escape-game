@@ -51,7 +51,7 @@ import { NavigationGuide } from "@/components/player/NavigationGuide";
 import { ARCameraOverlay } from "@/components/player/ARCameraOverlay";
 import { ValidationParticles } from "@/components/player/ValidationParticles";
 import { Tutorial } from "@/components/player/Tutorial";
-import { GuideNarrationOverlay } from "@/components/player/GuideNarrationOverlay";
+import { GuideNarrationOverlay, arCharacterSpriteUrl } from "@/components/player/GuideNarrationOverlay";
 import { StepTransitionOverlay } from "@/components/player/StepTransitionOverlay";
 import { useUITranslations } from "@/components/player/UITranslationsProvider";
 import { NarrationButton } from "@/components/player/NarrationButton";
@@ -127,6 +127,9 @@ export default function PlayPage() {
   const [guideOverlay, setGuideOverlay] = useState<{
     text: string;
     title?: string;
+    /** Sprite AR à afficher dans l'overlay (guide_male/female/monk/…).
+     *  Null = fallback emoji micro. */
+    characterSprite?: string | null;
   } | null>(null);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [treasure, setTreasure] = useState<{
@@ -225,6 +228,7 @@ export default function PlayPage() {
     text: string,
     audioUrl?: string | null,
     title?: string,
+    characterType?: string | null,
   ) => {
     // Toggle off if user re-taps the same narration
     if (narration.speaking && narrationText === text) {
@@ -233,7 +237,8 @@ export default function PlayPage() {
       setGuideOverlay(null);
       return;
     }
-    setGuideOverlay({ text, title });
+    const sprite = arCharacterSpriteUrl(characterType);
+    setGuideOverlay({ text, title, characterSprite: sprite });
     setNarrationText(text);
     narration.speak(text, audioUrl ? { audioUrl } : undefined);
   };
@@ -807,7 +812,8 @@ export default function PlayPage() {
                       onSpeak={(t) => speakWithOverlay(
                         t,
                         gameState.gameWideAudio?.introSpeech,
-                        tt('play.yourGuide', locale) || "Votre guide"
+                        tt('play.yourGuide', locale) || "Votre guide",
+                        "guide_male"
                       )}
                       variant="pill"
                       locale={locale}
@@ -993,6 +999,7 @@ export default function PlayPage() {
         open={guideOverlay !== null}
         text={guideOverlay?.text ?? ""}
         title={guideOverlay?.title}
+        characterSprite={guideOverlay?.characterSprite ?? undefined}
         speaking={narration.speaking}
         onClose={dismissGuideOverlay}
         locale={locale}
@@ -1257,7 +1264,11 @@ export default function PlayPage() {
                         onSpeak={(t) => speakWithOverlay(
                           t,
                           completedStepAudios?.landmarkHistory,
-                          tt('play.theStory', locale) || "L'histoire du lieu"
+                          tt('play.theStory', locale) || "L'histoire du lieu",
+                          // Sprite du personnage AR du stop courant (monk/ghost/guide_male...).
+                          // arCharacter type vient de gameState.arCharacter.type, qui
+                          // reflète le stop EN COURS dans la session API.
+                          gameState?.arCharacter?.type ?? "guide_male"
                         )}
                         variant="pill"
                         locale={locale}
@@ -1868,7 +1879,8 @@ export default function PlayPage() {
                         onSpeak={(t) => speakWithOverlay(
                           t,
                           gameState.gameWideAudio?.finalRiddle,
-                          tt('play.theGuideSays', locale) || "Le guide vous parle"
+                          tt('play.theGuideSays', locale) || "Le guide vous parle",
+                          "guide_male"
                         )}
                         variant="pill"
                         locale={locale}
