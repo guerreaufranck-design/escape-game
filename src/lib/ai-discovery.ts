@@ -38,10 +38,12 @@ const GEMINI_MODEL_FALLBACK = "gemini-2.5-flash";
 const GEMINI_TIMEOUT_MS = 120_000; // Deep research with grounding takes 30-90s
 const DEFAULT_DIAMETER_CAP_M = 3_500;
 
-/** Max retry attempts on capacity errors (503, 429). 1 attempt + 2 retries = 3 total. */
-const MAX_CAPACITY_RETRIES = 2;
-/** Initial backoff before first retry; doubles on each retry (8s → 16s). */
-const INITIAL_BACKOFF_MS = 8_000;
+/** Max retry attempts on capacity errors (503, 429). 1 attempt + 1 retry = 2 total.
+ *  Réduit à 1 le 2026-05-16 — sur Lugdunum on consommait 24s+ de backoff
+ *  cumulé avant de tomber sur Flash, ce qui contribuait au timeout 504. */
+const MAX_CAPACITY_RETRIES = 1;
+/** Initial backoff before first retry. Single retry → pas de doublement. */
+const INITIAL_BACKOFF_MS = 6_000;
 
 export interface DiscoverThematicPoisParams {
   city: string;

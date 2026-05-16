@@ -77,9 +77,17 @@ async function isAuthorized(request: NextRequest): Promise<boolean> {
   }
 }
 
-// Vercel Pro : up to 800s. Pipeline takes typically 2-3 min for walking,
-// 4-5 min for roadtrip. 300s donne une marge confortable.
-export const maxDuration = 300;
+// Vercel Pro : up to 800s. Pipeline réelle observée pour walking :
+//   - Gemini Pro discovery + retry 503 : 30-180s (variable selon load)
+//   - Patrimonial fill Pass 2 (si Pass 1 court) : 60-180s
+//   - Validation Google Maps : 5-15s
+//   - Claude narration 8 stops : 30-60s
+//   - Claude intro + final_riddle + epilogue (parallèle) : 20-40s
+//   - Insert DB + cleanup : 5s
+//   TOTAL nominal : 2-4 min. Pire cas Gemini-saturé : 5-8 min.
+// On met 800s (13 min) pour absorber les pires cas. La pipeline Inngest
+// async (translations + audio) tourne hors de ce timeout côté Vercel.
+export const maxDuration = 800;
 export const dynamic = "force-dynamic";
 
 interface GameRow {
