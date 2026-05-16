@@ -66,6 +66,10 @@ export async function GET(
       intro_videos: Record<string, string> | null;
       estimated_duration_min: number | null;
       max_hints_per_step: number;
+      // Patrimoine-first UX (migration 027). JSONB multilingue.
+      intro_speech?: Record<string, string> | string | null;
+      final_riddle_text?: Record<string, string> | string | null;
+      final_answer_explanation?: Record<string, string> | string | null;
     };
 
     // Translate game title & description
@@ -360,6 +364,18 @@ export async function GET(
       introVideoUrl = game.intro_videos[locale] || game.intro_videos.fr || game.intro_videos.en || Object.values(game.intro_videos)[0] || null;
     }
 
+    // Patrimoine-first UX fields (migration 027). Translation in-place
+    // via `t()` so the player gets them in the requested locale when
+    // available, fallback to English / first available language otherwise.
+    const introSpeech = t(game.intro_speech ?? null, locale) || null;
+    const finalRiddleText = t(game.final_riddle_text ?? null, locale) || null;
+    // Only expose the explanation once the player has actually resolved
+    // the final riddle (success or 2 fails). Otherwise it's a spoiler.
+    const finalAnswerExplanation =
+      session.final_succeeded === true || session.final_succeeded === false
+        ? t(game.final_answer_explanation ?? null, locale) || null
+        : null;
+
     const gameState: GameState = {
       sessionId: session.id,
       gameId: session.game_id,
@@ -386,6 +402,11 @@ export async function GET(
       hintsUsed: session.total_hints_used,
       completedSteps,
       audioMap: null,
+      introSpeech,
+      finalRiddleText,
+      finalAttemptsUsed: session.final_attempts_used ?? 0,
+      finalSucceeded: session.final_succeeded ?? null,
+      finalAnswerExplanation,
     };
 
     // Pre-generated narration MP3 URLs for the current step (ElevenLabs).

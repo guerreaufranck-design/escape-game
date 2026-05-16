@@ -102,6 +102,18 @@ export default function PlayPage() {
   const [videoWatched, setVideoWatched] = useState(false);
   const [tutorialDone, setTutorialDone] = useState(false);
   const [anecdote, setAnecdote] = useState<{ title: string; text: string } | null>(null);
+  // landmark_history = histoire patrimoniale complète du lieu (vision client 2026-05-16).
+  // Affichée APRÈS la trouvaille AR, AVANT l'anecdote thématique.
+  // Permet la promesse "vous découvrez la ville, vous ne marchez pas pour rien".
+  const [landmarkHistory, setLandmarkHistory] = useState<string | null>(null);
+  // État de l'énigme finale (énigme combinant les indices, 2 essais max).
+  const [finalResult, setFinalResult] = useState<{
+    status: "success" | "failed" | "wrong";
+    attemptsRemaining: number;
+    correctAnswer?: string | null;
+    explanation?: string | null;
+  } | null>(null);
+  const [finalSubmitting, setFinalSubmitting] = useState(false);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [treasure, setTreasure] = useState<{
     text: string;
@@ -275,6 +287,27 @@ export default function PlayPage() {
       }
     }
   }, [hints.length]);
+
+  // Sync finalResult from gameState — if the player reloads the page
+  // after resolving the final puzzle, we restore the explanation card
+  // instead of showing them a fresh input asking to re-answer.
+  useEffect(() => {
+    if (!gameState) return;
+    if (finalResult) return; // already populated in-session
+    if (gameState.finalSucceeded === true) {
+      setFinalResult({
+        status: "success",
+        attemptsRemaining: 0,
+        explanation: gameState.finalAnswerExplanation,
+      });
+    } else if (gameState.finalSucceeded === false) {
+      setFinalResult({
+        status: "failed",
+        attemptsRemaining: 0,
+        explanation: gameState.finalAnswerExplanation,
+      });
+    }
+  }, [gameState, finalResult]);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -461,6 +494,11 @@ export default function PlayPage() {
         if (data.anecdote) {
           setAnecdote({ title: data.stepTitle || "Le saviez-vous ?", text: data.anecdote });
         }
+        // landmark_history (vision 2026-05-16) — histoire patrimoniale du lieu.
+        // Affichée comme PREMIÈRE card après la trouvaille, avant l'anecdote.
+        if (data.landmarkHistory) {
+          setLandmarkHistory(data.landmarkHistory);
+        }
         if (data.treasureReward && data.treasureObject) {
           setTreasure({ text: data.treasureReward, object: data.treasureObject });
         } else {
@@ -550,6 +588,11 @@ export default function PlayPage() {
             title: data.stepTitle || tt('play.didYouKnow', locale) || "Le saviez-vous ?",
             text: data.anecdote,
           });
+        }
+        // landmark_history aussi sur skip — la promesse "découvrir la ville"
+        // s'applique même quand le joueur abandonne l'énigme.
+        if (data.landmarkHistory) {
+          setLandmarkHistory(data.landmarkHistory);
         }
 
         // Pre-fetch next step (background) — same trick as validateStep
@@ -682,8 +725,44 @@ export default function PlayPage() {
             </div>
           </div>
 
-          {/* Scenario / description */}
-          {gameState.gameDescription && (
+          {/* Guide's intro speech (vision 2026-05-16) — played before stop 1.
+              Welcomes the player, sets duration / battery / AR expectations,
+              and explicitly states the patrimoine-first philosophy : "all
+              stops are valuable for the city, not all of them link directly
+              to the theme — time erases traces". This is what manages the
+              "we just walked for nothing" frustration before it can happen. */}
+          {gameState.introSpeech && (
+            <Card className="bg-slate-900/90 border-amber-700/40">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">🎙️</span>
+                    <CardTitle className="text-sm text-amber-300 uppercase tracking-wider">
+                      {tt('play.yourGuide', locale) || "Votre guide"}
+                    </CardTitle>
+                  </div>
+                  {narration.supported && (
+                    <NarrationButton
+                      text={gameState.introSpeech}
+                      speaking={narration.speaking}
+                      currentText={narrationText}
+                      onSpeak={handleSpeak}
+                      variant="pill"
+                      locale={locale}
+                    />
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-slate-200 leading-relaxed text-sm whitespace-pre-line">
+                  {gameState.introSpeech}
+                </p>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* Scenario / description (fallback when no intro_speech) */}
+          {!gameState.introSpeech && gameState.gameDescription && (
             <Card className="bg-slate-900/80 border-slate-800">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
@@ -921,7 +1000,41 @@ export default function PlayPage() {
               </Card>
             )}
 
-            {/* Anecdote card */}
+            {/* Landmark history card — PATRIMOINE first (vision 2026-05-16).
+                Full story of the place independently of the theme. Shown
+                BEFORE the thematic anecdote. This is what makes the player
+                feel they discovered the city, not just walked through it. */}
+            {landmarkHistory && (
+              <Card className="bg-slate-900/95 border-amber-700/50">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🏛️</span>
+                      <CardTitle className="text-sm text-amber-300">
+                        {tt('play.theStory', locale) || "L'histoire du lieu"}
+                      </CardTitle>
+                    </div>
+                    {narration.supported && (
+                      <NarrationButton
+                        text={landmarkHistory}
+                        speaking={narration.speaking}
+                        currentText={narrationText}
+                        onSpeak={(t) => handleSpeak(t)}
+                        variant="pill"
+                        locale={locale}
+                      />
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
+                    {landmarkHistory}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Anecdote card — thematic connection (1-2 sentences) */}
             {anecdote && (
               <Card className="bg-slate-900/95 border-emerald-800/50">
                 <CardHeader className="pb-2">
@@ -965,6 +1078,7 @@ export default function PlayPage() {
                 setNotebookInput("");
                 setStepSuccess(false);
                 setAnecdote(null);
+                setLandmarkHistory(null);
                 setCorrectAnswer(null);
                 setTreasure(null);
                 narration.stop();
@@ -1551,6 +1665,80 @@ export default function PlayPage() {
               </p>
             </div>
 
+            {/* Final riddle brief from the guide (vision 2026-05-16).
+                The guide explains what the player has to do : combine the
+                indices from their notebook to reveal the secret. Shown
+                when the pipeline curated a final_riddle_text — otherwise
+                we keep the legacy "type your dashes" instruction below. */}
+            {gameState.finalRiddleText && (
+              <Card className="bg-slate-900/95 border-amber-700/50">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🎙️</span>
+                      <CardTitle className="text-sm text-amber-300">
+                        {tt('play.theGuideSays', locale) || "Le guide vous parle"}
+                      </CardTitle>
+                    </div>
+                    {narration.supported && (
+                      <NarrationButton
+                        text={gameState.finalRiddleText}
+                        speaking={narration.speaking}
+                        currentText={narrationText}
+                        onSpeak={handleSpeak}
+                        variant="pill"
+                        locale={locale}
+                      />
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-line">
+                    {gameState.finalRiddleText}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Attempts counter (max 2). Hidden when already resolved. */}
+            {finalResult?.status !== "success" && finalResult?.status !== "failed" && (
+              <p className="text-center text-xs text-slate-400">
+                {tt('play.attemptsRemaining', locale) || "Essais restants"} :{" "}
+                <span className="font-bold text-amber-400">
+                  {finalResult?.attemptsRemaining ?? (2 - (gameState.finalAttemptsUsed ?? 0))} / 2
+                </span>
+              </p>
+            )}
+
+            {/* Resolution card — explanation + selfie suggestion */}
+            {(finalResult?.status === "success" || finalResult?.status === "failed") && (
+              <Card className={`bg-slate-900/95 ${finalResult.status === "success" ? "border-emerald-500" : "border-amber-500"}`}>
+                <CardContent className="pt-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <span className="text-2xl">{finalResult.status === "success" ? "🎉" : "💡"}</span>
+                    <h3 className={`text-lg font-bold ${finalResult.status === "success" ? "text-emerald-400" : "text-amber-400"}`}>
+                      {finalResult.status === "success"
+                        ? (tt('play.finalSuccess', locale) || "Bravo, vous avez trouvé !")
+                        : (tt('play.finalRevealed', locale) || "La réponse était...")}
+                    </h3>
+                  </div>
+                  {finalResult.correctAnswer && (
+                    <p className="text-center text-xl font-mono font-bold text-emerald-400">
+                      {finalResult.correctAnswer}
+                    </p>
+                  )}
+                  {finalResult.explanation && (
+                    <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
+                      {finalResult.explanation}
+                    </p>
+                  )}
+                  <p className="text-xs text-amber-300/80 italic text-center pt-2">
+                    📸 {tt('play.selfieSuggestion', locale) || "Et si vous immortalisiez votre aventure avec un selfie devant le dernier lieu ?"}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Notebook recap */}
             <Card className="bg-slate-900/95 border-slate-800">
               <CardContent className="pt-4">
@@ -1596,13 +1784,13 @@ export default function PlayPage() {
               </CardContent>
             </Card>
 
-            {codeResult?.valid ? (
+            {(finalResult?.status === "success" || finalResult?.status === "failed") ? (
               <Button
                 size="lg"
                 className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
                 onClick={() => {
                   setShowFinalCode(false);
-                  router.push(`/results/${sessionId}`);
+                  router.push(`/results/${sessionId}${finalResult.status === "failed" ? "?revealed=1" : ""}`);
                 }}
               >
                 <Trophy className="h-5 w-5 mr-2" />
@@ -1626,26 +1814,50 @@ export default function PlayPage() {
                   <Button
                     size="lg"
                     className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold"
-                    disabled={!finalCodeInput.trim() || validatingCode}
+                    disabled={!finalCodeInput.trim() || finalSubmitting}
                     onClick={async () => {
-                      setValidatingCode(true);
+                      setFinalSubmitting(true);
                       try {
-                        const res = await fetch(`/api/game/${sessionId}/validate-code?lang=${locale}`, {
+                        // Patrimoine-first UX endpoint : tracks 2 attempts,
+                        // returns explanation on resolution (success or 2 fails).
+                        const res = await fetch(`/api/game/${sessionId}/final-answer?lang=${locale}`, {
                           method: "POST",
                           headers: { "Content-Type": "application/json" },
-                          body: JSON.stringify({ code: finalCodeInput.trim() }),
+                          body: JSON.stringify({ answer: finalCodeInput.trim() }),
                         });
                         const data = await res.json();
-                        setCodeResult({ valid: data.valid, message: data.message });
-                        if (data.valid) setParticleBurst((n) => n + 1);
+                        if (data.result === "success") {
+                          setFinalResult({
+                            status: "success",
+                            attemptsRemaining: 0,
+                            correctAnswer: data.correctAnswer,
+                            explanation: data.explanation,
+                          });
+                          setParticleBurst((n) => n + 1);
+                          setCodeResult({ valid: true, message: tt('play.finalSuccess', locale) || "Bravo !" });
+                        } else if (data.result === "failed") {
+                          setFinalResult({
+                            status: "failed",
+                            attemptsRemaining: 0,
+                            correctAnswer: data.correctAnswer,
+                            explanation: data.explanation,
+                          });
+                          setCodeResult({ valid: false, message: tt('play.finalRevealed', locale) || "La bonne réponse était révélée." });
+                        } else {
+                          setFinalResult({
+                            status: "wrong",
+                            attemptsRemaining: data.attemptsRemaining ?? 1,
+                          });
+                          setCodeResult({ valid: false, message: data.message || (tt('play.tryAgain', locale) || "Pas tout à fait — il vous reste un essai") });
+                        }
                       } catch {
                         setCodeResult({ valid: false, message: tt('play.verifyError', locale) });
                       } finally {
-                        setValidatingCode(false);
+                        setFinalSubmitting(false);
                       }
                     }}
                   >
-                    {validatingCode ? (
+                    {finalSubmitting ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
                     ) : (
                       <Send className="h-4 w-4 mr-2" />

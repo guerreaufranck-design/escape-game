@@ -80,6 +80,31 @@ export interface GameState {
   hintsAvailable: number;
   hintsUsed: number;
   completedSteps: CompletedStepInfo[];
+  /**
+   * Discours du guide affiché en page d'intro avant stop 1 (vision client
+   * 2026-05-16). Présentation, durée, philosophie, call-to-action.
+   * Null pour les jeux générés avant la migration 027.
+   */
+  introSpeech: string | null;
+  /**
+   * Texte de l'énigme finale (le brief du guide pour la résolution).
+   * Affiché quand la session passe en status="completed". Null si pas
+   * d'énigme finale curée (legacy → concaténation des indices).
+   */
+  finalRiddleText: string | null;
+  /**
+   * État de résolution de l'énigme finale :
+   *   - finalAttemptsUsed = 0/1/2
+   *   - finalSucceeded = true (succès), false (2 échecs), null (pas encore tenté)
+   */
+  finalAttemptsUsed: number;
+  finalSucceeded: boolean | null;
+  /**
+   * Explication de la bonne réponse (joué après succès OU après 2 échecs).
+   * Null tant que la résolution n'est pas actée — exposé seulement quand
+   * la session est passée en final_resolved_at.
+   */
+  finalAnswerExplanation: string | null;
 }
 
 export interface CompletedStepInfo {

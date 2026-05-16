@@ -265,20 +265,27 @@ export async function POST(
         })
         .eq("id", sessionId);
 
-      // Translate anecdote + title if needed
+      // Translate anecdote + landmark_history + title if needed.
+      // landmark_history is the FULL patrimonial story (2-3 paragraphs)
+      // shown as the FIRST card after the AR find, BEFORE the anecdote
+      // (vision client 2026-05-16). May be null on legacy games.
       let anecdoteText = step.anecdote ? t(step.anecdote, locale) : null;
+      let landmarkHistoryText = step.landmark_history ? t(step.landmark_history, locale) : null;
       let stepTitleText = t(step.title, locale);
 
       if (!isStaticLocale(locale)) {
         const enFields: Record<string, string> = {};
         const enAnecdote = step.anecdote ? (typeof step.anecdote === "object" ? ((step.anecdote as Record<string,string>).en || (step.anecdote as Record<string,string>).fr || Object.values(step.anecdote as Record<string,string>)[0] || "") : String(step.anecdote)) : "";
+        const enLandmark = step.landmark_history ? (typeof step.landmark_history === "object" ? ((step.landmark_history as Record<string,string>).en || (step.landmark_history as Record<string,string>).fr || Object.values(step.landmark_history as Record<string,string>)[0] || "") : String(step.landmark_history)) : "";
         const enTitle = typeof step.title === "object" ? ((step.title as Record<string,string>).en || (step.title as Record<string,string>).fr || Object.values(step.title as Record<string,string>)[0] || "") : String(step.title);
         if (enAnecdote) enFields.anecdote = enAnecdote;
+        if (enLandmark) enFields.landmark_history = enLandmark;
         if (enTitle) enFields.title = enTitle;
         if (Object.keys(enFields).length > 0) {
           try {
             const translated = await translateStepFields(step.id, enFields, locale);
             if (translated.anecdote) anecdoteText = translated.anecdote;
+            if (translated.landmark_history) landmarkHistoryText = translated.landmark_history;
             if (translated.title) stepTitleText = translated.title;
           } catch { /* keep fallback */ }
         }
@@ -328,19 +335,23 @@ export async function POST(
       .update({ current_step: stepOrder + 1 })
       .eq("id", sessionId);
 
-    // Translate anecdote + title if needed
+    // Translate anecdote + landmark_history + title if needed (vision 2026-05-16)
     let anecdoteText = step.anecdote ? t(step.anecdote, locale) : null;
+    let landmarkHistoryText = step.landmark_history ? t(step.landmark_history, locale) : null;
     let stepTitleText = t(step.title, locale);
 
     if (!isStaticLocale(locale)) {
       const enFields: Record<string, string> = {};
       const enAnecdote = step.anecdote ? (typeof step.anecdote === "object" ? ((step.anecdote as Record<string,string>).en || (step.anecdote as Record<string,string>).fr || Object.values(step.anecdote as Record<string,string>)[0] || "") : String(step.anecdote)) : "";
+      const enLandmark = step.landmark_history ? (typeof step.landmark_history === "object" ? ((step.landmark_history as Record<string,string>).en || (step.landmark_history as Record<string,string>).fr || Object.values(step.landmark_history as Record<string,string>)[0] || "") : String(step.landmark_history)) : "";
       const enTitle = typeof step.title === "object" ? ((step.title as Record<string,string>).en || (step.title as Record<string,string>).fr || Object.values(step.title as Record<string,string>)[0] || "") : String(step.title);
       if (enAnecdote) enFields.anecdote = enAnecdote;
+      if (enLandmark) enFields.landmark_history = enLandmark;
       if (enTitle) enFields.title = enTitle;
       if (Object.keys(enFields).length > 0) {
         try {
           const translated = await translateStepFields(step.id, enFields, locale);
+          if (translated.landmark_history) landmarkHistoryText = translated.landmark_history;
           if (translated.anecdote) anecdoteText = translated.anecdote;
           if (translated.title) stepTitleText = translated.title;
         } catch { /* keep fallback */ }
@@ -378,6 +389,7 @@ export async function POST(
       nextStep: stepOrder + 1,
       completed: false,
       anecdote: anecdoteText,
+      landmarkHistory: landmarkHistoryText,
       stepTitle: stepTitleText,
       answerText,
       treasureReward,
