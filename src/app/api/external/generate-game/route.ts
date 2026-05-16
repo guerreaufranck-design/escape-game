@@ -12,4 +12,8 @@
  */
 
 export { POST } from "@/app/api/generate-game/route";
-export const maxDuration = 600;
+// 2026-05-16 — bumped 600 → 800 (Vercel Pro max) après timeout sur
+// Aegina (slug les-tortues-d-argent) où la pipeline a dépassé 10 min
+// avec Gemini Pro saturé en 503. Aligné avec maxDuration de
+// /api/admin/regenerate-game pour homogénéité.
+export const maxDuration = 800;

@@ -31,8 +31,10 @@ import { sendPipelineFailureAlert, sendNeedsReviewAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
 import { inngest } from "@/lib/inngest-client";
 
-// Pipeline can take 5-7 minutes (Perplexity deep research is slow)
-export const maxDuration = 600; // 10 minutes max
+// Pipeline can take 5-13 minutes (Perplexity deep research + Gemini Pro
+// grounded research + patrimonial fill + multiple Claude calls + audio).
+// 2026-05-16 — bumped 600 → 800 (Vercel Pro max) après timeout Aegina.
+export const maxDuration = 800;
 
 export async function POST(request: NextRequest) {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
