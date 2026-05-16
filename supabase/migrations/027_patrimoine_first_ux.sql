@@ -121,3 +121,29 @@ COMMENT ON COLUMN game_sessions.final_succeeded IS
   'TRUE=succès, FALSE=2 échecs (épilogue echec), NULL=pas encore tenté.';
 COMMENT ON COLUMN game_sessions.final_resolved_at IS
   'Timestamp de la résolution finale (succès ou échec).';
+
+-- ─────────────────────────────────────────────────────────────────────
+-- 4. Table `audio_cache` — étendre les slots pour les nouveaux blocs
+-- ─────────────────────────────────────────────────────────────────────
+-- Le CHECK constraint actuel autorise : character, anecdote, epilogue, riddle.
+-- On ajoute : landmark_history, intro_speech, final_riddle, final_explanation.
+-- Le step_order utilise 0 pour les slots "game-wide" (intro, final).
+
+ALTER TABLE audio_cache
+  DROP CONSTRAINT IF EXISTS audio_cache_slot_check;
+
+ALTER TABLE audio_cache
+  ADD CONSTRAINT audio_cache_slot_check
+  CHECK (slot IN (
+    'character',
+    'anecdote',
+    'epilogue',
+    'riddle',
+    'landmark_history',
+    'intro_speech',
+    'final_riddle',
+    'final_explanation'
+  ));
+
+COMMENT ON CONSTRAINT audio_cache_slot_check ON audio_cache IS
+  'Slots audio valides. Ajoutés en 2026-05-16 (vision client) : landmark_history (par stop), intro_speech (avant stop 1, step_order=0), final_riddle (énigme finale, step_order=0), final_explanation (épilogue conditionnel, step_order=0).';

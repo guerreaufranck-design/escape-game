@@ -146,7 +146,16 @@ export function buildAudioPath(
   gameId: string,
   language: string,
   stepOrder: number,
-  slot: "character" | "anecdote" | "epilogue" | "riddle",
+  slot:
+    | "character"
+    | "anecdote"
+    | "epilogue"
+    | "riddle"
+    // Patrimoine-first (migration 027 / 2026-05-16)
+    | "landmark_history"
+    | "intro_speech"
+    | "final_riddle"
+    | "final_explanation",
 ): string {
   return `${gameId}/${language}/step${stepOrder}_${slot}.mp3`;
 }

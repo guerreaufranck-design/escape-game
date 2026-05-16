@@ -746,7 +746,7 @@ export default function PlayPage() {
                       text={gameState.introSpeech}
                       speaking={narration.speaking}
                       currentText={narrationText}
-                      onSpeak={handleSpeak}
+                      onSpeak={(t) => handleSpeak(t, gameState.gameWideAudio?.introSpeech)}
                       variant="pill"
                       locale={locale}
                     />
@@ -1019,7 +1019,7 @@ export default function PlayPage() {
                         text={landmarkHistory}
                         speaking={narration.speaking}
                         currentText={narrationText}
-                        onSpeak={(t) => handleSpeak(t)}
+                        onSpeak={(t) => handleSpeak(t, gameState.audioMap?.landmarkHistory)}
                         variant="pill"
                         locale={locale}
                       />
@@ -1685,7 +1685,7 @@ export default function PlayPage() {
                         text={gameState.finalRiddleText}
                         speaking={narration.speaking}
                         currentText={narrationText}
-                        onSpeak={handleSpeak}
+                        onSpeak={(t) => handleSpeak(t, gameState.gameWideAudio?.finalRiddle)}
                         variant="pill"
                         locale={locale}
                       />

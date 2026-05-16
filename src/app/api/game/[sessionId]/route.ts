@@ -426,6 +426,34 @@ export async function GET(
           riddle: audioRows.find((r) => r.slot === "riddle")?.public_url || null,
           character: audioRows.find((r) => r.slot === "character")?.public_url || null,
           anecdote: audioRows.find((r) => r.slot === "anecdote")?.public_url || null,
+          landmarkHistory:
+            audioRows.find((r) => r.slot === "landmark_history")?.public_url || null,
+        };
+      }
+    }
+
+    // Game-wide audio slots (step_order=0) — intro_speech, final_riddle,
+    // final_explanation. Fetched separately to avoid coupling them to the
+    // current step. Useful for the intro screen + final puzzle overlay
+    // (vision 2026-05-16).
+    {
+      const { data: gameWideAudio } = await supabase
+        .from("audio_cache")
+        .select("slot, public_url")
+        .eq("game_id", session.game_id)
+        .eq("language", locale)
+        .eq("step_order", 0);
+
+      if (gameWideAudio && gameWideAudio.length > 0) {
+        gameState.gameWideAudio = {
+          introSpeech:
+            gameWideAudio.find((r) => r.slot === "intro_speech")?.public_url || null,
+          finalRiddle:
+            gameWideAudio.find((r) => r.slot === "final_riddle")?.public_url || null,
+          finalExplanation:
+            gameWideAudio.find((r) => r.slot === "final_explanation")?.public_url || null,
+          epilogue:
+            gameWideAudio.find((r) => r.slot === "epilogue")?.public_url || null,
         };
       }
     }

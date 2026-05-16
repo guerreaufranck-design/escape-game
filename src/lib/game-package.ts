@@ -38,7 +38,18 @@ export interface PackageResult {
 
 interface AudioJob {
   stepOrder: number;
-  slot: "character" | "anecdote" | "epilogue" | "riddle";
+  slot:
+    | "character"
+    | "anecdote"
+    | "epilogue"
+    | "riddle"
+    // Patrimoine-first UX (migration 027 / 2026-05-16) :
+    //   - landmark_history (per stop)
+    //   - intro_speech / final_riddle / final_explanation (game-wide, stepOrder=0)
+    | "landmark_history"
+    | "intro_speech"
+    | "final_riddle"
+    | "final_explanation";
   text: string;
   voiceId: string;
 }
@@ -105,7 +116,9 @@ export async function prepareGamePackage(
   // Gemini round-trip.
   const { data: game, error: gameErr } = await supabase
     .from("games")
-    .select("id, title, description, epilogue_title, epilogue_text")
+    .select(
+      "id, title, description, epilogue_title, epilogue_text, intro_speech, final_riddle_text, final_answer_explanation",
+    )
     .eq("id", gameId)
     .single();
 
@@ -177,7 +190,7 @@ export async function prepareGamePackage(
   // no inline Gemini calls during the playthrough.
   const { data: steps, error: stepsErr } = await supabase
     .from("game_steps")
-    .select("id, step_order, title, riddle_text, anecdote, ar_character_dialogue, ar_character_type, ar_treasure_reward, hints, route_attractions")
+    .select("id, step_order, title, riddle_text, anecdote, landmark_history, ar_character_dialogue, ar_character_type, ar_treasure_reward, hints, route_attractions")
     .eq("game_id", gameId)
     .order("step_order");
 
@@ -228,10 +241,13 @@ export async function prepareGamePackage(
     const englishCharacter = t(step.ar_character_dialogue, "en");
     const englishAnecdote = t(step.anecdote, "en");
     const englishTreasure = t(step.ar_treasure_reward, "en");
+    // Patrimoine-first (vision 2026-05-16) : histoire complète du lieu.
+    const englishLandmarkHistory = t(step.landmark_history, "en");
 
     let riddleText = englishRiddle;
     let characterText = englishCharacter;
     let anecdoteText = englishAnecdote;
+    let landmarkHistoryText = englishLandmarkHistory;
 
     if (language !== "en") {
       const stepFields: Record<string, string> = {};
@@ -240,6 +256,7 @@ export async function prepareGamePackage(
       if (englishCharacter) stepFields.ar_character_dialogue = englishCharacter;
       if (englishAnecdote) stepFields.anecdote = englishAnecdote;
       if (englishTreasure) stepFields.ar_treasure_reward = englishTreasure;
+      if (englishLandmarkHistory) stepFields.landmark_history = englishLandmarkHistory;
       if (Object.keys(stepFields).length > 0) {
         try {
           const translated = await translateStepFields(
@@ -252,6 +269,7 @@ export async function prepareGamePackage(
           if (translated.ar_character_dialogue)
             characterText = translated.ar_character_dialogue;
           if (translated.anecdote) anecdoteText = translated.anecdote;
+          if (translated.landmark_history) landmarkHistoryText = translated.landmark_history;
         } catch (err) {
           console.warn(
             `[game-package] step ${step.step_order} batch translation failed: ${err instanceof Error ? err.message : err}`,
@@ -372,7 +390,83 @@ export async function prepareGamePackage(
     } else if (cachedSlots.has(`${step.step_order}:anecdote`)) {
       audioSkipped++;
     }
+
+    // landmark_history (patrimoine first, vision 2026-05-16) — voice narrator
+    const landmarkFailed = isTranslationFallback(
+      landmarkHistoryText,
+      englishLandmarkHistory,
+      language,
+    );
+    if (
+      landmarkHistoryText?.trim() &&
+      !cachedSlots.has(`${step.step_order}:landmark_history`) &&
+      !landmarkFailed
+    ) {
+      jobs.push({
+        stepOrder: step.step_order,
+        slot: "landmark_history",
+        text: landmarkHistoryText,
+        voiceId: voiceFor("narrator", language),
+      });
+    } else if (cachedSlots.has(`${step.step_order}:landmark_history`)) {
+      audioSkipped++;
+    }
   } // end steps loop
+
+  // ─── Game-wide narrative slots (step_order = 0) ───
+  // intro_speech / final_riddle / final_explanation = monologues du guide.
+  // Voiced with the narrator voice. Translation handled via translateGameField
+  // since these are JSONB columns on `games`, not on `game_steps`.
+  const gameWideSlots: Array<{
+    column: "intro_speech" | "final_riddle_text" | "final_answer_explanation";
+    slot: "intro_speech" | "final_riddle" | "final_explanation";
+  }> = [
+    { column: "intro_speech", slot: "intro_speech" },
+    { column: "final_riddle_text", slot: "final_riddle" },
+    { column: "final_answer_explanation", slot: "final_explanation" },
+  ];
+
+  for (const { column, slot } of gameWideSlots) {
+    const englishText = t((game as Record<string, unknown>)[column], "en");
+    if (!englishText) continue;
+
+    let translatedText = englishText;
+    if (language !== "en") {
+      try {
+        translatedText = await translateGameField(
+          game.id,
+          "games",
+          column,
+          englishText,
+          language,
+        );
+      } catch (err) {
+        console.warn(
+          `[game-package] ${column} translation failed: ${err instanceof Error ? err.message : err} — keeping EN`,
+        );
+      }
+    }
+
+    const failed = isTranslationFallback(translatedText, englishText, language);
+    if (failed) {
+      console.warn(
+        `[game-package] ${column} translation FALLBACK_TO_EN → skipping audio for ${slot}`,
+      );
+      errors.push(`${column} translation_fallback_to_en — audio not generated`);
+      continue;
+    }
+
+    if (translatedText?.trim() && !cachedSlots.has(`0:${slot}`)) {
+      jobs.push({
+        stepOrder: 0,
+        slot,
+        text: translatedText,
+        voiceId: voiceFor("narrator", language),
+      });
+    } else if (cachedSlots.has(`0:${slot}`)) {
+      audioSkipped++;
+    }
+  }
 
   // 5. Epilogue (slot=epilogue, conventional step_order=0)
   if (game.epilogue_text) {

@@ -66,6 +66,20 @@ export interface GameState {
     character: string | null;
     /** Step anecdote (historical fact after validation) */
     anecdote: string | null;
+    /** Patrimoine-first (2026-05-16) — full landmark history voiced */
+    landmarkHistory: string | null;
+  } | null;
+  /**
+   * Audio for game-wide narrative blocks (step_order=0 in audio_cache).
+   * Available throughout the game, not tied to the current step. Vision
+   * 2026-05-16 — used by the intro page (before stop 1) and final puzzle
+   * overlay (after last stop).
+   */
+  gameWideAudio?: {
+    introSpeech: string | null;
+    finalRiddle: string | null;
+    finalExplanation: string | null;
+    epilogue: string | null;
   } | null;
   /** Touristic POIs the player walks past on the way to this step.
    *  Surfaced as an expandable card "Sur le chemin, ne manque pas..."
