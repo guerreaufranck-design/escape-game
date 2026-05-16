@@ -51,16 +51,30 @@ export function calculateBearing(
 }
 
 /**
- * Obfuscate GPS coordinates by rounding to ~1km precision.
- * This prevents clients from knowing the exact target location.
+ * "Obfuscate" GPS coordinates by light rounding (~1.1 m precision).
+ *
+ * Historiquement on roundait à 2 décimales (~1 km) avec l'intention
+ * "ne pas exposer le pin exact au client pour éviter la triche". Sauf
+ * que pour un jeu de scan AR de façade, le joueur DOIT être pile à la
+ * bonne adresse pour que la caméra cible le bon mur — un écart de
+ * 1 km rend le radar et la boussole AR contradictoires avec la validation
+ * serveur (rayon 30 m sur les vraies coordonnées).
+ *
+ * 2026-05-16 — passé à 5 décimales (≈ 1.1 m de précision = fonctionnellement
+ * équivalent à coords réelles). L'anti-cheat est déjà couvert par le
+ * validation_radius_meters serveur et par la nécessité physique de
+ * scanner la façade en AR.
+ *
+ * Fonction conservée pour rétrocompat et pour pouvoir réactiver une
+ * obfuscation forte si on en a un jour le besoin.
  */
 export function obfuscateCoordinates(
   lat: number,
   lon: number
 ): { latitude: number; longitude: number } {
   return {
-    latitude: Math.round(lat * 100) / 100,
-    longitude: Math.round(lon * 100) / 100,
+    latitude: Math.round(lat * 100000) / 100000,
+    longitude: Math.round(lon * 100000) / 100000,
   };
 }
 
