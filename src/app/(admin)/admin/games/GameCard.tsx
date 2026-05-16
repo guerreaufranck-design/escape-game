@@ -62,6 +62,9 @@ interface RefreshResult {
 
 interface GameCardProps {
   gameId: string;
+  /** Slug du jeu — requis pour la régénération complète. Null pour les
+   *  vieux jeux sans slug (création antérieure à la migration 005). */
+  slug: string | null;
   title: string;
   description: string | null;
   city: string | null;
@@ -69,6 +72,20 @@ interface GameCardProps {
   isPublished: boolean;
   coverImage: string | null;
   stepCount: number;
+}
+
+interface RegenerateResult {
+  ok: boolean;
+  newGameId?: string;
+  oldGameId?: string;
+  stopCount?: number;
+  stops?: Array<{ order: number; name: string; lat: number; lon: number }>;
+  codesMigrated?: number;
+  sessionsReset?: number;
+  discoverySource?: string;
+  durationSec?: number;
+  warnings?: string[];
+  error?: string;
 }
 
 const BADGE_STYLES: Record<Health["level"], { bg: string; text: string; icon: typeof CheckCircle2; label: string }> = {
@@ -94,6 +111,7 @@ const BADGE_STYLES: Record<Health["level"], { bg: string; text: string; icon: ty
 
 export function GameCard({
   gameId,
+  slug,
   title,
   description,
   city,
@@ -106,6 +124,8 @@ export function GameCard({
   const [healthError, setHealthError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [lastResult, setLastResult] = useState<RefreshResult | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  const [regenResult, setRegenResult] = useState<RegenerateResult | null>(null);
 
   const loadHealth = useCallback(async () => {
     try {
@@ -124,6 +144,78 @@ export function GameCard({
   useEffect(() => {
     void loadHealth();
   }, [loadHealth]);
+
+  /**
+   * Régénération COMPLÈTE du jeu via /api/admin/regenerate-game.
+   *
+   * Behavior (vision client 2026-05-16) :
+   *   - Le jeu existant est unpublished (préservé pour audit, pas supprimé)
+   *   - Un NOUVEAU jeu avec même slug est généré via pipeline patrimoine-first
+   *   - Les codes activation déjà envoyés aux clients sont MIGRÉS vers le
+   *     nouveau gameId — donc TOUS RESTENT VALIDES après régénération
+   *   - Les sessions actives (joueur en cours) sont marquées 'abandoned'
+   *     pour qu'elles ne se retrouvent pas orphelines (le joueur peut
+   *     relancer son code et tomber sur le nouveau jeu)
+   */
+  const handleRegenerate = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (regenerating || refreshing) return;
+    if (!slug) {
+      setRegenResult({
+        ok: false,
+        error:
+          "Ce jeu n'a pas de slug — impossible de le régénérer (legacy avant migration 005)",
+      });
+      return;
+    }
+    const confirmed = window.confirm(
+      `⚠️ RÉGÉNÉRATION COMPLÈTE de "${title}"\n\n` +
+        `Cela va :\n` +
+        `  • Supprimer les ${stepCount} stops actuels\n` +
+        `  • Lancer le pipeline patrimoine-first (Gemini + Claude + ElevenLabs)\n` +
+        `  • Générer 7-8 nouveaux stops basés sur les monuments majeurs de la ville\n` +
+        `  • Migrer les codes activation existants vers le nouveau jeu (ils resteront valides)\n` +
+        `  • Abandonner les sessions joueur en cours (elles devront relancer)\n\n` +
+        `Durée estimée : 3-5 minutes.\n\n` +
+        `Confirmer la régénération ?`,
+    );
+    if (!confirmed) return;
+    setRegenerating(true);
+    setRegenResult(null);
+    setLastResult(null);
+    try {
+      const res = await fetch(`/api/admin/regenerate-game`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          // Le bouton admin appelle directement le backend authentifié par
+          // session admin (cookies). L'endpoint accepte aussi le Bearer
+          // EXTERNAL_API_SECRET pour les calls CLI — donc on n'envoie pas
+          // de header Authorization ici, le middleware admin valide via
+          // session cookie.
+        },
+        body: JSON.stringify({ slug, resetSessions: true }),
+      });
+      const data = (await res.json()) as RegenerateResult;
+      if (!res.ok || !data.ok) {
+        setRegenResult({
+          ok: false,
+          error: data.error || `HTTP ${res.status}`,
+        });
+      } else {
+        setRegenResult(data);
+        await loadHealth();
+      }
+    } catch (err) {
+      setRegenResult({
+        ok: false,
+        error: err instanceof Error ? err.message : "unknown error",
+      });
+    } finally {
+      setRegenerating(false);
+    }
+  };
 
   const handleRefresh = async (e: React.MouseEvent) => {
     e.preventDefault();
@@ -247,10 +339,10 @@ export function GameCard({
           )}
         </div>
 
-        {/* Refresh button */}
+        {/* Refresh button — patch gaps only (hints + missing translations/audios) */}
         <button
           onClick={handleRefresh}
-          disabled={refreshing || !health}
+          disabled={refreshing || regenerating || !health}
           className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-900 px-2.5 py-1 text-xs font-medium text-zinc-200 transition hover:border-emerald-700 hover:text-emerald-400 disabled:opacity-40 disabled:cursor-not-allowed"
           title={
             health?.level === "ok"
@@ -265,7 +357,104 @@ export function GameCard({
           )}
           {refreshing ? "En cours…" : "Mettre à jour"}
         </button>
+
+        {/* Regenerate button — full pipeline rerun (patrimoine-first).
+            Visible uniquement si slug présent. Distinct visuellement
+            (orange) pour qu'on ne confonde pas avec le bouton bleu de
+            mise à jour. Confirmation modale au clic. */}
+        {slug && (
+          <button
+            onClick={handleRegenerate}
+            disabled={regenerating || refreshing}
+            className="inline-flex items-center gap-1.5 rounded-md border border-orange-700/60 bg-orange-950/40 px-2.5 py-1 text-xs font-medium text-orange-300 transition hover:border-orange-500 hover:text-orange-200 disabled:opacity-40 disabled:cursor-not-allowed"
+            title="Régénération complète du jeu (Gemini + Claude + ElevenLabs). Les codes activation existants restent valides."
+          >
+            {regenerating ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="size-3.5" />
+            )}
+            {regenerating ? "Régénération…" : "Régénérer"}
+          </button>
+        )}
       </div>
+
+      {/* Regenerate result — affiche le résumé du nouveau jeu ou l'erreur */}
+      {regenResult && (
+        <div
+          className={`border-t border-zinc-800 px-5 py-3 text-xs ${
+            regenResult.ok ? "bg-emerald-950/30 text-emerald-200" : "bg-red-950/30 text-red-200"
+          }`}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="space-y-1 min-w-0">
+              <p className="font-semibold">
+                {regenResult.ok ? "♻️ Régénération terminée" : "✗ Régénération échouée"}
+                {regenResult.durationSec !== undefined && (
+                  <span className="ml-2 font-normal opacity-70">
+                    ({regenResult.durationSec}s)
+                  </span>
+                )}
+              </p>
+              {regenResult.ok ? (
+                <>
+                  <p className="opacity-80">
+                    Nouveau gameId : <span className="font-mono">{regenResult.newGameId?.slice(0, 8)}…</span>
+                    {" "}· {regenResult.stopCount} stops · source: {regenResult.discoverySource}
+                  </p>
+                  {regenResult.codesMigrated !== undefined && regenResult.codesMigrated > 0 && (
+                    <p className="opacity-80">
+                      ✓ {regenResult.codesMigrated} code(s) activation migré(s) (toujours valides)
+                    </p>
+                  )}
+                  {regenResult.sessionsReset !== undefined && regenResult.sessionsReset > 0 && (
+                    <p className="opacity-80">
+                      ⓘ {regenResult.sessionsReset} session(s) abandonnée(s)
+                    </p>
+                  )}
+                  {regenResult.stops && regenResult.stops.length > 0 && (
+                    <details className="mt-2 opacity-90">
+                      <summary className="cursor-pointer hover:text-emerald-100">
+                        Voir les {regenResult.stops.length} nouveaux stops
+                      </summary>
+                      <ul className="mt-1 space-y-0.5 pl-3">
+                        {regenResult.stops.map((s) => (
+                          <li key={s.order} className="font-mono text-[11px]">
+                            {s.order}. {s.name} · {s.lat.toFixed(4)},{s.lon.toFixed(4)}
+                          </li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                  {regenResult.warnings && regenResult.warnings.length > 0 && (
+                    <details className="mt-1 opacity-80">
+                      <summary className="cursor-pointer">⚠ {regenResult.warnings.length} warning(s)</summary>
+                      <ul className="mt-1 space-y-0.5 pl-3 text-[11px]">
+                        {regenResult.warnings.map((w, i) => (
+                          <li key={i}>· {w}</li>
+                        ))}
+                      </ul>
+                    </details>
+                  )}
+                </>
+              ) : (
+                <p className="opacity-90">{regenResult.error}</p>
+              )}
+            </div>
+            <button
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setRegenResult(null);
+              }}
+              className="text-xs opacity-60 hover:opacity-100 shrink-0"
+              title="Fermer"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Last refresh result — inline, above the card so it's seen
           without scrolling. Auto-collapses after a few seconds. */}

@@ -45,6 +45,7 @@ export default async function AdminGamesPage() {
               <GameCard
                 key={game.id}
                 gameId={game.id}
+                slug={game.slug ?? null}
                 title={t(game.title)}
                 description={game.description ? t(game.description) : null}
                 city={game.city ?? null}

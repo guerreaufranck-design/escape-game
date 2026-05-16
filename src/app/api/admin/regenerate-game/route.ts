@@ -40,11 +40,42 @@
  */
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient as createServerClient } from "@/lib/supabase/server";
 import { validateApiKey } from "@/lib/external-auth";
 import {
   generateGameFromTemplate,
   type GameTemplate,
 } from "@/lib/game-pipeline";
+
+/**
+ * Authorize the request via EITHER :
+ *   - Bearer EXTERNAL_API_SECRET (for CLI / scripts)
+ *   - Authenticated admin session cookie (for the admin UI in the browser)
+ *
+ * Returns true if EITHER auth method validates.
+ */
+async function isAuthorized(request: NextRequest): Promise<boolean> {
+  // Path 1 : Bearer EXTERNAL_API_SECRET — cheap, sync
+  if (validateApiKey(request)) return true;
+
+  // Path 2 : Admin session via Supabase auth cookies + admin_users table
+  try {
+    const supabase = await createServerClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return false;
+    const admin = createAdminClient();
+    const { data: adminRow } = await admin
+      .from("admin_users")
+      .select("id")
+      .eq("id", user.id)
+      .maybeSingle();
+    return Boolean(adminRow);
+  } catch {
+    return false;
+  }
+}
 
 // Vercel Pro : up to 800s. Pipeline takes typically 2-3 min for walking,
 // 4-5 min for roadtrip. 300s donne une marge confortable.
@@ -82,9 +113,9 @@ function reconstructNarrative(game: GameRow): string {
 export async function POST(request: NextRequest) {
   const t0 = Date.now();
 
-  if (!validateApiKey(request)) {
+  if (!(await isAuthorized(request))) {
     return NextResponse.json(
-      { error: "Clé API invalide ou manquante" },
+      { error: "Non autorisé — Bearer EXTERNAL_API_SECRET ou session admin requise" },
       { status: 401 },
     );
   }
