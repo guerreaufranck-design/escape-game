@@ -53,7 +53,7 @@ import {
   selectStopsByGeometry,
   computeAdaptiveMinDist,
 } from "./parcours-selection";
-import { discoverThematicPois } from "./ai-discovery";
+import { discoverThematicPois, discoverPatrimonialFill } from "./ai-discovery";
 import { validateThematicPois } from "./poi-validation";
 
 /**
@@ -566,20 +566,94 @@ export async function discoverParcours(
         });
 
         console.log(
-          `[discoverParcours] Gemini discovery: ${rawPois.length} raw → ${validation.candidates.length} validated (${validation.rejected.length} rejected during validation)`,
+          `[discoverParcours] Gemini Pass 1 (thematic): ${rawPois.length} raw → ${validation.candidates.length} validated (${validation.rejected.length} rejected during validation)`,
         );
 
-        if (validation.candidates.length >= minStops) {
-          aiCandidates = validation.candidates;
-          thematicContext = validation.themedContext;
+        // ── PASS 2 : Patrimoine-first fill (vision 2026-05-16) ──
+        // Si la passe thématique a sous-livré, on demande à Gemini les
+        // MONUMENTS MAJEURS de la ville (théme optionnel) plutôt que
+        // de combler avec Google Places type=tourist_attraction qui
+        // ramène hotels/restos/parks.
+        //
+        // Critère de déclenchement : on a moins que `stopCount` POIs
+        // validés (et non minStops — on vise toujours le nombre
+        // demandé, le fallback patrimoine c'est mieux que d'aller en
+        // dessous du target).
+        let mergedCandidates = validation.candidates;
+        let mergedContext = validation.themedContext;
+        const mergedRejected = validation.rejected;
+        if (mergedCandidates.length < params.stopCount) {
+          const missing = params.stopCount - mergedCandidates.length;
+          // On demande 50% de plus que le manquant pour absorber les
+          // rejets validation/diameter.
+          const targetFill = Math.ceil(missing * 1.5);
+          const excluded = mergedCandidates.map((c) => c.name);
+          console.log(
+            `[discoverParcours] Gemini Pass 1 short (${mergedCandidates.length}/${params.stopCount}). Launching Pass 2 patrimonial-fill for ${targetFill} more POIs (excluded ${excluded.length})`,
+          );
+
+          const fillPois = await discoverPatrimonialFill(
+            {
+              city: params.city,
+              country: params.country,
+              title: params.theme,
+              theme: params.theme,
+              themeDescription: params.themeDescription,
+              startPoint: params.startPoint,
+              stopCount: targetFill,
+              diameterCapM: DIAMETER_CAP_M,
+            },
+            excluded,
+            targetFill,
+          );
+
+          if (fillPois.length > 0) {
+            const fillValidation = await validateThematicPois(fillPois, {
+              city: params.city,
+              country: params.country,
+              startPoint: params.startPoint,
+              diameterCapM: DIAMETER_CAP_M,
+            });
+            console.log(
+              `[discoverParcours] Gemini Pass 2 (patrimonial fill): ${fillPois.length} raw → ${fillValidation.candidates.length} validated`,
+            );
+            // Dédup par placeId entre Pass 1 et Pass 2
+            const seen = new Set(mergedCandidates.map((c) => c.placeId));
+            for (let i = 0; i < fillValidation.candidates.length; i++) {
+              const cand = fillValidation.candidates[i];
+              const ctx = fillValidation.themedContext[i];
+              if (seen.has(cand.placeId)) continue;
+              seen.add(cand.placeId);
+              mergedCandidates = [...mergedCandidates, cand];
+              mergedContext = [...mergedContext, ctx];
+            }
+            for (const r of fillValidation.rejected) {
+              mergedRejected.push({
+                name: r.name,
+                reason: `Pass 2 fill rejected: ${r.reason}`,
+              });
+            }
+            console.log(
+              `[discoverParcours] After Pass 2 merge: ${mergedCandidates.length} POIs total`,
+            );
+          } else {
+            console.warn(
+              `[discoverParcours] Pass 2 patrimonial-fill returned 0 POIs — continuing with what Pass 1 gave us`,
+            );
+          }
+        }
+
+        if (mergedCandidates.length >= minStops) {
+          aiCandidates = mergedCandidates;
+          thematicContext = mergedContext;
           discoverySource = "gemini_thematic";
           // Les rejets de validation alimentent le log audit
-          for (const r of validation.rejected) {
+          for (const r of mergedRejected) {
             rejected.push({ name: r.name, reason: r.reason });
           }
         } else {
           console.warn(
-            `[discoverParcours] Gemini pool too small (${validation.candidates.length} < ${minStops}) — falling back to Google Places legacy flow`,
+            `[discoverParcours] Gemini pool too small even after Pass 2 (${mergedCandidates.length} < ${minStops}) — falling back to Google Places legacy flow`,
           );
         }
       } else {

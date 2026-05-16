@@ -273,7 +273,12 @@ export async function POST(
       let landmarkHistoryText = step.landmark_history ? t(step.landmark_history, locale) : null;
       let stepTitleText = t(step.title, locale);
 
-      if (!isStaticLocale(locale)) {
+      // 2026-05-16 — bug texte EN sur audio ES.
+      // Avant : isStaticLocale court-circuitait pour fr/es/de/it.
+      // Maintenant : on traduit pour TOUTES les langues != en, parce
+      // que le contenu DB est stocké en plain English uniquement.
+      // translateStepFields cache donc le coût Gemini = 1 fois par stop.
+      if (locale !== "en") {
         const enFields: Record<string, string> = {};
         const enAnecdote = step.anecdote ? (typeof step.anecdote === "object" ? ((step.anecdote as Record<string,string>).en || (step.anecdote as Record<string,string>).fr || Object.values(step.anecdote as Record<string,string>)[0] || "") : String(step.anecdote)) : "";
         const enLandmark = step.landmark_history ? (typeof step.landmark_history === "object" ? ((step.landmark_history as Record<string,string>).en || (step.landmark_history as Record<string,string>).fr || Object.values(step.landmark_history as Record<string,string>)[0] || "") : String(step.landmark_history)) : "";

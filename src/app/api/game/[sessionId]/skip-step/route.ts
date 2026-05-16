@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
+import { t, detectLocale } from "@/lib/i18n";
 import { translateStepFields } from "@/lib/translate-service";
 import { calculateScore } from "@/lib/scoring";
 
@@ -19,31 +19,40 @@ async function resolveAnecdoteAndTitle(
     id: string;
     anecdote: unknown;
     title: unknown;
+    landmark_history?: unknown;
   },
   locale: string,
-): Promise<{ anecdoteText: string | null; stepTitleText: string }> {
+): Promise<{
+  anecdoteText: string | null;
+  stepTitleText: string;
+  landmarkHistoryText: string | null;
+}> {
   let anecdoteText = step.anecdote ? t(step.anecdote, locale) : null;
   let stepTitleText = t(step.title, locale);
+  let landmarkHistoryText = step.landmark_history
+    ? t(step.landmark_history, locale)
+    : null;
 
-  if (!isStaticLocale(locale)) {
+  // 2026-05-16 — bug texte EN sur audio ES sur les langues statiques.
+  // Avant on bypassait pour fr/es/de/it (isStaticLocale). Maintenant on
+  // traduit pour TOUT locale != en — translateStepFields cache donc
+  // appel Gemini = 1 fois par stop par langue.
+  if (locale !== "en") {
+    const pickEN = (val: unknown): string => {
+      if (!val) return "";
+      if (typeof val === "object" && val !== null) {
+        const r = val as Record<string, string>;
+        return r.en || r.fr || Object.values(r)[0] || "";
+      }
+      return String(val);
+    };
     const enFields: Record<string, string> = {};
-    const enAnecdote = step.anecdote
-      ? typeof step.anecdote === "object"
-        ? (step.anecdote as Record<string, string>).en ||
-          (step.anecdote as Record<string, string>).fr ||
-          Object.values(step.anecdote as Record<string, string>)[0] ||
-          ""
-        : String(step.anecdote)
-      : "";
-    const enTitle =
-      typeof step.title === "object"
-        ? (step.title as Record<string, string>).en ||
-          (step.title as Record<string, string>).fr ||
-          Object.values(step.title as Record<string, string>)[0] ||
-          ""
-        : String(step.title);
+    const enAnecdote = pickEN(step.anecdote);
+    const enTitle = pickEN(step.title);
+    const enLandmark = pickEN(step.landmark_history);
     if (enAnecdote) enFields.anecdote = enAnecdote;
     if (enTitle) enFields.title = enTitle;
+    if (enLandmark) enFields.landmark_history = enLandmark;
     if (Object.keys(enFields).length > 0) {
       try {
         const translated = await translateStepFields(
@@ -53,12 +62,14 @@ async function resolveAnecdoteAndTitle(
         );
         if (translated.anecdote) anecdoteText = translated.anecdote;
         if (translated.title) stepTitleText = translated.title;
+        if (translated.landmark_history)
+          landmarkHistoryText = translated.landmark_history;
       } catch {
         /* keep fallback */
       }
     }
   }
-  return { anecdoteText, stepTitleText };
+  return { anecdoteText, stepTitleText, landmarkHistoryText };
 }
 
 // Skip is no longer a punishment — it's a safety net so a player who
@@ -184,10 +195,8 @@ export async function POST(
       // Résoudre + traduire l'anecdote ET le titre pour le client
       // (même politique que validate-step — skip ne doit pas priver
       // le joueur du contenu pédagogique).
-      const { anecdoteText, stepTitleText } = await resolveAnecdoteAndTitle(
-        step,
-        locale,
-      );
+      const { anecdoteText, stepTitleText, landmarkHistoryText } =
+        await resolveAnecdoteAndTitle(step, locale);
 
       return NextResponse.json({
         success: true,
@@ -195,6 +204,7 @@ export async function POST(
         completed: true,
         answer: t(step.answer_text, locale),
         anecdote: anecdoteText,
+        landmarkHistory: landmarkHistoryText,
         stepTitle: stepTitleText,
         penaltyAdded: SKIP_PENALTY_SECONDS,
       });
@@ -209,11 +219,9 @@ export async function POST(
       })
       .eq("id", sessionId);
 
-    // Résoudre + traduire l'anecdote pour le client (idem ci-dessus).
-    const { anecdoteText, stepTitleText } = await resolveAnecdoteAndTitle(
-      step,
-      locale,
-    );
+    // Résoudre + traduire l'anecdote + landmark_history pour le client.
+    const { anecdoteText, stepTitleText, landmarkHistoryText } =
+      await resolveAnecdoteAndTitle(step, locale);
 
     return NextResponse.json({
       success: true,
@@ -222,6 +230,7 @@ export async function POST(
       nextStep: stepOrder + 1,
       answer: t(step.answer_text, locale),
       anecdote: anecdoteText,
+      landmarkHistory: landmarkHistoryText,
       stepTitle: stepTitleText,
       penaltyAdded: SKIP_PENALTY_SECONDS,
     });

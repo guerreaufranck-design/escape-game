@@ -51,6 +51,7 @@ import { NavigationGuide } from "@/components/player/NavigationGuide";
 import { ARCameraOverlay } from "@/components/player/ARCameraOverlay";
 import { ValidationParticles } from "@/components/player/ValidationParticles";
 import { Tutorial } from "@/components/player/Tutorial";
+import { GuideNarrationOverlay } from "@/components/player/GuideNarrationOverlay";
 import { StepTransitionOverlay } from "@/components/player/StepTransitionOverlay";
 import { useUITranslations } from "@/components/player/UITranslationsProvider";
 import { NarrationButton } from "@/components/player/NarrationButton";
@@ -114,6 +115,12 @@ export default function PlayPage() {
     explanation?: string | null;
   } | null>(null);
   const [finalSubmitting, setFinalSubmitting] = useState(false);
+  // Overlay RA "guide" plein écran pendant les grandes narrations
+  // (vision client 2026-05-16). null = caché, sinon { text, title }.
+  const [guideOverlay, setGuideOverlay] = useState<{
+    text: string;
+    title?: string;
+  } | null>(null);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [treasure, setTreasure] = useState<{
     text: string;
@@ -198,6 +205,38 @@ export default function PlayPage() {
       setNarrationText(text);
       narration.speak(text, audioUrl ? { audioUrl } : undefined);
     }
+  };
+
+  /**
+   * Speak with the full-screen GuideNarrationOverlay (vision 2026-05-16).
+   * Used for the major narrative blocks : intro_speech, landmark_history,
+   * final_riddle, final_explanation. While the audio plays, the player
+   * sees the guide sprite + the text on a focused screen. At the end of
+   * the audio, the overlay auto-closes and returns to the card view.
+   */
+  const speakWithOverlay = (
+    text: string,
+    audioUrl?: string | null,
+    title?: string,
+  ) => {
+    // Toggle off if user re-taps the same narration
+    if (narration.speaking && narrationText === text) {
+      narration.stop();
+      setNarrationText("");
+      setGuideOverlay(null);
+      return;
+    }
+    setGuideOverlay({ text, title });
+    setNarrationText(text);
+    narration.speak(text, audioUrl ? { audioUrl } : undefined);
+  };
+
+  const dismissGuideOverlay = () => {
+    if (narration.speaking) {
+      narration.stop();
+      setNarrationText("");
+    }
+    setGuideOverlay(null);
   };
   const autoSpeak = useCallback(
     (text: string, audioUrl?: string | null) => {
@@ -614,6 +653,7 @@ export default function PlayPage() {
     }
     setSkipAnswer(null);
     setAnecdote(null); // clear anecdote (était affichée dans le skip overlay)
+    setLandmarkHistory(null); // clear landmark history aussi
     narration.stop();  // arrêter audio anecdote en cours si lecture
     if (skipCompleted) {
       setShowFinalCode(true);
@@ -746,7 +786,11 @@ export default function PlayPage() {
                       text={gameState.introSpeech}
                       speaking={narration.speaking}
                       currentText={narrationText}
-                      onSpeak={(t) => handleSpeak(t, gameState.gameWideAudio?.introSpeech)}
+                      onSpeak={(t) => speakWithOverlay(
+                        t,
+                        gameState.gameWideAudio?.introSpeech,
+                        tt('play.yourGuide', locale) || "Votre guide"
+                      )}
                       variant="pill"
                       locale={locale}
                     />
@@ -923,27 +967,51 @@ export default function PlayPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
+      {/* Guide narration overlay — plein écran pendant les blocs majeurs
+          (intro_speech, landmark_history, final_riddle). Affiche le
+          guide + le texte pendant que l'audio joue, se ferme tout seul
+          quand l'audio s'arrête. Vision client 2026-05-16. */}
+      <GuideNarrationOverlay
+        open={guideOverlay !== null}
+        text={guideOverlay?.text ?? ""}
+        title={guideOverlay?.title}
+        speaking={narration.speaking}
+        onClose={dismissGuideOverlay}
+        locale={locale}
+      />
+
       {/* Step success overlay with anecdote */}
       {stepSuccess && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="max-w-md w-full space-y-4">
-            {/* Success badge */}
-            <div className="text-center">
-              <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500/20 border-2 border-emerald-400 mb-3 animate-bounce">
-                <CheckCircle2 className="h-10 w-10 text-emerald-400" />
-              </div>
-              <p className="text-2xl font-bold text-emerald-300">
-                {tt('play.stepValidated', locale)}
-              </p>
-            </div>
-
-            {/* Correct answer */}
-            {correctAnswer && (
-              <div className="text-center space-y-1">
-                <p className="text-sm text-slate-400">{tt('play.correctAnswerLabel', locale)}</p>
-                <p className="text-2xl font-bold text-emerald-400">{correctAnswer}</p>
-              </div>
-            )}
+            {/* Guide congrats — vision 2026-05-16, symétrique avec
+                le message skip. Le guide félicite + indique que la
+                réponse a été ajoutée au carnet pour l'énigme finale. */}
+            <Card className="bg-slate-900 border-emerald-500/30">
+              <CardContent className="pt-6 text-center space-y-3">
+                <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500/20 border-2 border-emerald-400 animate-bounce">
+                  <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+                </div>
+                <p className="text-sm font-medium text-emerald-300">
+                  {tt('play.guideCongrats', locale) ||
+                    "Bravo, vous avez trouvé l'indice !"}
+                </p>
+                {correctAnswer && (
+                  <>
+                    <p className="text-base text-slate-200">
+                      {tt('play.correctAnswerLabel', locale)}
+                    </p>
+                    <p className="text-3xl font-bold text-emerald-400 my-2">
+                      {correctAnswer}
+                    </p>
+                  </>
+                )}
+                <p className="text-xs text-slate-400 italic">
+                  📓 {tt('play.guideNotebookAdded', locale) ||
+                    "Ajouté à votre carnet pour l'énigme finale. Continuons l'aventure !"}
+                </p>
+              </CardContent>
+            </Card>
 
             {/* Treasure reveal — decorative AR object that "drops" for the
                 player when they solve the step. The sprite is picked
@@ -1063,14 +1131,31 @@ export default function PlayPage() {
               </Card>
             )}
 
-            {/* Notebook input REMOVED — the AR auto-validate already
-                stores the answer in notebook[currentStep] before this
-                modal opens, and the player sees their answer rendered
-                in the "correct answer" header above. Asking them to
-                retype was pure friction. */}
+            {/* Route attractions on the way to next stop — vision 2026-05-16.
+                Le guide signale les POIs remarquables sur le chemin pour
+                transformer la marche entre stops en visite culturelle. */}
+            {gameState?.routeAttractions && gameState.routeAttractions.length > 0 && (
+              <Card className="bg-slate-900/95 border-cyan-800/50">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">📍</span>
+                    <CardTitle className="text-sm text-cyan-300">
+                      {tt('play.onYourWay', locale) || "Sur le chemin vers le prochain stop"}
+                    </CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {gameState.routeAttractions.map((attr, i) => (
+                    <div key={i} className="border-l-2 border-cyan-500/40 pl-3">
+                      <p className="text-xs font-semibold text-cyan-200">{attr.name}</p>
+                      <p className="text-xs text-slate-300 leading-snug">{attr.fact}</p>
+                    </div>
+                  ))}
+                </CardContent>
+              </Card>
+            )}
 
-            {/* Continue button — always enabled now (notebook is set,
-                player just acknowledges the success). */}
+            {/* Continue button */}
             <Button
               size="lg"
               className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
@@ -1105,20 +1190,72 @@ export default function PlayPage() {
       {skipAnswer && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
           <div className="max-w-sm w-full space-y-4 my-8">
+            {/* Guide message — vision 2026-05-16 : on ne félicite PAS,
+                on dit "pas trouvé c'est pas grave, voici la réponse et
+                je la mets dans votre carnet pour l'énigme finale". */}
             <Card className="bg-slate-900 border-orange-500/30">
               <CardContent className="pt-6 text-center space-y-3">
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-500/10">
-                  <Trophy className="h-8 w-8 text-orange-400" />
+                  <span className="text-3xl">🎙️</span>
                 </div>
-                <p className="text-sm text-orange-300">{tt('play.stepSkipped', locale)}</p>
-                <p className="text-lg font-bold text-white">{tt('play.answerWas', locale)}</p>
-                <p className="text-2xl font-bold text-orange-400">{skipAnswer}</p>
+                <p className="text-sm font-medium text-orange-300">
+                  {tt('play.guideNotFound', locale) ||
+                    "Vous n'avez pas trouvé l'indice — c'est pas grave"}
+                </p>
+                <p className="text-base text-slate-200 leading-relaxed px-2">
+                  {tt('play.guideAnswerReveal', locale) ||
+                    "La réponse était :"}
+                </p>
+                <p className="text-3xl font-bold text-orange-400 my-2">
+                  {skipAnswer}
+                </p>
+                <p className="text-xs text-slate-400 italic">
+                  📓 {tt('play.guideNotebookSaved', locale) ||
+                    "Je l'ai ajoutée à votre carnet pour l'énigme finale. Continuons l'aventure ensemble."}
+                </p>
               </CardContent>
             </Card>
 
+            {/* Landmark history card — patrimoine first (vision 2026-05-16).
+                Le joueur qui skip mérite quand même de découvrir
+                l'histoire du lieu. C'est la promesse "découverte de
+                la ville" qui prime. */}
+            {landmarkHistory && (
+              <Card className="bg-slate-900/95 border-amber-700/50">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="text-lg">🏛️</span>
+                      <CardTitle className="text-sm text-amber-300">
+                        {tt('play.theStory', locale) || "L'histoire du lieu"}
+                      </CardTitle>
+                    </div>
+                    {narration.supported && (
+                      <NarrationButton
+                        text={landmarkHistory}
+                        speaking={narration.speaking}
+                        currentText={narrationText}
+                        onSpeak={(t) => speakWithOverlay(
+                          t,
+                          gameState?.audioMap?.landmarkHistory,
+                          tt('play.theStory', locale) || "L'histoire du lieu"
+                        )}
+                        variant="pill"
+                        locale={locale}
+                      />
+                    )}
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
+                    {landmarkHistory}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
+
             {/* Anecdote card — affichée aussi en cas de skip pour ne pas
-                priver le joueur du contenu pédagogique historique.
-                (Bug fixé 2026-05-15 incident Julien Alba.) */}
+                priver le joueur du contenu pédagogique historique. */}
             {anecdote && (
               <Card className="bg-slate-900/95 border-orange-800/50">
                 <CardHeader className="pb-2">
@@ -1145,6 +1282,30 @@ export default function PlayPage() {
                   <p className="text-sm text-slate-300 leading-relaxed">
                     {anecdote.text}
                   </p>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Route attractions on the way to the next stop — vision
+                2026-05-16 : le guide signale les lieux remarquables sur
+                le chemin pour transformer la marche en visite. */}
+            {gameState?.routeAttractions && gameState.routeAttractions.length > 0 && (
+              <Card className="bg-slate-900/95 border-cyan-800/50">
+                <CardHeader className="pb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-lg">📍</span>
+                    <CardTitle className="text-sm text-cyan-300">
+                      {tt('play.onYourWay', locale) || "Sur le chemin, ne manque pas..."}
+                    </CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-2">
+                  {gameState.routeAttractions.map((attr, i) => (
+                    <div key={i} className="border-l-2 border-cyan-500/40 pl-3">
+                      <p className="text-xs font-semibold text-cyan-200">{attr.name}</p>
+                      <p className="text-xs text-slate-300 leading-snug">{attr.fact}</p>
+                    </div>
+                  ))}
                 </CardContent>
               </Card>
             )}
@@ -1685,7 +1846,11 @@ export default function PlayPage() {
                         text={gameState.finalRiddleText}
                         speaking={narration.speaking}
                         currentText={narrationText}
-                        onSpeak={(t) => handleSpeak(t, gameState.gameWideAudio?.finalRiddle)}
+                        onSpeak={(t) => speakWithOverlay(
+                          t,
+                          gameState.gameWideAudio?.finalRiddle,
+                          tt('play.theGuideSays', locale) || "Le guide vous parle"
+                        )}
                         variant="pill"
                         locale={locale}
                       />

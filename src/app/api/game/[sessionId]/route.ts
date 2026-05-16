@@ -43,7 +43,13 @@ export async function GET(
     const { sessionId } = await params;
     const locale = detectLocale(request);
     const supabase = createAdminClient();
-    const needsTranslation = !isStaticLocale(locale);
+    // 2026-05-16 — bug texte EN sur audio ES. Le contenu DB est stocké
+    // en plain English uniquement (sauf legacy {fr,en} pour les vieux jeux).
+    // On force la traduction Gemini pour TOUTES les langues != en, plus
+    // seulement les "non-statiques" — ainsi fr/es/de/it ont leur texte
+    // traduit comme leur audio. translateGameField cache donc 1 call /
+    // game / language / champ.
+    const needsTranslation = locale !== "en";
 
     // Fetch session with game data
     const { data: session, error: sessionError } = await supabase
@@ -364,16 +370,52 @@ export async function GET(
       introVideoUrl = game.intro_videos[locale] || game.intro_videos.fr || game.intro_videos.en || Object.values(game.intro_videos)[0] || null;
     }
 
-    // Patrimoine-first UX fields (migration 027). Translation in-place
-    // via `t()` so the player gets them in the requested locale when
-    // available, fallback to English / first available language otherwise.
-    const introSpeech = t(game.intro_speech ?? null, locale) || null;
-    const finalRiddleText = t(game.final_riddle_text ?? null, locale) || null;
+    // Patrimoine-first UX fields (migration 027).
+    // 2026-05-16 fix : si le JSONB ne contient que {en: ...} et que la
+    // langue cible != en, on déclenche translateGameField pour avoir
+    // le contenu localisé (cohérence avec l'audio déjà généré).
+    const translateOrFallback = async (
+      val: unknown,
+      column: string,
+    ): Promise<string | null> => {
+      const direct = t(val, locale);
+      if (!direct) return null;
+      // Si direct est différent du fallback EN, on a déjà la bonne langue
+      const en = getEnglishBase(val);
+      if (locale === "en" || direct !== en) return direct;
+      // Sinon on traduit avec cache
+      try {
+        return await translateGameField(
+          session.game_id,
+          "games",
+          column,
+          en,
+          locale,
+        );
+      } catch (err) {
+        console.warn(
+          `[game/${sessionId}] ${column} translation failed: ${err instanceof Error ? err.message : err} — keeping EN`,
+        );
+        return en;
+      }
+    };
+
+    const introSpeech = await translateOrFallback(
+      game.intro_speech ?? null,
+      "intro_speech",
+    );
+    const finalRiddleText = await translateOrFallback(
+      game.final_riddle_text ?? null,
+      "final_riddle_text",
+    );
     // Only expose the explanation once the player has actually resolved
     // the final riddle (success or 2 fails). Otherwise it's a spoiler.
     const finalAnswerExplanation =
       session.final_succeeded === true || session.final_succeeded === false
-        ? t(game.final_answer_explanation ?? null, locale) || null
+        ? await translateOrFallback(
+            game.final_answer_explanation ?? null,
+            "final_answer_explanation",
+          )
         : null;
 
     const gameState: GameState = {

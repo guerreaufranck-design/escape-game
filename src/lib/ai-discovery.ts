@@ -94,6 +94,108 @@ export interface RawThematicPoi {
 }
 
 /**
+ * Patrimoine-first fallback fill (vision client 2026-05-16).
+ *
+ * Quand la passe thématique principale ne retourne pas assez de POIs
+ * (cas Toledo Underground : 7 stops demandés, Gemini en trouve 6
+ * directement liés), on ne veut PLUS combler avec Google Places
+ * "tourist_attraction" générique (qui ramène des hôtels). À la place :
+ * on fait une 2ème passe Gemini qui demande les MONUMENTS MAJEURS de
+ * la ville, indépendamment du thème, en excluant ceux déjà choisis.
+ *
+ * Le narrateur Claude tissera le lien thématique faible ("cette
+ * cathédrale est moins liée au thème mais sa visite vaut le détour")
+ * — c'est exactement la philosophie demandée : patrimoine first, thème
+ * en fil rouge facultatif sur les compléments.
+ */
+export async function discoverPatrimonialFill(
+  params: DiscoverThematicPoisParams,
+  excludedNames: string[],
+  count: number,
+): Promise<RawThematicPoi[]> {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return [];
+  const diameterM = params.diameterCapM ?? DEFAULT_DIAMETER_CAP_M;
+
+  const exclusionBlock =
+    excludedNames.length > 0
+      ? `\n\nALREADY CHOSEN (do NOT repeat these) :\n${excludedNames.map((n) => `  - ${n}`).join("\n")}`
+      : "";
+
+  const prompt = `You are completing an outdoor walking-game with the city's MOST IMPORTANT MONUMENTS.
+
+GAME CONTEXT
+  Title: "${params.title}"
+  Theme tag (optional, just for narrator context): "${params.theme}"
+  City: ${params.city}, ${params.country}
+  Start point GPS: ${params.startPoint.lat.toFixed(6)}, ${params.startPoint.lon.toFixed(6)}
+  Max pairwise diameter: ${(diameterM / 1000).toFixed(1)} km
+
+TASK
+  Find ${count} of the city's MOST PATRIMONIAL / TOURISTIC LANDMARKS in
+  ${params.city} that any decent local guide would mention on a 90-min
+  walking tour. The theme "${params.theme}" is OPTIONAL — pick the most
+  valuable monuments REGARDLESS of theme link. The narrator will weave
+  a thematic transition where possible, or honestly say "this place is
+  here because every visitor of ${params.city} should see it" when the
+  link is weak.
+
+PRIORITIES (in order)
+  1. PATRIMONIAL / TOURISTIC VALUE (essential, ~90%)
+     - Cathedrals, palaces, town halls, castles, museums
+     - Iconic squares (the kind every guide stops at)
+     - Listed/classed monuments
+     - Famous bridges, fortifications, gates
+     - Major churches, synagogues, mosques
+  2. Theme link (bonus only, ~10%)
+     - If a thematic link exists, mention it in thematic_role
+     - If not, leave thematic_role empty — the narrator will adapt
+
+CONSTRAINTS
+  1. REAL physical places with full street addresses geocodable by Google Maps.
+  2. Max pairwise diameter ${(diameterM / 1000).toFixed(1)} km including start point.
+  3. ZERO modern hotels, restaurants, generic shops, parks unless they themselves are listed/classified heritage.
+  4. Spread across the city.${exclusionBlock}
+
+OUTPUT — JSON array, no markdown:
+[
+  {
+    "name": "<canonical local name>",
+    "address": "<full street address>",
+    "lat": <number, 6 decimals>,
+    "lon": <number, 6 decimals>,
+    "patrimonial_role": "<one short paragraph: why this place is essential to visit ${params.city}>",
+    "thematic_role": "<one sentence theme link, or empty string if no real link>",
+    "citation": "<URL or short source>",
+    "access": "always_open" | "limited_access" | "unknown",
+    "category": "patrimonial_landmark"
+  }
+]
+
+Output ONLY the JSON array.`;
+
+  const startTs = Date.now();
+  let raw: string;
+  try {
+    raw = await callGeminiWithResilience(prompt, apiKey);
+  } catch (err) {
+    console.warn(
+      `[ai-discovery] patrimonial fill failed (${err instanceof Error ? err.message : err}) — caller will fall back further`,
+    );
+    return [];
+  }
+  const parsed = extractJsonArray(raw);
+  if (!parsed) return [];
+  const pois = parsed
+    .map(coerceToRawPoi)
+    .filter((p): p is RawThematicPoi => p !== null);
+  console.log(
+    `[ai-discovery] patrimonial fill returned ${pois.length}/${count} POIs in ${Math.round((Date.now() - startTs) / 1000)}s for ${params.city}`,
+  );
+  return pois;
+}
+
+/**
  * Main entry point. Returns empty array on any hard failure (no key,
  * timeout, malformed JSON, zero parseable items). Soft errors (Gemini
  * returns 4 items when we asked for 12) just propagate — caller decides
