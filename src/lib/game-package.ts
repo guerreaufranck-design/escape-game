@@ -508,45 +508,52 @@ export async function prepareGamePackage(
     }
   }
 
-  // 6. Generate audio sequentially. ElevenLabs handles concurrency at
-  // their end — we hit one job at a time to stay polite + predictable.
-  for (const job of jobs) {
-    try {
-      const path = buildAudioPath(gameId, language, job.stepOrder, job.slot);
-      const result = await generateAndStoreAudio({
-        text: job.text,
-        voiceId: job.voiceId,
-        storagePath: path,
-      });
-
-      const { error: insertErr } = await supabase
-        .from("audio_cache")
-        .upsert(
-          {
-            game_id: gameId,
-            step_order: job.stepOrder,
-            language,
-            slot: job.slot,
-            storage_path: path,
-            public_url: result.publicUrl,
-            byte_size: result.byteSize,
-          },
-          { onConflict: "game_id,step_order,language,slot" },
-        );
-
-      if (insertErr) {
-        errors.push(
-          `audio_cache upsert failed for step ${job.stepOrder} ${job.slot}: ${insertErr.message}`,
-        );
+  // 6. Generate audio in PARALLEL BATCHES (vision 2026-05-16, post-Aegina
+  // timeout). Avant : 32 jobs séquentiels = 3-4 min côté ElevenLabs. Maintenant :
+  // batches de 6 en parallèle, ElevenLabs Flash supporte la concurrence sans
+  // rate-limit observé jusqu'à 8-10 req simultanées sur le plan Creator.
+  // Gain : 32 jobs / 6 ≈ 6 batches × ~5s = ~30s (au lieu de 3-4 min).
+  const BATCH_SIZE = 6;
+  for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
+    const batch = jobs.slice(i, i + BATCH_SIZE);
+    const results = await Promise.allSettled(
+      batch.map(async (job) => {
+        const path = buildAudioPath(gameId, language, job.stepOrder, job.slot);
+        const result = await generateAndStoreAudio({
+          text: job.text,
+          voiceId: job.voiceId,
+          storagePath: path,
+        });
+        const { error: insertErr } = await supabase
+          .from("audio_cache")
+          .upsert(
+            {
+              game_id: gameId,
+              step_order: job.stepOrder,
+              language,
+              slot: job.slot,
+              storage_path: path,
+              public_url: result.publicUrl,
+              byte_size: result.byteSize,
+            },
+            { onConflict: "game_id,step_order,language,slot" },
+          );
+        if (insertErr) {
+          throw new Error(`audio_cache upsert failed: ${insertErr.message}`);
+        }
+        return { stepOrder: job.stepOrder, slot: job.slot };
+      }),
+    );
+    for (let j = 0; j < results.length; j++) {
+      const r = results[j];
+      const job = batch[j];
+      if (r.status === "fulfilled") {
+        audioGenerated++;
+      } else {
+        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
+        errors.push(`step ${job.stepOrder} ${job.slot}: ${msg.slice(0, 150)}`);
         audioFailed++;
-        continue;
       }
-
-      audioGenerated++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      errors.push(`step ${job.stepOrder} ${job.slot}: ${msg.slice(0, 150)}`);
-      audioFailed++;
     }
   }
 

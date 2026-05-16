@@ -367,7 +367,77 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Run the pipeline (Lambda 1: discovery + insert with is_published=false)
+    // ════════════════════════════════════════════════════════════════
+    // PIPELINE DISPATCH — sync (legacy) vs async (Inngest, recommended)
+    // ════════════════════════════════════════════════════════════════
+    //
+    // Vision 2026-05-16 (post-Aegina timeout) : pour éviter que Vercel
+    // ne kill la fonction à 800s alors que Gemini+Claude+ElevenLabs
+    // tournent encore, on passe l'exécution dans Inngest qui n'a pas
+    // de timeout function-level.
+    //
+    // Si USE_INNGEST_BUILD=true :
+    //   - Emit "game/build.requested" → buildGameDurable consume
+    //     (run generateGameFromTemplate + auto-emit "game/generate.requested"
+    //      pour la post-insert pipeline)
+    //   - Endpoint retourne 200 OK immédiat avec status="queued"
+    //   - OddballTrip continue de poller find-game (déjà leur pattern)
+    //
+    // Si USE_INNGEST_BUILD!=true (legacy) :
+    //   - Run generateGameFromTemplate inline (timeout 800s Vercel)
+    //   - Path historique conservé pour rollback rapide
+    if (process.env.USE_INNGEST_BUILD === "true") {
+      try {
+        await inngest.send({
+          name: "game/build.requested",
+          data: {
+            slug: template.slug,
+            title: template.theme,
+            city: template.city,
+            country: template.country,
+            themeDescription: template.themeDescription,
+            narrative: template.narrative,
+            difficulty: template.difficulty,
+            estimatedDurationMin: template.estimatedDurationMin,
+            stopCount: template.stopCount,
+            genre: template.genre,
+            language: template.language,
+            transportMode: template.transportMode,
+            radiusKm: template.radiusKm,
+            recommendedDaysMin: template.recommendedDaysMin,
+            recommendedDaysMax: template.recommendedDaysMax,
+            startPointText: template.startPointText,
+            startPointLat: template.startPoint?.lat,
+            startPointLon: template.startPoint?.lon,
+            buyerEmail: body.buyerEmail,
+            orderId: body.orderId,
+            callbackUrl: body.callbackUrl,
+            callbackSecret: body.callbackSecret,
+            accessibility: template.accessibility,
+          },
+        });
+        console.log(
+          `[GenerateGame] ASYNC mode: emitted game/build.requested for slug=${template.slug}. Returning 200 queued.`,
+        );
+        return NextResponse.json(
+          {
+            success: true,
+            status: "queued",
+            slug: template.slug,
+            message:
+              "Generation queued — game will appear when ready. Poll /api/external/find-game by slug.",
+          },
+          { status: 202 },
+        );
+      } catch (err) {
+        console.error(
+          `[GenerateGame] inngest.send for game/build.requested FAILED: ${err instanceof Error ? err.message : err}. Falling back to sync path.`,
+        );
+        // fall through to legacy sync path
+      }
+    }
+
+    // Legacy sync path — Lambda 1: discovery + insert with is_published=false
     const result = await generateGameFromTemplate(template);
 
     if (result.success) {

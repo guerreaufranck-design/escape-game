@@ -65,6 +65,66 @@ export const gameGenerateRequested = eventType("game/generate.requested", {
   }>(),
 });
 
+/**
+ * BUILD-FROM-SCRATCH event (vision 2026-05-16, post-Aegina incident).
+ *
+ * Émis par /api/external/generate-game LORSQUE le payload OddballTrip
+ * arrive. Au lieu de runFullPipeline synchrone (qui timeout Vercel à
+ * 13 min en cas de Gemini saturé), on émet cet event et on retourne
+ * 200 immédiatement à OddballTrip.
+ *
+ * Inngest fonction `buildGameDurable` consume cet event et tourne sans
+ * limite de durée Vercel, avec retry par step et observabilité totale.
+ *
+ * Quand la pipeline est terminée (publish + callback), OddballTrip qui
+ * polle find-game reçoit enfin le gameId.
+ */
+export const gameBuildRequested = eventType("game/build.requested", {
+  schema: staticSchema<{
+    /** Slug fourni par OddballTrip (clé identité côté leur catalogue). */
+    slug: string;
+    /** Titre du jeu (thème). */
+    title: string;
+    /** Ville texte (peut être enrichie : "Aegina Island, Saronic Gulf"). */
+    city: string;
+    /** Pays (peut être déduit côté pipeline si vide). */
+    country?: string;
+    /** Description du thème — passée à Claude pour la narration. */
+    themeDescription: string;
+    /** Narrative custom (optional) — Claude l'adapte si non fournie. */
+    narrative?: string;
+    /** 1-5 — déterminer la complexité des énigmes. */
+    difficulty?: number;
+    /** Durée moyenne attendue en minutes. */
+    estimatedDurationMin?: number;
+    /** Nombre de stops cible (default 8). */
+    stopCount?: number;
+    /** Genre narratif (historical, fantasy, mystery…). */
+    genre?: string;
+    /** Langue ISO-639-1 du client (fr, en, de…). */
+    language?: string;
+    /** Mode de transport (walking par défaut, mixed/driving si configuré). */
+    transportMode?: "walking" | "driving" | "mixed";
+    /** Rayon en km pour mode roadtrip. */
+    radiusKm?: number;
+    /** Jours recommandés (mode roadtrip). */
+    recommendedDaysMin?: number;
+    recommendedDaysMax?: number;
+    /** Point de départ texte (geocodé côté pipeline). */
+    startPointText?: string;
+    /** Coords explicites (override le géocodage texte). */
+    startPointLat?: number;
+    startPointLon?: number;
+    /** Identifiants OddballTrip pour callback final. */
+    buyerEmail?: string;
+    orderId?: string;
+    callbackUrl?: string;
+    callbackSecret?: string;
+    /** Accessibility (free vs any). */
+    accessibility?: "free" | "any";
+  }>(),
+});
+
 /** Dead letter : la pipeline a échoué malgré tous les retries. Le handler
  *  marque le jeu needs_review=true et envoie une alerte email. */
 export const gameGenerateFailed = eventType("game/generate.failed", {
