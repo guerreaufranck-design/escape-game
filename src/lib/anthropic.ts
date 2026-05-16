@@ -21,6 +21,17 @@ export interface GeneratedStep {
   riddle_text: string;
   answer_text: string;
   hints: { order: number; text: string }[];
+  /**
+   * Full patrimonial history of the place — INDEPENDENT of the game's
+   * theme. 2-3 paragraphs: who built it and when, why it matters in
+   * the city, what makes it worth visiting. Played as the FIRST
+   * narration card after the player finds the AR clue, BEFORE the
+   * thematic anecdote.
+   *
+   * Powers the "you didn't just walk, you learned" experience demanded
+   * by the customer (vision 2026-05-16, post-incident Julien).
+   */
+  landmark_history: string;
   anecdote: string;
   bonus_time_seconds: number;
   /** How the player discovers the answer — "physical" (real inscription) or
@@ -103,19 +114,30 @@ export async function generateGameSteps(
 - Answer source: ${loc.answerSource ?? "physical"} ${loc.answerSource === "virtual_ar" ? "(AR-only: riddle must hint at activating AR camera)" : "(physical: riddle must say where to look on the real monument)"}
 - Source: ${loc.source}
 - Theme link: ${loc.themeLink || "N/A"}${
-        loc.historicalRole
+        loc.patrimonialRole
           ? `
-- 📜 DOCUMENTED HISTORICAL ROLE: ${loc.historicalRole}${loc.citation ? ` (Source: ${loc.citation})` : ""}`
+- 🏛️ FULL PATRIMONIAL HISTORY (independent of theme): ${loc.patrimonialRole}${loc.citation ? ` (Source: ${loc.citation})` : ""}`
+          : ""
+      }${
+        loc.thematicRole
+          ? `
+- 🎭 THEMATIC CONNECTION: ${loc.thematicRole}`
+          : ""
+      }${
+        loc.poiCategory
+          ? `
+- Category: ${loc.poiCategory}`
           : ""
       }`
     )
     .join("\n\n");
 
   // Detect whether the discovery pipeline gave us per-stop documented
-  // history. If yes, we instruct Claude to ANCHOR each anecdote on the
-  // documented role (post-2026-05-15 Gemini-first flow). If no, we fall
+  // history. If yes, we instruct Claude to ANCHOR landmark_history on
+  // the documented patrimonial role and the anecdote on the thematic
+  // connection (post-2026-05-16 patrimoine-first flow). If no, we fall
   // back to the historical "fiction libre DANS le thème" mode (legacy).
-  const hasThematicAnchors = locations.some((l) => l.historicalRole);
+  const hasThematicAnchors = locations.some((l) => l.patrimonialRole);
 
   const stepCount = Math.min(locations.length, 8);
 
@@ -510,10 +532,29 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
    Hints are unlocked at a small time penalty. Never reveal the
    literal answer. Keep each hint under 200 characters.
 
-7. "anecdote": 2-3 fascinating, factually-true sentences about the
-   place's history. The player's reward after solving. This is where
-   you can include a real verifiable historical fact from the research
-   — not the answer, but the lore.
+7. "landmark_history": 2-3 paragraphs (4-7 sentences total) telling the
+   PATRIMONIAL story of this place — who built it and when, why it
+   matters in the city, what makes it worth standing in front of —
+   INDEPENDENTLY of the game's theme. This is what every decent local
+   guide would tell a tourist. It transforms the walk into a visit.
+
+   CRITICAL — base this on the "🏛️ FULL PATRIMONIAL HISTORY" anchor
+   provided in the location data when present. Use it verbatim as fact,
+   you may rephrase/dramatize for audio narration but DO NOT invent.
+   When no anchor is provided, write from your own training-data
+   knowledge of the city — facts only, no hedging.
+
+   Played as the FIRST narration card after the player finds the AR
+   clue. The anecdote (next field) comes AFTER and ties this lieu to
+   the theme.
+
+8. "anecdote": 1-2 sentences (short, punchy) that connect THIS specific
+   place to the game's theme. The thematic-narrator's voice. May reference
+   the "🎭 THEMATIC CONNECTION" anchor when provided. For purely
+   patrimonial stops where there's no real theme link, the anecdote is
+   the narrator's transition — a one-liner that ties the lieu to the
+   broader story you're telling across all stops. Never invent fake
+   thematic facts about a place that doesn't really link to the theme.
 
 8. "bonus_time_seconds": 0 for easy stops, 30-60 for harder ones.
 
@@ -607,7 +648,10 @@ Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional te
   // output, so 8192 is comfortable + cheap.
   const message = await client.messages.create({
     model: "claude-sonnet-4-20250514",
-    max_tokens: 8192,
+    // 2026-05-16 — bumped to 12288 to absorb the new landmark_history
+    // field (2-3 paragraphs per stop ≈ +300 tokens × 8 stops = +2400).
+    // claude-sonnet-4 supports up to 64k output, so we still have margin.
+    max_tokens: 12288,
     temperature: 0.7,
     messages: [{ role: "user", content: prompt }],
   });
@@ -996,7 +1040,8 @@ Rewrite this single step as a JSON object with the same shape as before:
     {"order": 2, "text": "practical hint — what type of object and where"},
     {"order": 3, "text": "format hint without the answer"}
   ],
-  "anecdote": "fascinating, historically true 2-3 sentences",
+  "landmark_history": "2-3 paragraphs telling the patrimonial story of the place — who built it and when, why it matters in the city, what makes it worth visiting (theme-independent)",
+  "anecdote": "1-2 sentences connecting this lieu to the game's theme",
   "bonus_time_seconds": 0,
   "answer_source": "virtual_ar",
   "ar_character_type": "one of: knight, witch, monk, sailor, detective, ghost, default — pick the most thematic",
@@ -1638,4 +1683,232 @@ ${stopsBlock}
   }
 
   return parsed;
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// PATRIMOINE-FIRST UX BLOCKS — 2026-05-16
+// Intro speech + final riddle + epilogue conditionnel — narrative shell
+// that turns a sequence of stops into a guided city-discovery experience.
+// ═════════════════════════════════════════════════════════════════════════
+
+export interface IntroSpeechResult {
+  /** The guide's opening monologue — played before stop 1. */
+  text: string;
+}
+
+/**
+ * Generate the guide's intro speech, played BEFORE the first stop.
+ *
+ * Tone: a friendly knowledgeable city guide welcoming the player.
+ * Content (in order):
+ *   1. Salutation + introduction du guide
+ *   2. Présentation du jeu : ville + thème (fil rouge narratif)
+ *   3. Pratique : 1h30-3h30 selon le rythme, 7 jours pour finir, batterie chargée, AR
+ *   4. Philosophie : "vous allez découvrir des lieux du patrimoine — tous ne
+ *      sont pas directement liés au thème car le temps efface les traces,
+ *      mais tous valent la visite"
+ *   5. Call-to-action : "appuyez sur Commencer"
+ *
+ * Returns a single English text. Translation handled separately by the
+ * translation pipeline (Claude/Gemini) for non-English audiences.
+ */
+export async function generateIntroSpeech(params: {
+  title: string;
+  city: string;
+  country: string;
+  theme: string;
+  themeDescription: string;
+  estimatedDurationMin: number;
+  stopCount: number;
+}): Promise<IntroSpeechResult> {
+  const client = getAnthropicClient();
+  const prompt = `You are scripting the opening monologue of an outdoor walking game guide.
+
+GAME
+  Title: "${params.title}"
+  City: ${params.city}, ${params.country}
+  Theme: ${params.theme}
+  Theme description: ${params.themeDescription}
+  Stops: ${params.stopCount}
+  Estimated duration: 1h30 - 3h30 depending on player pace
+
+TASK
+  Write the guide's opening speech the player hears BEFORE the first stop.
+  Spoken in audio by a friendly knowledgeable city guide. Warm, welcoming,
+  setting expectations.
+
+REQUIRED CONTENT (in this order, weave naturally):
+  1. Greet the player + introduce yourself as "your OddballTrip guide"
+  2. State you'll accompany them through ${params.city}, telling the
+     story of its past around the theme "${params.theme}".
+  3. Practical instructions in ONE sentence each:
+     - "Turn on your phone camera — most stops use AR"
+     - "Make sure your battery is charged"
+     - "This adventure takes between 1h30 and 3h30 depending on your pace"
+     - "Don't panic if you can't finish today — you have 7 days to complete it"
+  4. Philosophy (CRITICAL — this manages player expectations and prevents
+     the 'we just walked' frustration):
+     "On your tour you'll discover ${params.stopCount} of the city's
+     most significant buildings and places. Not all of them will be
+     DIRECTLY linked to "${params.theme}" — time passes, traces fade,
+     and what's still standing is the patrimony of the city more than
+     just one episode. Our goal is to take you to places of real value
+     for the city's history and beauty, and tell you a story that ties
+     them together."
+  5. Final beat — "Are you ready? Tap Start whenever you are."
+
+STYLE
+  - English. Spoken-word friendly (no bullet points, no headings).
+  - 250-350 words total.
+  - Conversational, slightly poetic but not pompous.
+  - Address the player directly as "you".
+  - No emojis, no Roman numerals.
+
+OUTPUT — strict JSON, no markdown:
+{
+  "text": "<the full speech as one string with paragraph breaks via \\n\\n>"
+}
+
+Output ONLY the JSON object.`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 1500,
+    temperature: 0.6,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const text = message.content[0].type === "text" ? message.content[0].text : "";
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("generateIntroSpeech: no JSON in Claude response");
+  const parsed = JSON.parse(match[0]) as { text: string };
+  if (!parsed.text || parsed.text.length < 100) {
+    throw new Error(
+      `generateIntroSpeech: text too short or missing (${parsed.text?.length ?? 0} chars)`,
+    );
+  }
+  return { text: parsed.text.trim() };
+}
+
+export interface FinalRiddleResult {
+  /** The riddle text the player sees on the final page. */
+  riddle: string;
+  /** The expected answer — lowercase, accent-stripped, trimmed. */
+  answer: string;
+  /** The "voilà pourquoi" explanation, played after success OR after
+   *  2 failed attempts. */
+  explanation: string;
+}
+
+/**
+ * Generate the final game-wide riddle that combines the per-stop
+ * answers into a single climactic question. The player gets 2 attempts.
+ *
+ * Design philosophy:
+ *   - The final answer is a CONCEPT, a WORD, or a SHORT PHRASE that
+ *     emerges from the individual stop answers — not a literal
+ *     concatenation of them. Examples:
+ *       - 8 answer words → 1 latin phrase
+ *       - 8 dates → the year of a defining event
+ *       - 8 names → the name of the leader they all served
+ *   - The riddle is one short question (2-3 sentences) asking the
+ *     player to deduce this concept from their notebook.
+ *   - The explanation is 2-3 paragraphs that closes the narrative
+ *     loop: explains WHY this is the answer, how each stop contributed,
+ *     and ends on a moving / inspiring beat about the city or the theme.
+ */
+export async function generateFinalRiddle(params: {
+  title: string;
+  city: string;
+  country: string;
+  theme: string;
+  themeDescription: string;
+  steps: Array<{
+    stepOrder: number;
+    title: string;
+    answer: string;
+    anecdote: string;
+  }>;
+}): Promise<FinalRiddleResult> {
+  const client = getAnthropicClient();
+  const stepsList = params.steps
+    .map(
+      (s) =>
+        `Stop ${s.stepOrder}: "${s.title}" — answer="${s.answer}" — anecdote="${s.anecdote.slice(0, 200)}"`,
+    )
+    .join("\n");
+
+  const prompt = `You are designing the final puzzle of an outdoor walking game in ${params.city}.
+
+GAME
+  Title: "${params.title}"
+  Theme: ${params.theme}
+  Theme description: ${params.themeDescription}
+
+STOPS (each gave the player an "indice" — the answer they typed):
+${stepsList}
+
+TASK
+  Design the FINAL RIDDLE the player faces after the last stop. It must:
+  1. Tie all stop answers together into ONE concept / word / short phrase
+     that the player can DEDUCE from their notebook.
+  2. The final answer must be SHORT (1-4 words, single number, or single
+     date), case-insensitive, accent-insensitive.
+  3. The player has only 2 attempts — make the riddle solvable but not
+     trivial. A motivated player who paid attention should crack it.
+
+EXAMPLES OF GOOD FINAL ANSWERS
+  - The Latin phrase that ties together the 8 single-word answers
+  - The year of the defining event (deduced from dates scattered across stops)
+  - The full name of the figure mentioned at each stop
+  - A motto / inscription common to several stops
+  - A geographical concept (the river that runs under the city, the wind
+    that shaped the architecture)
+
+EXPLANATION
+  Write 2-3 short paragraphs that:
+  - State the answer
+  - Explain WHY it's the answer (cite 2-3 stops as evidence)
+  - End on a moving / inspiring beat about ${params.city} or the theme
+
+  This explanation is played in TWO scenarios:
+    A. The player got it right → as celebration + closure
+    B. The player failed 2 attempts → as "here is what you missed" reveal
+  Write it so both scenarios feel natural.
+
+STYLE
+  - English (translation handled downstream).
+  - No Roman numerals in answer.
+  - Riddle 2-4 sentences, evocative.
+  - Explanation 200-300 words.
+
+OUTPUT — strict JSON, no markdown:
+{
+  "riddle": "<2-4 sentences ending with a question mark>",
+  "answer": "<the expected answer, lowercase, no accents — 1-4 words>",
+  "explanation": "<200-300 words, plain text with \\n\\n for paragraph breaks>"
+}
+
+Output ONLY the JSON object.`;
+
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 2048,
+    temperature: 0.65,
+    messages: [{ role: "user", content: prompt }],
+  });
+  const text = message.content[0].type === "text" ? message.content[0].text : "";
+  const match = text.match(/\{[\s\S]*\}/);
+  if (!match) throw new Error("generateFinalRiddle: no JSON in Claude response");
+  const parsed = JSON.parse(match[0]) as FinalRiddleResult;
+  if (!parsed.riddle || !parsed.answer || !parsed.explanation) {
+    throw new Error(
+      "generateFinalRiddle: incomplete response (missing one of riddle/answer/explanation)",
+    );
+  }
+  return {
+    riddle: parsed.riddle.trim(),
+    answer: parsed.answer.trim().toLowerCase(),
+    explanation: parsed.explanation.trim(),
+  };
 }

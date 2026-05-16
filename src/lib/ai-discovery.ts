@@ -66,6 +66,12 @@ export interface DiscoverThematicPoisParams {
  * Raw POI as returned by Gemini before any GPS validation. The lat/lon
  * here are HINTS only — Gemini's coordinate memory is approximate and
  * occasionally wrong by 100-500m. Caller must geocode by address.
+ *
+ * The patrimonial_role is the FULL story of the place independently of
+ * the theme — it's what every visitor should learn. The thematic_role
+ * is the narrator's connection to the game's theme (can be empty when
+ * the place is purely patrimonial). See ai-discovery prompt for the
+ * philosophy : "patrimoine first, theme is the narrator's thread".
  */
 export interface RawThematicPoi {
   /** Canonical local name, suitable for Geocoding ("Centro Studi Beppe Fenoglio"). */
@@ -75,13 +81,16 @@ export interface RawThematicPoi {
   /** Hint coordinates from Gemini — use only to detect hallucination after geocoding. */
   latHint: number;
   lonHint: number;
-  /** One-sentence explanation of why this place matters for the theme. */
-  historicalRole: string;
+  /** Full story of the place (1 paragraph) — who, when, why, what. */
+  patrimonialRole: string;
+  /** Theme connection (1 sentence) — empty when no real thematic link. */
+  thematicRole: string;
   /** Source citation (URL or "Wikipedia" / "Centro Studi" / etc.). */
   citation: string;
-  /** Optional: known opening status — "always_open" for public squares,
-   *  "limited_access" for museums, etc. Used as soft signal downstream. */
+  /** Optional: known opening status. */
   accessHint?: "always_open" | "limited_access" | "unknown";
+  /** Category for downstream tagging and audit. */
+  category?: "patrimonial_landmark" | "thematic_anchor" | "micro_memorial";
 }
 
 /**
@@ -148,53 +157,75 @@ GAME
   City: ${params.city}, ${params.country}
   Start point GPS: ${params.startPoint.lat.toFixed(6)}, ${params.startPoint.lon.toFixed(6)}
 
+═══════════════════════════════════════════════════════════════════════
+PRODUCT PHILOSOPHY (READ FIRST)
+═══════════════════════════════════════════════════════════════════════
+The customer buys a CITY DISCOVERY disguised as a game. Three priorities,
+in this exact order:
+
+  1. DISCOVER THE CITY — its history, its main monuments, its iconic
+     places that any decent local guide would mention. The walking tour
+     must stand on its own as a "best of [city]" even if the theme
+     didn't exist.
+  2. LEARN — the player should leave with new knowledge about the city,
+     not feel like they just walked.
+  3. PLAY THEMATICALLY — the theme is the narrator's THREAD, the fil
+     rouge that ties the stops together with a story. The theme is NOT
+     the selection filter.
+
+CRITICAL : "TIME ERASES TRACES"
+  Some themes (e.g. a 15-day partisan uprising in 1944, a single battle,
+  a literary figure who lived 30 years) only have 2-3 directly-linked
+  surviving locations. Forcing 8 stops on such a narrow theme means
+  including modern hotels with invented histories — DISASTER (see
+  Julien Alba incident 2026-05-15).
+
+  Instead: pick the city's most valuable patrimonial sites, and let the
+  narrator weave them into the theme. A 400-year-old listed building
+  with a great story but only a tangential theme link BEATS a modern
+  street that's "officially" thematic but visually boring.
+
 TASK
-  Find ${count} locations in ${params.city} that are HISTORICALLY DOCUMENTED as directly linked to the theme. Use Google Search to verify each one. Cite the source.
+  Find ${count} HISTORICALLY SIGNIFICANT locations in ${params.city}. Use
+  Google Search to verify each one. Cite the source.
+
+PRIORITIES FOR EACH LOCATION (apply in order)
+  1. PATRIMONIAL VALUE (essential, ~70% of the decision)
+     - Buildings, monuments, statues, squares of clear historical or
+       architectural importance.
+     - Cathedrals, palaces, town halls, castles, museums, university
+       quarters, listed/classed monuments, oldest streets, iconic
+       fountains.
+     - Anything any decent local guide would mention on a 90-minute
+       walking tour.
+
+  2. THEMATIC RESONANCE (bonus, ~30% of the decision)
+     - Among the patrimonial set, prefer locations that ALSO connect
+       to the theme (even loosely : the cathedral where partisans
+       rang the bell in 1944, the high school the writer attended,
+       the square where the proclamation was read).
+     - But never sacrifice patrimonial value for thematic purity.
+
+  3. MICRO-MEMORIALS (theme-specific addition, 1-3 stops max)
+     - For historical themes (war, resistance, persecution, revolution),
+       include 1-3 plaques / stelae / cippi commemorating specific
+       named victims or events. These provide emotional anchor.
+     - Specialized databases by country (use Google Search to query):
+         Italy — pietredellamemoria.it
+         Germany — stolpersteine.eu
+         France — memoiredeshommes.sga.defense.gouv.fr, ajpn.org
+         Spain — stolpersteine.eu (used for Francoism victims too)
+         Generic — "Wikipedia: Mémoriaux de [ville]"
 
 HARD CONSTRAINTS
-  1. Each location must be a REAL physical place with a street address that Google Maps can geocode.
-  2. The maximum pairwise distance between any two locations (start point included) must be ≤ ${(diameterM / 1000).toFixed(1)} km. Think of it as the diameter of the smallest circle that contains start point + all stops.
-  3. Prefer locations of clear historical / cultural relevance to the theme. Avoid generic modern hotels, restaurants, art galleries, or parks UNLESS they are themselves of documented historical importance to the theme.
-  4. Spread the locations across the city rather than clustering them all in one street.
-
-MIX OF NARRATIVE ANCHORS + MICRO-MEMORIALS (CRITICAL FOR HISTORICAL THEMES)
-  When the theme is historical (resistance, war, persecution, revolution,
-  political movement, a specific person, a literary figure...), the list
-  MUST include BOTH categories — never one without the other:
-
-  CATEGORY A — NARRATIVE ANCHORS (40-60% of stops)
-    Big-name buildings and public spaces that carry the broad story:
-    - The seat of power (Palazzo Comunale, Hôtel de Ville, parliament)
-    - Study centres / museums dedicated to the theme
-    - Family residences of key figures (writers, leaders, witnesses)
-    - Major squares where the iconic events took place
-    - Cathedrals or churches with documented thematic role
-    - Original buildings of the institutions involved
-
-  CATEGORY B — MICRO-MEMORIALS (40-60% of stops)
-    Small, specific, emotionally precise markers that ground abstract
-    history in named victims and dated events:
-    - Commemorative plaques (lapidi / plaques) with a specific name + date
-    - Stelae and cippi (memorial pillars) at the spot of a specific death
-    - "Stolperstein" or equivalent stumbling stones
-    - Inscribed paving stones
-    - Small monuments named after a single individual
-
-  These specialized databases are GOLD when the theme matches — use
-  Google Search to query them:
-    - Italy / Resistance: pietredellamemoria.it (lapidi, stele, cippi
-      across every Italian municipality with the Resistance theme)
-    - Germany / Nazi persecution: stolpersteine.eu
-    - France / WW2: memoiredeshommes.sga.defense.gouv.fr,
-      ajpn.org (anonymes justes et persécutés)
-    - Spain / Civil War: stolpersteine.eu (used for victims of Francoism)
-    - Generic: localized "Wikipedia: Mémoriaux de [ville]" lists
-
-  The mix matters: a tour with only narrative anchors feels monumental
-  and dry ("here was the seat of power, here is the museum"). A tour
-  with only micro-memorials feels like a cemetery walk ("here died X,
-  here died Y"). The combination is what makes the player FEEL the
-  history — abstract politics anchored on individual sacrifice.
+  1. Each location must be a REAL physical place with a street address
+     that Google Maps can geocode.
+  2. The maximum pairwise distance between any two locations (start
+     point included) must be ≤ ${(diameterM / 1000).toFixed(1)} km. Diameter of the smallest enclosing
+     circle.
+  3. ZERO modern hotels, restaurants, generic shops, or modern parks
+     unless they themselves are listed/classified heritage.
+  4. Spread across the city rather than clustering in one street.
 
 OUTPUT — JSON array, no markdown fences, no commentary before or after. Each item:
 {
@@ -202,9 +233,11 @@ OUTPUT — JSON array, no markdown fences, no commentary before or after. Each i
   "address": "<full street address: street, number, postal code, city>",
   "lat": <number, 6 decimals — your best estimate>,
   "lon": <number, 6 decimals — your best estimate>,
-  "historical_role": "<one sentence: why this place matters for the theme — for micro-memorials include the named person + date if known>",
-  "citation": "<URL or short source: 'Pietre della Memoria', 'Wikipedia: Republic_of_Alba', 'Centro Studi Fenoglio', 'Istoreto Piemonte', etc.>",
-  "access": "always_open" | "limited_access" | "unknown"
+  "patrimonial_role": "<one short paragraph: the FULL story of this place independently of the theme — who built it and when, why it matters in the city, what makes it patrimonial>",
+  "thematic_role": "<one sentence: how this place connects to the theme — empty string if no real connection (it's a patrimonial stop the narrator will mention thematically anyway)>",
+  "citation": "<URL or short source: 'Wikipedia: [page]', 'Centro Studi Fenoglio', 'Pietre della Memoria', etc.>",
+  "access": "always_open" | "limited_access" | "unknown",
+  "category": "patrimonial_landmark" | "thematic_anchor" | "micro_memorial"
 }
 
 If you cannot find ${count} locations that meet ALL constraints, return as many as you legitimately can — do not invent. A short list of authentic places beats a padded list of generic ones.
@@ -362,9 +395,19 @@ function coerceToRawPoi(item: unknown): RawThematicPoi | null {
   const address = typeof o.address === "string" ? o.address.trim() : "";
   const lat = typeof o.lat === "number" ? o.lat : NaN;
   const lon = typeof o.lon === "number" ? o.lon : NaN;
-  const role = typeof o.historical_role === "string" ? o.historical_role.trim() : "";
+  // Accept both new (patrimonial_role + thematic_role) and legacy
+  // (historical_role) schemas. Legacy maps everything onto patrimonial_role
+  // and leaves thematic_role empty — the narrator block will handle it.
+  const patrimonialRaw =
+    (typeof o.patrimonial_role === "string" && o.patrimonial_role) ||
+    (typeof o.historical_role === "string" && o.historical_role) ||
+    "";
+  const thematicRaw =
+    typeof o.thematic_role === "string" ? o.thematic_role : "";
   const citation = typeof o.citation === "string" ? o.citation.trim() : "";
   const accessRaw = typeof o.access === "string" ? o.access.trim() : "unknown";
+  const categoryRaw =
+    typeof o.category === "string" ? o.category.trim() : "patrimonial_landmark";
 
   if (!name || !address) return null;
   if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
@@ -376,13 +419,20 @@ function coerceToRawPoi(item: unknown): RawThematicPoi | null {
       ? accessRaw
       : "unknown";
 
+  const category =
+    categoryRaw === "thematic_anchor" || categoryRaw === "micro_memorial"
+      ? categoryRaw
+      : ("patrimonial_landmark" as const);
+
   return {
     name,
     address,
     latHint: lat,
     lonHint: lon,
-    historicalRole: role,
+    patrimonialRole: patrimonialRaw.trim(),
+    thematicRole: thematicRaw.trim(),
     citation,
     accessHint: access,
+    category,
   };
 }

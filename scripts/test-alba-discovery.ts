@@ -58,7 +58,9 @@ async function main() {
     console.log(`${i + 1}. ${p.name}`);
     console.log(`     Adresse: ${p.address}`);
     console.log(`     GPS hint: ${p.latHint.toFixed(6)}, ${p.lonHint.toFixed(6)}`);
-    console.log(`     Rôle: ${p.historicalRole}`);
+    console.log(`     Patrimoine: ${p.patrimonialRole.slice(0, 200)}`);
+    if (p.thematicRole) console.log(`     Thématique: ${p.thematicRole}`);
+    if (p.category) console.log(`     Cat: ${p.category}`);
     console.log(`     Source: ${p.citation}`);
     console.log("");
   }
@@ -85,7 +87,9 @@ async function main() {
     console.log(`     Address: ${c.address ?? "(none)"}`);
     console.log(`     placeId: ${c.placeId}`);
     if (ctx) {
-      console.log(`     Role anchored: ${ctx.historicalRole}`);
+      console.log(`     Patrimoine: ${ctx.patrimonialRole.slice(0, 160)}`);
+      if (ctx.thematicRole) console.log(`     Thème: ${ctx.thematicRole}`);
+      console.log(`     Catégorie: ${ctx.category}`);
     }
     console.log("");
   }

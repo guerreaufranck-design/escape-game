@@ -45,20 +45,22 @@ export interface ResearchedLocation {
    */
   landmarkName?: string;
   /**
-   * Per-stop thematic ancrage produced by Gemini Deep Research during
-   * the AI-first discovery phase (cf. parcours-discovery.ts). Tells
-   * Claude WHY this place matters for the theme — used to anchor the
-   * anecdote on real documented history rather than invent fiction.
+   * Per-stop ancrage produced by Gemini Deep Research during the AI-first
+   * discovery phase (cf. parcours-discovery.ts). Split into two parts
+   * since 2026-05-16 (post-incident Julien) :
+   *   - patrimonialRole = full history of the place INDEPENDENT of the
+   *     theme. Powers the landmark_history card that every stop shows.
+   *   - thematicRole = the theme-narrator's connection (may be empty).
+   *     Powers the anecdote block.
    *
-   * Example for Centro Studi Fenoglio (theme "Résistance Alba 1944"):
-   *   "Beppe Fenoglio's residence 1928-1959, where he wrote 'I 23
-   *    giorni della città di Alba' chronicling the partisan republic."
-   *
-   * Empty when discovery fell back to Google Places (legacy flow).
+   * Empty when discovery fell back to Google Places legacy.
    */
-  historicalRole?: string;
-  /** Source citation (URL or short reference) for the historicalRole. */
+  patrimonialRole?: string;
+  thematicRole?: string;
+  /** Source citation (URL or short reference). */
   citation?: string;
+  /** Discovery category from Gemini. */
+  poiCategory?: "patrimonial_landmark" | "thematic_anchor" | "micro_memorial";
 }
 
 /** A stop predefined by the game designer on oddballtrip */

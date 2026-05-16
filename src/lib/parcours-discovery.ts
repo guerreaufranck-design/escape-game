@@ -432,20 +432,26 @@ export interface DiscoverParcoursResult {
    */
   verifiedContext?: VerifiedThemeContext;
   /**
-   * Contexte thématique par-stop, posé par la discovery Gemini quand
-   * elle a réussi. Chaque entrée = {placeId, historicalRole, citation}
-   * pour un stop du parcours final. Claude utilise ces ancrages pour
-   * écrire des anecdotes factuelles sur les VRAIS lieux historiques
-   * plutôt que d'inventer une fiction par-dessus des POIs touristiques.
+   * Contexte par-stop posé par la discovery Gemini quand elle a réussi.
+   * Chaque entrée porte le role PATRIMONIAL (l'histoire complète du
+   * lieu, indépendamment du thème — ce qui alimente landmark_history
+   * dans la card de stop) ET le role THÉMATIQUE (lien au thème du jeu,
+   * peut être vide — alimente l'anecdote).
    *
-   * Vide si Gemini a échoué et qu'on est tombé sur le fallback Google
-   * Places — dans ce cas, comportement narratif legacy ("fiction libre
-   * DANS le thème").
+   * Architecture 2026-05-16 (post-incident Julien) :
+   *   - patrimoine first : on choisit les lieux pour leur valeur de
+   *     visite, pas pour leur match thématique
+   *   - thème en fil rouge : le narrateur tisse l'histoire du jeu par
+   *     dessus, mais ne définit pas la sélection
+   *
+   * Vide si fallback Google Places legacy.
    */
   thematicContext?: Array<{
     placeId: string;
-    historicalRole: string;
+    patrimonialRole: string;
+    thematicRole: string;
     citation: string;
+    category: "patrimonial_landmark" | "thematic_anchor" | "micro_memorial";
   }>;
   /**
    * Quelle source a alimenté le pool de candidats final :
@@ -531,8 +537,10 @@ export async function discoverParcours(
   let aiCandidates: NearbyCandidate[] = [];
   let thematicContext: Array<{
     placeId: string;
-    historicalRole: string;
+    patrimonialRole: string;
+    thematicRole: string;
     citation: string;
+    category: "patrimonial_landmark" | "thematic_anchor" | "micro_memorial";
   }> = [];
   let discoverySource: "gemini_thematic" | "google_places" = "google_places";
 

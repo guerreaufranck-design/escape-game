@@ -23,6 +23,8 @@ import {
 import {
   generateGameSteps,
   generateEpilogue,
+  generateIntroSpeech,
+  generateFinalRiddle,
   validateGeneratedSteps,
   regenerateStep,
   adaptNarrativeForReplacedStops,
@@ -971,13 +973,20 @@ export async function generateGameFromTemplate(
     // Google Places fallback ran.
     const thematicByPlaceId = new Map<
       string,
-      { historicalRole: string; citation: string }
+      {
+        patrimonialRole: string;
+        thematicRole: string;
+        citation: string;
+        category: "patrimonial_landmark" | "thematic_anchor" | "micro_memorial";
+      }
     >();
     if (discovery.thematicContext) {
       for (const t of discovery.thematicContext) {
         thematicByPlaceId.set(t.placeId, {
-          historicalRole: t.historicalRole,
+          patrimonialRole: t.patrimonialRole,
+          thematicRole: t.thematicRole,
           citation: t.citation,
+          category: t.category,
         });
       }
     }
@@ -999,8 +1008,10 @@ export async function generateGameFromTemplate(
           answerSource: "virtual_ar" as const,
           source: s.source ?? "google-curated",
           themeLink: s.description,
-          historicalRole: themed?.historicalRole,
+          patrimonialRole: themed?.patrimonialRole,
+          thematicRole: themed?.thematicRole,
           citation: themed?.citation,
+          poiCategory: themed?.category,
         };
       },
     );
@@ -1293,14 +1304,20 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
-    // STEP 6 : Epilogue
+    // STEP 6 : Epilogue + Intro Speech + Final Riddle (parallèle)
     // ============================================
-    // Photos historiques Wikipedia retirées (commit 2026-05-05) — la
-    // couche AR fonctionne sans : le mot magique se matérialise sur
-    // la façade, le character_dialogue donne le contexte, l'AR_treasure
-    // est révélé. La photo Wikipedia ajoutait peu et compliquait la
-    // mise en page UI.
-    const epilogue = await generateEpilogue({
+    // Trois nouveaux blocs narratifs (vision client 2026-05-16) :
+    //   - intro_speech : monologue du guide avant stop 1 (durée, philosophie,
+    //     "tous les lieux ne sont pas thématiques mais tous valent la visite")
+    //   - final_riddle + final_answer + final_answer_explanation : énigme
+    //     finale combinant les indices, 2 essais, épilogue conditionnel
+    //   - epilogue (legacy) : conservé pour rétrocompat — joué après l'énigme
+    //
+    // Les trois tournent en parallèle pour ne pas séquentialiser 3 appels
+    // Claude (~30s gagnées). Tout est non-bloquant : si l'un échoue, le
+    // jeu publie quand même (mais l'UX du joueur dégrade gracieusement).
+    const [epilogue, introSpeech, finalRiddle] = await Promise.all([
+      generateEpilogue({
         city: template.city,
         country: template.country,
         theme: template.theme,
@@ -1313,7 +1330,44 @@ export async function generateGameFromTemplate(
           `[Pipeline] Epilogue generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
         );
         return null;
-      });
+      }),
+      generateIntroSpeech({
+        title: template.theme,
+        city: template.city,
+        country: template.country,
+        theme: template.theme,
+        themeDescription: effectiveThemeDescription,
+        estimatedDurationMin: template.estimatedDurationMin,
+        stopCount: steps.length,
+      }).catch((err) => {
+        console.warn(
+          `[Pipeline] Intro speech generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
+        );
+        return null;
+      }),
+      generateFinalRiddle({
+        title: template.theme,
+        city: template.city,
+        country: template.country,
+        theme: template.theme,
+        themeDescription: effectiveThemeDescription,
+        steps: steps.map((s, i) => ({
+          stepOrder: i + 1,
+          title: s.title,
+          answer: s.answer_text,
+          anecdote: s.anecdote,
+        })),
+      }).catch((err) => {
+        console.warn(
+          `[Pipeline] Final riddle generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
+        );
+        return null;
+      }),
+    ]);
+
+    console.log(
+      `[Pipeline] Narrative shell: epilogue=${epilogue ? "✓" : "✗"}, intro=${introSpeech ? "✓" : "✗"}, finalRiddle=${finalRiddle ? "✓ (" + finalRiddle.answer + ")" : "✗"}`,
+    );
 
     // ============================================
     // STEP 7 : Insert DB
@@ -1331,6 +1385,8 @@ export async function generateGameFromTemplate(
       verifiedLocations,
       needsReview,
       reviewReason,
+      introSpeech,
+      finalRiddle,
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
@@ -1447,6 +1503,14 @@ async function insertGameIntoDatabase(
   // activation jusqu'à inspection humaine.
   needsReview: boolean = false,
   reviewReason: string | undefined = undefined,
+  // Patrimoine-first UX (migration 027 / vision 2026-05-16) :
+  //   - introSpeech : discours du guide avant le stop 1
+  //   - finalRiddle : énigme finale combinant les indices, 2 essais,
+  //                   épilogue conditionnel
+  // Nullable : si la génération a échoué, le jeu publie quand même
+  // mais l'UX dégrade (pas de page intro / pas d'énigme finale).
+  introSpeech: { text: string } | null = null,
+  finalRiddle: { riddle: string; answer: string; explanation: string } | null = null,
 ): Promise<string> {
   const supabase = createAdminClient();
   const gameId = uuidv4();
@@ -1488,6 +1552,12 @@ async function insertGameIntoDatabase(
     // oddballtrip jusqu'à inspection humaine (cf. migration 023).
     needs_review: needsReview,
     review_reason: reviewReason ?? null,
+    // Patrimoine-first UX (migration 027). Stored as JSONB ({en} for now,
+    // translated on demand to other locales by the translation pipeline).
+    intro_speech: introSpeech ? { en: introSpeech.text } : null,
+    final_riddle_text: finalRiddle ? { en: finalRiddle.riddle } : null,
+    final_answer: finalRiddle ? finalRiddle.answer : null,
+    final_answer_explanation: finalRiddle ? { en: finalRiddle.explanation } : null,
     // ── ROADTRIP (contrat OddballTrip 2026-05-10, migration 024) ──
     transport_mode: template.transportMode ?? "walking",
     radius_km: template.radiusKm ?? null,
@@ -1659,6 +1729,16 @@ async function insertGameIntoDatabase(
       validation_radius_meters: step.validation_radius_meters,
       hints: trimmedHints,
       anecdote: step.anecdote,
+      // Patrimoine-first (migration 027). landmark_history is the FULL
+      // story of the place independent of the theme — played as the
+      // first card after the AR find. JSONB {en} for now.
+      landmark_history: step.landmark_history
+        ? { en: step.landmark_history }
+        : null,
+      // Catégorie + citation propagées depuis la discovery Gemini
+      // (vide pour les jeux en fallback Google Places legacy).
+      poi_category: sourceLocation?.poiCategory ?? null,
+      landmark_citation: sourceLocation?.citation ?? null,
       bonus_time_seconds: step.bonus_time_seconds,
       has_photo_challenge: false,
       ar_historical_photo_url: null,

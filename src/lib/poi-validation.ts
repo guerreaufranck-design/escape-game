@@ -130,12 +130,19 @@ export interface ValidationResult {
     address?: string;
   }>;
   /** Validated POIs paired with their original Gemini metadata. Used
-   *  downstream by the narrative generator to anchor anecdotes on
-   *  real historical_role + citation. */
+   *  downstream by the narrative generator to anchor each stop's
+   *  landmark_history (patrimonial) and anecdote (thematic) on real
+   *  documented facts. */
   themedContext: Array<{
     placeId: string;
-    historicalRole: string;
+    /** Full patrimonial story (1 paragraph) — fuels landmark_history. */
+    patrimonialRole: string;
+    /** Theme connection (1 sentence) — fuels anecdote framing. May be empty. */
+    thematicRole: string;
+    /** Source URL or short reference. */
     citation: string;
+    /** Category from Gemini: patrimonial_landmark / thematic_anchor / micro_memorial. */
+    category: "patrimonial_landmark" | "thematic_anchor" | "micro_memorial";
   }>;
 }
 
@@ -263,8 +270,10 @@ export async function validateThematicPois(
       candidate,
       themedEntry: {
         placeId: candidatePlaceId,
-        historicalRole: raw.historicalRole,
+        patrimonialRole: raw.patrimonialRole,
+        thematicRole: raw.thematicRole,
         citation: raw.citation,
+        category: raw.category ?? "patrimonial_landmark",
       },
     };
   });

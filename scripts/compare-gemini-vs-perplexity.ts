@@ -140,7 +140,7 @@ async function main() {
     for (const [i, p] of pois.entries()) {
       console.log(`  ${i + 1}. ${p.name}`);
       console.log(`     ${p.address}`);
-      console.log(`     ${p.historicalRole.slice(0, 100)}${p.historicalRole.length > 100 ? "…" : ""}`);
+      console.log(`     ${p.patrimonialRole.slice(0, 100)}${p.patrimonialRole.length > 100 ? "…" : ""}`);
     }
   } else {
     console.log(`✗ FAIL: ${geminiResult.reason}`);
