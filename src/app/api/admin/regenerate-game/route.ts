@@ -346,38 +346,90 @@ async function handleRegenerate(request: NextRequest): Promise<NextResponse> {
  */
 function inferCountryFromCity(city: string): string | null {
   const c = city.trim().toLowerCase();
+  // Stratégie 1 : la chaîne contient explicitement le pays
+  // (cas typique du back-office "Historic center of Lyon, France").
+  const explicitCountries: Array<[RegExp, string]> = [
+    [/\b(france|french)\b/i, "France"],
+    [/\b(italy|italia|italian|italie)\b/i, "Italy"],
+    [/\b(spain|españa|spanish|espagne)\b/i, "Spain"],
+    [/\b(germany|deutschland|german|allemagne)\b/i, "Germany"],
+    [/\b(portugal|portuguese)\b/i, "Portugal"],
+    [/\b(luxembourg)\b/i, "Luxembourg"],
+    [/\b(greece|greek|grece|grèce)\b/i, "Greece"],
+    [/\b(japan|nippon|japanese|japon)\b/i, "Japan"],
+    [/\b(czech)\b/i, "Czech Republic"],
+    [/\b(uk|united kingdom|england|english|britain|british)\b/i, "United Kingdom"],
+    [/\b(belgium|belgian)\b/i, "Belgium"],
+    [/\b(netherlands|holland|dutch)\b/i, "Netherlands"],
+    [/\b(austria|austrian|österreich)\b/i, "Austria"],
+    [/\b(switzerland|swiss|suisse)\b/i, "Switzerland"],
+  ];
+  for (const [rx, country] of explicitCountries) {
+    if (rx.test(city)) return country;
+  }
+
+  // Stratégie 2 : lookup par nom de ville (ancien chemin, conservé pour rétrocompat).
   const map: Record<string, string> = {
     alba: "Italy",
     rome: "Italy",
     venezia: "Italy",
     venise: "Italy",
     florence: "Italy",
+    cuneo: "Italy",
     paris: "France",
     rouen: "France",
     nice: "France",
     "saint-malo": "France",
     cluny: "France",
     tournus: "France",
+    lyon: "France",
+    lugdunum: "France",
+    bordeaux: "France",
+    marseille: "France",
+    toulouse: "France",
+    nantes: "France",
+    "la rochelle": "France",
+    strasbourg: "France",
+    "aix-en-provence": "France",
+    avignon: "France",
+    beziers: "France",
+    "béziers": "France",
+    montpellier: "France",
     clervaux: "Luxembourg",
     berlin: "Germany",
     munich: "Germany",
+    rothenburg: "Germany",
     granada: "Spain",
     sevilla: "Spain",
+    seville: "Spain",
     "los cristianos": "Spain",
     girona: "Spain",
+    gerone: "Spain",
+    toledo: "Spain",
+    "san cristóbal de la laguna": "Spain",
+    "la laguna": "Spain",
+    "puerto de la cruz": "Spain",
+    garachico: "Spain",
+    madrid: "Spain",
+    barcelona: "Spain",
     aegina: "Greece",
     rhodes: "Greece",
+    athens: "Greece",
+    athènes: "Greece",
     prague: "Czech Republic",
-    rothenburg: "Germany",
     hakata: "Japan",
     fukuoka: "Japan",
-    "la laguna": "Spain",
     shibuya: "Japan",
     tokyo: "Japan",
-    garachico: "Spain",
-    "san cristóbal de la laguna": "Spain",
-    "puerto de la cruz": "Spain",
-    cuneo: "Italy",
+    cambridge: "United Kingdom",
+    london: "United Kingdom",
+    londres: "United Kingdom",
   };
-  return map[c] ?? null;
+  // Direct hit
+  if (map[c]) return map[c];
+  // Substring match (la "city" peut contenir des suffixes "from X to Y")
+  for (const [key, country] of Object.entries(map)) {
+    if (c.includes(key)) return country;
+  }
+  return null;
 }
