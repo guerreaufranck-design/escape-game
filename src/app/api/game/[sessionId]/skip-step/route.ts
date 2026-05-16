@@ -20,12 +20,19 @@ async function resolveAnecdoteAndTitle(
     anecdote: unknown;
     title: unknown;
     landmark_history?: unknown;
+    game_id?: string;
+    step_order?: number;
   },
   locale: string,
 ): Promise<{
   anecdoteText: string | null;
   stepTitleText: string;
   landmarkHistoryText: string | null;
+  /** URL audio précise du landmark_history DE CE STEP — pas du suivant.
+   *  Permet au player UI d'éviter le bug "audio du stop N+1 sur texte
+   *  du stop N" causé par le pre-fetch en background après skip. */
+  landmarkHistoryAudioUrl: string | null;
+  anecdoteAudioUrl: string | null;
 }> {
   let anecdoteText = step.anecdote ? t(step.anecdote, locale) : null;
   let stepTitleText = t(step.title, locale);
@@ -69,7 +76,35 @@ async function resolveAnecdoteAndTitle(
       }
     }
   }
-  return { anecdoteText, stepTitleText, landmarkHistoryText };
+  // Récupérer les URLs audio DE CE STEP précisément (pas du suivant).
+  // Sans ça, le player UI utilise gameState.audioMap qui aura été
+  // pré-fetché sur step_order+1 par le moment où le joueur clique
+  // "Ecouter" sur la card du skip overlay → mismatch audio/texte.
+  let landmarkHistoryAudioUrl: string | null = null;
+  let anecdoteAudioUrl: string | null = null;
+  if (step.game_id && typeof step.step_order === "number") {
+    const supabase = createAdminClient();
+    const { data: audioRows } = await supabase
+      .from("audio_cache")
+      .select("slot, public_url")
+      .eq("game_id", step.game_id)
+      .eq("language", locale)
+      .eq("step_order", step.step_order);
+    if (audioRows) {
+      landmarkHistoryAudioUrl =
+        audioRows.find((r) => r.slot === "landmark_history")?.public_url ?? null;
+      anecdoteAudioUrl =
+        audioRows.find((r) => r.slot === "anecdote")?.public_url ?? null;
+    }
+  }
+
+  return {
+    anecdoteText,
+    stepTitleText,
+    landmarkHistoryText,
+    landmarkHistoryAudioUrl,
+    anecdoteAudioUrl,
+  };
 }
 
 // Skip is no longer a punishment — it's a safety net so a player who
@@ -195,8 +230,13 @@ export async function POST(
       // Résoudre + traduire l'anecdote ET le titre pour le client
       // (même politique que validate-step — skip ne doit pas priver
       // le joueur du contenu pédagogique).
-      const { anecdoteText, stepTitleText, landmarkHistoryText } =
-        await resolveAnecdoteAndTitle(step, locale);
+      const {
+        anecdoteText,
+        stepTitleText,
+        landmarkHistoryText,
+        landmarkHistoryAudioUrl,
+        anecdoteAudioUrl,
+      } = await resolveAnecdoteAndTitle(step, locale);
 
       return NextResponse.json({
         success: true,
@@ -205,6 +245,8 @@ export async function POST(
         answer: t(step.answer_text, locale),
         anecdote: anecdoteText,
         landmarkHistory: landmarkHistoryText,
+        landmarkHistoryAudioUrl,
+        anecdoteAudioUrl,
         stepTitle: stepTitleText,
         penaltyAdded: SKIP_PENALTY_SECONDS,
       });
@@ -220,8 +262,13 @@ export async function POST(
       .eq("id", sessionId);
 
     // Résoudre + traduire l'anecdote + landmark_history pour le client.
-    const { anecdoteText, stepTitleText, landmarkHistoryText } =
-      await resolveAnecdoteAndTitle(step, locale);
+    const {
+      anecdoteText,
+      stepTitleText,
+      landmarkHistoryText,
+      landmarkHistoryAudioUrl,
+      anecdoteAudioUrl,
+    } = await resolveAnecdoteAndTitle(step, locale);
 
     return NextResponse.json({
       success: true,
@@ -231,6 +278,8 @@ export async function POST(
       answer: t(step.answer_text, locale),
       anecdote: anecdoteText,
       landmarkHistory: landmarkHistoryText,
+      landmarkHistoryAudioUrl,
+      anecdoteAudioUrl,
       stepTitle: stepTitleText,
       penaltyAdded: SKIP_PENALTY_SECONDS,
     });

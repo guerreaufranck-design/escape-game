@@ -281,6 +281,43 @@ RULE 5 — DISTRIBUTION
   If you have N verified figures and ${stepCount} stops, distribute the
   figures across stops: each anecdote anchors on a DIFFERENT verified
   figure when possible. Don't repeat the same figure on every stop.
+
+╔═══════════════════════════════════════════════════════════════════════╗
+║ RULE 6 — TTS-FRIENDLY TEXT (2026-05-16, ElevenLabs compat)            ║
+╠═══════════════════════════════════════════════════════════════════════╣
+║                                                                       ║
+║ ElevenLabs reads text letter-by-letter when it sees abbreviations.    ║
+║ "400 av JC" becomes "quatre cents A V J C" — INCOMPRÉHENSIBLE.        ║
+║                                                                       ║
+║ ALL fields meant for TTS (riddle_text, anecdote, landmark_history,    ║
+║ ar_character_dialogue, ar_treasure_reward) MUST be SPELLED OUT :      ║
+║                                                                       ║
+║ FORBIDDEN              →  USE INSTEAD                                 ║
+║ ──────────────────────────────────────────                            ║
+║ "av JC", "av. J.-C."   →  "avant Jésus-Christ" / "before Christ"      ║
+║ "apr JC", "ap. J.-C."  →  "après Jésus-Christ" / "after Christ"       ║
+║ "av notre ère"         →  "avant notre ère"                           ║
+║ "ap notre ère"         →  "après notre ère"                           ║
+║ "siècle" abbrev "s."   →  "siècle" en toutes lettres                  ║
+║ "Mr." / "Mme." / "Dr." →  "Monsieur" / "Madame" / "Docteur"           ║
+║ "St." / "Ste."         →  "Saint" / "Sainte" (or local equivalent)    ║
+║ "n°" / "no."           →  "numéro"                                    ║
+║ "etc." final           →  "et cetera" écrit en toutes lettres OR drop ║
+║ "km", "m", "cm"        →  "kilomètres", "mètres", "centimètres"       ║
+║ "h" pour heure         →  "heures" / "hours"                          ║
+║ "AD" / "BC"            →  "anno Domini" / "before Christ" or "BCE/CE" ║
+║ "vs."                  →  "contre" / "versus"                         ║
+║ "Tps", "Mvt"           →  pas d'abréviations métier obscures          ║
+║                                                                       ║
+║ ROMAN NUMERALS (déjà couvert RULE 3b) : convertir en chiffres arabes  ║
+║ OU épeler en mot ordinal lisible (e.g. "twelfth century" plutôt       ║
+║ que "12th century" ou "XIIème siècle").                               ║
+║                                                                       ║
+║ PRINCIPE GÉNÉRAL : si une humaine devant ton texte lit "A V J C" au   ║
+║ lieu de "avant Jésus-Christ", c'est un échec. Écris comme tu          ║
+║ parlerais à voix haute.                                               ║
+║                                                                       ║
+╚═══════════════════════════════════════════════════════════════════════╝
 ═══════════════════════════════════════════════════════════════════════
 
 `;

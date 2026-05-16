@@ -107,6 +107,13 @@ export default function PlayPage() {
   // Affichée APRÈS la trouvaille AR, AVANT l'anecdote thématique.
   // Permet la promesse "vous découvrez la ville, vous ne marchez pas pour rien".
   const [landmarkHistory, setLandmarkHistory] = useState<string | null>(null);
+  // URLs audio précises POUR LE STEP TERMINÉ (anti-bug N+1 audio sur N texte).
+  // Retournées par validate-step et skip-step explicitement, persistent
+  // pendant que l'overlay stepSuccess / skip est visible, puis sont reset.
+  const [completedStepAudios, setCompletedStepAudios] = useState<{
+    landmarkHistory: string | null;
+    anecdote: string | null;
+  } | null>(null);
   // État de l'énigme finale (énigme combinant les indices, 2 essais max).
   const [finalResult, setFinalResult] = useState<{
     status: "success" | "failed" | "wrong";
@@ -538,6 +545,11 @@ export default function PlayPage() {
         if (data.landmarkHistory) {
           setLandmarkHistory(data.landmarkHistory);
         }
+        // URLs audio précises du step terminé — évite le bug N+1.
+        setCompletedStepAudios({
+          landmarkHistory: data.landmarkHistoryAudioUrl ?? null,
+          anecdote: data.anecdoteAudioUrl ?? null,
+        });
         if (data.treasureReward && data.treasureObject) {
           setTreasure({ text: data.treasureReward, object: data.treasureObject });
         } else {
@@ -633,6 +645,11 @@ export default function PlayPage() {
         if (data.landmarkHistory) {
           setLandmarkHistory(data.landmarkHistory);
         }
+        // URLs audio précises du step skippé — évite le bug N+1.
+        setCompletedStepAudios({
+          landmarkHistory: data.landmarkHistoryAudioUrl ?? null,
+          anecdote: data.anecdoteAudioUrl ?? null,
+        });
 
         // Pre-fetch next step (background) — same trick as validateStep
         // so the player isn't blocked on a 30-40s translation when they
@@ -654,6 +671,7 @@ export default function PlayPage() {
     setSkipAnswer(null);
     setAnecdote(null); // clear anecdote (était affichée dans le skip overlay)
     setLandmarkHistory(null); // clear landmark history aussi
+    setCompletedStepAudios(null); // clear audio URLs précises du step skippé
     narration.stop();  // arrêter audio anecdote en cours si lecture
     if (skipCompleted) {
       setShowFinalCode(true);
@@ -1087,7 +1105,7 @@ export default function PlayPage() {
                         text={landmarkHistory}
                         speaking={narration.speaking}
                         currentText={narrationText}
-                        onSpeak={(t) => handleSpeak(t, gameState.audioMap?.landmarkHistory)}
+                        onSpeak={(t) => handleSpeak(t, completedStepAudios?.landmarkHistory)}
                         variant="pill"
                         locale={locale}
                       />
@@ -1116,7 +1134,7 @@ export default function PlayPage() {
                         text={anecdote.text}
                         speaking={narration.speaking}
                         currentText={narrationText}
-                        onSpeak={(t) => handleSpeak(t, gameState.audioMap?.anecdote)}
+                        onSpeak={(t) => handleSpeak(t, completedStepAudios?.anecdote)}
                         variant="pill"
                         locale={locale}
                       />
@@ -1164,6 +1182,7 @@ export default function PlayPage() {
                 setStepSuccess(false);
                 setAnecdote(null);
                 setLandmarkHistory(null);
+                setCompletedStepAudios(null);
                 setCorrectAnswer(null);
                 setTreasure(null);
                 narration.stop();
@@ -1237,7 +1256,7 @@ export default function PlayPage() {
                         currentText={narrationText}
                         onSpeak={(t) => speakWithOverlay(
                           t,
-                          gameState?.audioMap?.landmarkHistory,
+                          completedStepAudios?.landmarkHistory,
                           tt('play.theStory', locale) || "L'histoire du lieu"
                         )}
                         variant="pill"
@@ -1271,7 +1290,7 @@ export default function PlayPage() {
                         text={anecdote.text}
                         speaking={narration.speaking}
                         currentText={narrationText}
-                        onSpeak={(t) => handleSpeak(t, gameState?.audioMap?.anecdote)}
+                        onSpeak={(t) => handleSpeak(t, completedStepAudios?.anecdote)}
                         variant="pill"
                         locale={locale}
                       />

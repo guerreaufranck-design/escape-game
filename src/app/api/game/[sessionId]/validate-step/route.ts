@@ -225,6 +225,21 @@ export async function POST(
 
     const isLastStep = stepOrder >= session.total_steps;
 
+    // Pré-fetch les URLs audio DE CE STEP précisément (pas du suivant) —
+    // évite le bug "audio du stop N+1 sur texte du stop N" sur les cards
+    // stepSuccess (vision 2026-05-16).
+    const { data: stepAudioRows } = await supabase
+      .from("audio_cache")
+      .select("slot, public_url")
+      .eq("game_id", session.game_id)
+      .eq("language", locale)
+      .eq("step_order", stepOrder);
+    const stepAudios = {
+      anecdote: stepAudioRows?.find((r) => r.slot === "anecdote")?.public_url ?? null,
+      landmark_history:
+        stepAudioRows?.find((r) => r.slot === "landmark_history")?.public_url ?? null,
+    };
+
     if (isLastStep) {
       // Auto-complete the game
       const totalTimeSeconds = Math.round(
@@ -394,7 +409,9 @@ export async function POST(
       nextStep: stepOrder + 1,
       completed: false,
       anecdote: anecdoteText,
+      anecdoteAudioUrl: stepAudios.anecdote,
       landmarkHistory: landmarkHistoryText,
+      landmarkHistoryAudioUrl: stepAudios.landmark_history,
       stepTitle: stepTitleText,
       answerText,
       treasureReward,
