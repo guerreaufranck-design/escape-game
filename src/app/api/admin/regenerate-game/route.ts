@@ -111,6 +111,24 @@ function reconstructNarrative(game: GameRow): string {
 }
 
 export async function POST(request: NextRequest) {
+  // Wrap the whole handler in try/catch so we ALWAYS return JSON
+  // (instead of Next.js default HTML error page on uncaught throw).
+  try {
+    return await handleRegenerate(request);
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[regenerate-game] uncaught:", msg);
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `Exception non catchée : ${msg}`,
+      },
+      { status: 500 },
+    );
+  }
+}
+
+async function handleRegenerate(request: NextRequest): Promise<NextResponse> {
   const t0 = Date.now();
 
   if (!(await isAuthorized(request))) {

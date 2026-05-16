@@ -189,14 +189,29 @@ export function GameCard({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          // Le bouton admin appelle directement le backend authentifié par
-          // session admin (cookies). L'endpoint accepte aussi le Bearer
-          // EXTERNAL_API_SECRET pour les calls CLI — donc on n'envoie pas
-          // de header Authorization ici, le middleware admin valide via
-          // session cookie.
         },
         body: JSON.stringify({ slug, resetSessions: true }),
       });
+
+      // Robust response parsing — l'endpoint peut renvoyer du HTML
+      // (Vercel timeout 504, Next.js 500 par défaut) au lieu de JSON.
+      // Avant de blow up sur res.json(), on check content-type.
+      const contentType = res.headers.get("content-type") || "";
+      const isJson = contentType.includes("application/json");
+
+      if (!isJson) {
+        const text = await res.text();
+        const preview = text.slice(0, 250).replace(/<[^>]+>/g, "").trim();
+        setRegenResult({
+          ok: false,
+          error:
+            res.status === 504
+              ? `Timeout serveur après 5 min (HTTP 504). La pipeline a peut-être finie en arrière-plan — recharge la page dans 2 min pour vérifier.`
+              : `Réponse non-JSON (HTTP ${res.status}). Aperçu : ${preview.slice(0, 200)}`,
+        });
+        return;
+      }
+
       const data = (await res.json()) as RegenerateResult;
       if (!res.ok || !data.ok) {
         setRegenResult({
