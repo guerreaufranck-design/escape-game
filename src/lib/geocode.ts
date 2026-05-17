@@ -137,16 +137,28 @@ function nameTokens(s: string): Set<string> {
 }
 
 /**
- * Vérifie qu'au moins un token DISTINCTIF du nom demandé apparaît
+ * Vérifie que les tokens DISTINCTIFS du nom demandé apparaissent
  * dans le nom retourné par le geocoder. "Distinctif" = hors stopword
  * et hors nom de ville (qu'on retire des deux côtés pour ne pas
  * valider un match basé uniquement sur "Clervaux" présent partout).
  *
- * Cas d'usage : Google Places sur "Pont sur la Clerve, Clervaux"
- * retourne "Abbaye Saint-Maurice, Clervaux" parce que le pont n'est
- * pas un POI nommé chez eux. La ville matche mais aucun des tokens
- * distinctifs ("pont", "clerve") n'apparaît dans la réponse → on
- * rejette pour éviter le faux positif.
+ * Stratégie de seuil (durcie 2026-05-17 post-Zadar) :
+ *  - 1 token distinctif       → match obligatoire (100 %)
+ *  - 2 tokens distinctifs     → match obligatoire des DEUX
+ *    Cas réel Zadar : "Crkva sv. Marije" [crkva, marije] vs
+ *    "Crkva sv. Frane" [crkva, frane] — 1/2 match sur "crkva" passait
+ *    avec l'ancien seuil "≥ 1 token". Maintenant les 2 doivent matcher,
+ *    le faux positif est attrapé.
+ *  - 3+ tokens distinctifs    → ≥ 60 % des tokens demandés présents
+ *    Tolère les variations de display name de Google (qui peut retourner
+ *    "Iglesia del Carmen" pour "Iglesia de Nuestra Señora del Carmen"
+ *    — 2/4 = 50% donc rejeté, mais c'est OK : c'est probablement une
+ *    chapelle différente du même nom court).
+ *
+ * Cas d'usage initial conservé : Google Places sur "Pont sur la Clerve,
+ * Clervaux" retourne "Abbaye Saint-Maurice, Clervaux" parce que le pont
+ * n'est pas un POI nommé chez eux. La ville matche mais aucun des tokens
+ * distinctifs ("pont", "clerve") n'apparaît dans la réponse → on rejette.
  */
 function namesMatch(requested: string, returned: string, city: string): boolean {
   const reqTokens = nameTokens(requested);
@@ -158,10 +170,18 @@ function namesMatch(requested: string, returned: string, city: string): boolean 
     return true;
   }
   const retTokens = nameTokens(returned);
+  let matches = 0;
   for (const t of reqTokens) {
-    if (retTokens.has(t)) return true;
+    if (retTokens.has(t)) matches++;
   }
-  return false;
+  // Pour 1-2 tokens : require ALL match (très strict — un nom court
+  // qui ne match qu'à moitié est probablement un POI différent).
+  // Pour 3+ tokens : require ≥ 60 % (tolère les abrégés Google).
+  const required =
+    reqTokens.size <= 2
+      ? reqTokens.size
+      : Math.ceil(reqTokens.size * 0.6);
+  return matches >= required;
 }
 
 export interface GeocodeOptions {

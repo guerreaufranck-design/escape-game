@@ -102,17 +102,18 @@ function boundingBoxAround(
 
 /** Max acceptable distance between Gemini's hint coords and Google's
  *  canonical coords. Above this, we suspect Gemini hallucinated a
- *  different place with a similar name (e.g. another "Liceo Govone"
- *  in another city). We keep the Google version but log a warning;
- *  if the displayName also looks off, the geocoder's own name-match
- *  guard already drops the result. */
-const HINT_DRIFT_WARN_M = 500;
+ *  different place with a similar name. Tightened 2026-05-17 after
+ *  Zadar incident (3/7 stops off by 340-1100 m, all within the old
+ *  500 m WARN range so no signal fired). 200 m = a player can still
+ *  visually spot the landmark from the marker. */
+const HINT_DRIFT_WARN_M = 200;
 
 /** Max acceptable drift before we hard-reject the POI as a likely
- *  hallucination. 5 km is well beyond any reasonable geocoder
- *  imprecision and signals "we asked for X in Alba, Italy and got
- *  X in Madrid". */
-const HINT_DRIFT_REJECT_M = 5_000;
+ *  hallucination. Tightened 2026-05-17 (was 5 km — let Zadar Stop 5
+ *  through at 1.1 km drift). 1.5 km = ~ same block, beyond is clearly
+ *  another place (same street name in different district, homonym
+ *  POI in adjacent neighbourhood, etc.). */
+const HINT_DRIFT_REJECT_M = 1_500;
 
 export interface ValidatePoisParams {
   city: string;
@@ -158,65 +159,89 @@ export async function validateThematicPois(
   const rejected: ValidationResult["rejected"] = [];
   const themedContext: ValidationResult["themedContext"] = [];
 
-  // Parallel geocoding. Two-tier strategy:
-  //   1. Address-first via Google Geocoding API directly (no name-match
-  //      heuristic — the address IS the identifier here).
-  //   2. Fallback to name-based geocodeLocation only if address lookup
-  //      fails (rare: Gemini got the address right ~95% of the time).
+  // Parallel geocoding. NAME-FIRST strategy (revised 2026-05-17 post-Zadar).
+  //
+  // Why name-first: Google Places `findplacefromtext` is purpose-built
+  // for named POIs and uses Google's authoritative POI database. Address-
+  // first was the legacy approach but it trusted Gemini's hallucinated
+  // address blindly — if Gemini invented an address consistent with its
+  // hallucinated coords, Google geocoded the wrong address to wrong
+  // coords and the pipeline accepted them (3/7 Zadar stops failed this
+  // way: Cathedral 370 m off, Sv. Marije 1.1 km off, Sv. Krševana 340 m).
+  //
+  // The user's manual technique that always works: type `"name, city"`
+  // in Google Maps. That's exactly what `geocodeLocation(name, city)`
+  // does via Places API. So we now match that flow:
+  //   1. geocodeLocation(name, city) — Places findplacefromtext, the
+  //      gold standard for named landmarks (sub-10 m).
+  //   2. geocodeAddress(address) — fallback when name lookup fails
+  //      (rare: small chapels, plazas without dedicated POI entries).
+  //   3. geocodeLocation(address) — last resort when API key missing
+  //      or Google rejects (falls back to Nominatim).
   const tasks = rawPois.map(async (raw) => {
-    const addressGeo = await geocodeAddress(
-      raw.address,
-      params.startPoint,
-      params.diameterCapM,
-    );
-
     let lat: number;
     let lon: number;
     let displayName: string;
     let placeId: string;
 
-    if (addressGeo) {
-      ({ lat, lon, displayName, placeId } = addressGeo);
-    } else {
-      // Three-step fallback chain — robust across environments:
-      //   2. geocodeLocation(address) — same Google chain but with the
-      //      namesMatch guard. Works when GOOGLE_MAPS_API_KEY is missing
-      //      (falls down to Nominatim).
-      //   3. geocodeLocation(name) — last resort, may fail namesMatch.
-      const addressFallback = await geocodeLocation(
-        raw.address,
-        params.city,
-        params.country,
-        {
-          referencePoint: params.startPoint,
-          maxDistanceM: params.diameterCapM,
-        },
-      );
-      const nameFallback =
-        addressFallback ??
-        (await geocodeLocation(raw.name, params.city, params.country, {
-          referencePoint: params.startPoint,
-          maxDistanceM: params.diameterCapM,
-        }));
+    // Step 1: NAME-first via Google Places findplacefromtext.
+    const nameGeo = await geocodeLocation(
+      raw.name,
+      params.city,
+      params.country,
+      {
+        referencePoint: params.startPoint,
+        maxDistanceM: params.diameterCapM,
+      },
+    );
 
-      if (!nameFallback) {
-        return {
-          ok: false as const,
-          raw,
-          reason: "no geocode match (Google address + Google/Nominatim address + Google/Nominatim name all failed)",
-        };
+    if (nameGeo && nameGeo.confidence !== "low") {
+      lat = nameGeo.lat;
+      lon = nameGeo.lon;
+      displayName = nameGeo.displayName;
+      placeId = nameGeo.externalId ?? `geocoded:${raw.name}`;
+    } else {
+      // Step 2: address-based fallback via Google Geocoding API.
+      const addressGeo = await geocodeAddress(
+        raw.address,
+        params.startPoint,
+        params.diameterCapM,
+      );
+
+      if (addressGeo) {
+        ({ lat, lon, displayName, placeId } = addressGeo);
+      } else {
+        // Step 3: last resort — geocodeLocation(address) handles
+        // missing API key by falling down to Nominatim.
+        const addressFallback = await geocodeLocation(
+          raw.address,
+          params.city,
+          params.country,
+          {
+            referencePoint: params.startPoint,
+            maxDistanceM: params.diameterCapM,
+          },
+        );
+
+        if (!addressFallback) {
+          return {
+            ok: false as const,
+            raw,
+            reason: "no geocode match (name + address + address-as-name all failed)",
+          };
+        }
+        if (addressFallback.confidence === "low") {
+          return {
+            ok: false as const,
+            raw,
+            reason: `geocode confidence "low" — neighbourhood-level only`,
+          };
+        }
+        lat = addressFallback.lat;
+        lon = addressFallback.lon;
+        displayName = addressFallback.displayName;
+        placeId = addressFallback.externalId ?? `geocoded:${raw.address}`;
       }
-      if (nameFallback.confidence === "low") {
-        return {
-          ok: false as const,
-          raw,
-          reason: `geocode confidence "low" — neighbourhood-level only`,
-        };
-      }
-      lat = nameFallback.lat;
-      lon = nameFallback.lon;
-      displayName = nameFallback.displayName;
-      placeId = nameFallback.externalId ?? `geocoded:${raw.name}`;
     }
 
     const geo = {
