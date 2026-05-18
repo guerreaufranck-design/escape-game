@@ -12,6 +12,7 @@ import {
   buildGenreRiddleOverlay,
   buildGenreEpilogueOverlay,
 } from "./genre-templates";
+import { WEAK_ANSWERS, KNOWN_FAKE_TOKENS } from "./answer-blacklists";
 
 export interface GeneratedStep {
   title: string;
@@ -2098,15 +2099,8 @@ Output ONLY the JSON object.`;
 
   const normalizedAnswer = parsed.answer.trim().toLowerCase();
 
-  // 2. Garde-fou mots vagues "any-theme-fits"
-  const WEAK_ANSWERS = new Set([
-    "renaissance", "harmonie", "harmony", "destinée", "destinee", "destiny",
-    "éternité", "eternity", "unity", "unité", "memory", "mémoire",
-    "victory", "freedom", "liberty", "secret", "mystère", "mystery",
-    "magic", "magie", "wonder", "merveille", "essence", "spirit", "esprit",
-    "soul", "âme", "ame", "journey", "voyage", "discovery", "découverte",
-    "decouverte",
-  ]);
+  // 2. Garde-fou mots vagues "any-theme-fits" — liste partagée avec
+  // le post-publish validator (cf. answer-blacklists.ts).
   if (WEAK_ANSWERS.has(normalizedAnswer)) {
     throw new Error(
       `generateFinalRiddle: weak generic answer "${parsed.answer}" rejected (mechanism=${parsed.mechanism}). The pipeline should retry or skip the final riddle.`,
@@ -2141,13 +2135,9 @@ Output ONLY the JSON object.`;
     }
   }
 
-  // 4. Garde-fou "fake latin word" : un mot court qui n'est dans aucun
-  // dictionnaire est suspect. Heuristique simple : si l'answer fait
-  // 5-9 lettres et contient beaucoup de consonnes non-formables, on rejette.
-  // Liste de tokens fake-latin déjà rencontrés :
-  const KNOWN_FAKE_TOKENS = new Set([
-    "favagis", "geverus", "loritas", "vinctum",
-  ]);
+  // 4. Garde-fou "fake latin word" : néologismes inventés par Claude
+  // qui ressemblent à du latin (favagis, geverus, etc.). Liste partagée
+  // avec le post-publish validator.
   if (KNOWN_FAKE_TOKENS.has(normalizedAnswer)) {
     throw new Error(
       `generateFinalRiddle: fake-latin token "${parsed.answer}" rejected (known constructed neologism).`,

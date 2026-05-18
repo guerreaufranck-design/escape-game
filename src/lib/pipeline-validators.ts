@@ -21,6 +21,7 @@
  */
 
 import { createAdminClient } from "@/lib/supabase/admin";
+import { WEAK_ANSWERS, KNOWN_FAKE_TOKENS } from "@/lib/answer-blacklists";
 
 /** Une issue détectée par le validator. */
 export interface ValidationIssue {
@@ -30,7 +31,17 @@ export interface ValidationIssue {
     | "below_floor"
     | "roman_date_drift"
     | "translation_incomplete"
-    | "audio_coverage_mismatch";
+    | "audio_coverage_mismatch"
+    // Added 2026-05-17 (B2 pre-publish validator extensions) :
+    | "duplicate_indice"
+    | "weak_indice"
+    | "fake_indice"
+    | "weak_final"
+    | "fake_final"
+    | "ar_diversity_low"
+    | "gps_out_of_cluster"
+    | "sources_thin"
+    | "missing_final_explanation";
   /** Message humain pour l'email d'alerte. */
   message: string;
   /** Détails techniques pour debug. */
@@ -137,7 +148,9 @@ export async function validateFinalGame(
   // 1. Fetch game + steps
   const { data: game, error: gameErr } = await supabase
     .from("games")
-    .select("id, slug, title, transport_mode")
+    .select(
+      "id, slug, title, transport_mode, final_answer, final_answer_explanation",
+    )
     .eq("id", gameId)
     .single();
   if (gameErr || !game) {
@@ -156,7 +169,7 @@ export async function validateFinalGame(
   const { data: steps } = await supabase
     .from("game_steps")
     .select(
-      "id, step_order, title, landmark_name, latitude, longitude, riddle_text, anecdote, ar_facade_text, answer_text",
+      "id, step_order, title, landmark_name, latitude, longitude, riddle_text, anecdote, ar_facade_text, answer_text, ar_character_type, poi_category, landmark_citation",
     )
     .eq("game_id", gameId)
     .order("step_order");
@@ -246,6 +259,189 @@ export async function validateFinalGame(
   // Raison : ElevenLabs TTS ne sait pas lire les Romans (lit lettre par
   // lettre "M-D-C-X-X-V-I-I-I"), expérience joueur cassée. + drift
   // entre dates riddle et année facade impossible à auto-repair.
+
+  // ─────────────────────────────────────────────────────────────────
+  // 4.1 (NEW 2026-05-17) — Indice quality : doublons / weak / fake
+  // ─────────────────────────────────────────────────────────────────
+  // INV-1 safety net : pas de doublons answer_text. Le prompt l'interdit
+  // déjà mais on double-check (cf. incident Séville AURUM x2 → favagis).
+  const answerCounts = new Map<string, number[]>();
+  for (const s of steps) {
+    const key = (s.answer_text ?? "").trim().toLowerCase();
+    if (!key) continue;
+    const arr = answerCounts.get(key) ?? [];
+    arr.push(s.step_order);
+    answerCounts.set(key, arr);
+  }
+  const dupes = Array.from(answerCounts.entries()).filter(
+    ([, orders]) => orders.length > 1,
+  );
+  if (dupes.length > 0) {
+    issues.push({
+      code: "duplicate_indice",
+      message:
+        `INV-1 violation : ${dupes.length} answer_text(s) used on multiple stops : ` +
+        dupes.map(([w, orders]) => `"${w}" on steps ${orders.join("+")}`).join(" ; "),
+      details: { duplicates: dupes.map(([w, o]) => ({ answer: w, steps: o })) },
+    });
+  }
+
+  // Weak / fake indices : applique les mêmes guards qu'à la génération.
+  const weakStops: number[] = [];
+  const fakeStops: number[] = [];
+  for (const s of steps) {
+    const norm = (s.answer_text ?? "").trim().toLowerCase();
+    if (!norm) continue;
+    if (WEAK_ANSWERS.has(norm)) weakStops.push(s.step_order);
+    if (KNOWN_FAKE_TOKENS.has(norm)) fakeStops.push(s.step_order);
+  }
+  if (weakStops.length > 0) {
+    issues.push({
+      code: "weak_indice",
+      message:
+        `Stops ${weakStops.join(", ")} use generic "weak" answer_text (secret, mystery, harmony, etc.) — final puzzle will feel hollow.`,
+      details: { stops: weakStops },
+    });
+  }
+  if (fakeStops.length > 0) {
+    issues.push({
+      code: "fake_indice",
+      message:
+        `Stops ${fakeStops.join(", ")} use a known fake-latin token (favagis, geverus, etc.) — Claude hallucination.`,
+      details: { stops: fakeStops },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // 4.2 — Final answer quality
+  // ─────────────────────────────────────────────────────────────────
+  if (game.final_answer) {
+    const normFinal = String(game.final_answer).trim().toLowerCase();
+    if (WEAK_ANSWERS.has(normFinal)) {
+      issues.push({
+        code: "weak_final",
+        message: `final_answer "${game.final_answer}" is a generic weak word (any theme fits) — game climax will disappoint.`,
+        details: { finalAnswer: game.final_answer },
+      });
+    }
+    if (KNOWN_FAKE_TOKENS.has(normFinal)) {
+      issues.push({
+        code: "fake_final",
+        message: `final_answer "${game.final_answer}" is a known fake-latin neologism — Claude hallucination, unsolvable by player.`,
+        details: { finalAnswer: game.final_answer },
+      });
+    }
+  }
+
+  // Final explanation should cite at least 50% of the indices to feel
+  // earned (player wants to see "here is how each of your 8 words led
+  // here"). If fewer than half are referenced, the explanation feels
+  // disconnected (cf. incident Aegina v1 où l'explication ne citait
+  // que 6/8 des indices).
+  const explanationText = (() => {
+    const raw = game.final_answer_explanation;
+    if (typeof raw === "string") return raw;
+    if (raw && typeof raw === "object") {
+      const obj = raw as Record<string, unknown>;
+      const en = typeof obj.en === "string" ? obj.en : null;
+      const first = en ?? Object.values(obj).find((v): v is string => typeof v === "string");
+      return first ?? "";
+    }
+    return "";
+  })().toLowerCase();
+  if (explanationText.length > 100) {
+    const cited = steps.filter((s) => {
+      const norm = (s.answer_text ?? "").trim().toLowerCase();
+      return norm.length >= 3 && explanationText.includes(norm);
+    }).length;
+    const minRequired = Math.ceil(steps.length / 2);
+    if (cited < minRequired) {
+      issues.push({
+        code: "missing_final_explanation",
+        message: `final_answer_explanation only cites ${cited}/${steps.length} indices (min ${minRequired} expected). Player won't see how their collected words derive the answer.`,
+        details: { citedCount: cited, totalSteps: steps.length, minRequired },
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // 4.3 — AR character diversity (INV-2 safety net)
+  // ─────────────────────────────────────────────────────────────────
+  const arTypes = new Set(
+    steps
+      .map((s) => (s.ar_character_type ?? "").trim())
+      .filter((t) => t.length > 0),
+  );
+  const minArDiversity = Math.min(4, steps.length);
+  if (arTypes.size < minArDiversity) {
+    issues.push({
+      code: "ar_diversity_low",
+      message:
+        `Only ${arTypes.size} distinct ar_character_type used across ${steps.length} stops (min ${minArDiversity} expected). Game will feel monotone.`,
+      details: { distinctTypes: Array.from(arTypes), minRequired: minArDiversity },
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // 4.4 — GPS cluster sanity : aucun stop ne doit être à > 15 km de
+  // la médiane (signal d'un stop teleporté ailleurs sur la carte par
+  // hallucination Gemini). 15 km est généreux pour absorber les jeux
+  // mixed-mode (Aegina = 35 km de diamètre légitime, mais les stops
+  // forment des clusters denses, pas des outliers solitaires).
+  // ─────────────────────────────────────────────────────────────────
+  if (steps.length >= 3) {
+    const lats = steps.map((s) => s.latitude).sort((a, b) => a - b);
+    const lons = steps.map((s) => s.longitude).sort((a, b) => a - b);
+    const medianLat = lats[Math.floor(lats.length / 2)];
+    const medianLon = lons[Math.floor(lons.length / 2)];
+    const outliers = steps
+      .map((s) => ({
+        step: s.step_order,
+        name: s.landmark_name,
+        distance: haversineMeters(
+          { lat: s.latitude, lon: s.longitude },
+          { lat: medianLat, lon: medianLon },
+        ),
+      }))
+      .filter((o) => o.distance > 15_000);
+    if (outliers.length > 0) {
+      issues.push({
+        code: "gps_out_of_cluster",
+        message:
+          `${outliers.length} stop(s) more than 15 km from the median GPS — probable hallucination teleporting them out of the game zone : ` +
+          outliers
+            .map((o) => `Step ${o.step} "${o.name}" = ${Math.round(o.distance / 1000)} km`)
+            .join(" ; "),
+        details: { medianLat, medianLon, outliers },
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // 4.5 — Sources coverage : au moins 75% des stops doivent avoir
+  // poi_category + landmark_citation. Sinon signal qu'on a inventé
+  // des stops sans backup Wikipedia / source officielle.
+  // ─────────────────────────────────────────────────────────────────
+  const sourceless = steps.filter(
+    (s) =>
+      !s.poi_category ||
+      !s.landmark_citation ||
+      String(s.landmark_citation).trim().length === 0,
+  );
+  const sourcelessRatio = sourceless.length / steps.length;
+  if (sourcelessRatio > 0.25) {
+    issues.push({
+      code: "sources_thin",
+      message:
+        `${sourceless.length}/${steps.length} stops lack poi_category or landmark_citation (${Math.round(sourcelessRatio * 100)}%). Risk of fictional / hallucinated landmarks.`,
+      details: {
+        sourcelessStops: sourceless.map((s) => ({
+          step: s.step_order,
+          name: s.landmark_name,
+        })),
+      },
+    });
+  }
 
   // 5. Translation completeness (if language provided)
   if (language && language !== "en") {
