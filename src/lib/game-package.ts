@@ -592,32 +592,38 @@ export async function prepareGamePackage(
   }
   const totalAudioSeconds = totalAudioBytes / 16_384;
 
-  // Log telemetry rows (fire-and-forget, won't throw)
-  await Promise.all([
-    logTelemetry({
-      gameId,
-      phase: "audio",
-      provider: "elevenlabs",
-      language,
-      audioSeconds: Number(totalAudioSeconds.toFixed(2)),
-      apiCalls: audioGenerated,
-      durationMs: Date.now() - t0,
-      metadata: { audioGenerated, audioSkipped, audioFailed, totalAudioBytes },
-    }),
-    // Translations : 1 row aggregated. translationsAttempted is approx
-    // (we batch 5-6 fields per call). The cost figure is best-effort
-    // since Gemini API doesn't expose tokens in our wrapper.
-    translationsAttempted > 0
-      ? logTelemetry({
-          gameId,
-          phase: "translation",
-          provider: "gemini",
-          language,
-          apiCalls: translationsAttempted,
-          metadata: { batches: translationsAttempted },
-        })
-      : Promise.resolve(),
-  ]);
+  // Log telemetry rows (fire-and-forget, won't throw).
+  // CRITICAL : only log if REAL work was done — `audioGenerated > 0` OR
+  // `translationsAttempted > 0`. Without this guard, a cron retry that
+  // hits the cache (audioGenerated=0, translationsAttempted=0) still
+  // inserts 2 rows × N retries = telemetry pollution. Observed 2026-05-18
+  // on Lille: 396 rows in 3h for one game because the cron looped.
+  if (audioGenerated > 0 || translationsAttempted > 0) {
+    await Promise.all([
+      audioGenerated > 0
+        ? logTelemetry({
+            gameId,
+            phase: "audio",
+            provider: "elevenlabs",
+            language,
+            audioSeconds: Number(totalAudioSeconds.toFixed(2)),
+            apiCalls: audioGenerated,
+            durationMs: Date.now() - t0,
+            metadata: { audioGenerated, audioSkipped, audioFailed, totalAudioBytes },
+          })
+        : Promise.resolve(),
+      translationsAttempted > 0
+        ? logTelemetry({
+            gameId,
+            phase: "translation",
+            provider: "gemini",
+            language,
+            apiCalls: translationsAttempted,
+            metadata: { batches: translationsAttempted },
+          })
+        : Promise.resolve(),
+    ]);
+  }
 
   return {
     success: audioFailed === 0,

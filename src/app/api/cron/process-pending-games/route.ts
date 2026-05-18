@@ -67,6 +67,13 @@ export async function GET(request: NextRequest) {
       .from("games")
       .select("id, slug, city, title, transport_mode, created_at")
       .eq("is_published", false)
+      // CRITICAL : skip games awaiting human review. They're not "stuck",
+      // they're correctly flagged by validator and waiting for operator
+      // action. Without this filter, the cron re-processes them every
+      // minute forever, accumulating telemetry rows and re-running
+      // prepareGamePackage uselessly. Observed 2026-05-18 on the Lille
+      // test game : 396 telemetry rows in 3h, infinite loop.
+      .eq("needs_review", false)
       .lt("created_at", cutoff)
       .order("created_at", { ascending: true })
       .limit(3); // process up to 3 per cron run (each takes 5-15 min)
