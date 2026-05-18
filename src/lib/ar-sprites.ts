@@ -109,6 +109,41 @@ export const AR_CHARACTERS = [
     avoid:
       "medieval combat (use knight), maritime sites (use sailor), religious / royal sites",
   },
+  // Added 2026-05-17 — 4 new sprites uploaded by user :
+  {
+    type: "scholar",
+    description:
+      "Renaissance/medieval intellectual in robe, holding manuscript or quill",
+    bestFor:
+      "LIBRARIES, UNIVERSITIES, OBSERVATORIES, ANATOMY THEATRES, ACADEMIES, SCRIPTORIA, PRINTING-PRESS HERITAGE, BOTANICAL GARDENS, SCIENTIFIC LANDMARKS, philosophy / humanism sites, Renaissance bookshops, places tied to a historical thinker / inventor (Galileo, Erasmus, Pasteur, etc.). Fills a gap : was previously a hard-default site type.",
+    avoid:
+      "religious worship sites without academic dimension (use monk), pure military (use knight or soldier)",
+  },
+  {
+    type: "roman",
+    description: "Roman patrician or legionary in toga or armour",
+    bestFor:
+      "ROMAN RUINS, FORUMS, AMPHITHEATRES, AQUEDUCTS, ROMAN BATHS (thermae), ROMAN VILLAS, MOSAIC FLOORS, TRIUMPHAL ARCHES, MILESTONE STONES, anywhere with documented Roman heritage (Lyon-Lugdunum, Arles, Lugo, Mérida, Bath, Trier, Aquincum, Volubilis). Strong for ancient sites that monk/knight can't cover.",
+    avoid:
+      "Greek antiquity (use default — no Greek archetype yet), medieval ruins on Roman foundations where the medieval layer dominates (use monk or knight)",
+  },
+  {
+    type: "viking",
+    description: "Norse warrior or seafarer with axe / horn / longship motif",
+    bestFor:
+      "VIKING BURIAL MOUNDS, RUNESTONES, LONGSHIP MUSEUMS, NORDIC FORTRESSES, DRAKKAR PORTS, JELLING-STYLE MONUMENTS, sites tied to Norse exploration (Newfoundland L'Anse aux Meadows, Dublin viking heritage, Normandy founder sites). Niche but a strong slam-dunk match.",
+    avoid:
+      "post-Christianisation Scandinavian sites (use monk), maritime sites without Norse connection (use sailor)",
+  },
+  {
+    type: "beggar",
+    description:
+      "ragged urban poor of medieval/early-modern era, often outside cathedral or hospital",
+    bestFor:
+      "HÔTEL-DIEU / OLD HOSPITALS, ALMSHOUSES, SOUP-KITCHENS, COUR DES MIRACLES neighbourhoods, MEDIEVAL CITY GATES (where beggars congregated), POVERTY-ERA MEMORIALS, DICKENSIAN-STYLE LANES, sites tied to specific famous paupers or saints of the poor. Rare match but evocative.",
+    avoid:
+      "rural sites (use peasant), generic markets (use peasant), modern poverty (use default)",
+  },
 ] as const;
 
 /**
@@ -148,8 +183,40 @@ const BUCKET_BASE =
   "https://sijpbarxxcdkodhfrdyx.supabase.co/storage/v1/object/public/ar-sprites";
 
 /**
+ * Characters dont on sait que toutes les poses du `ARPose` enum sont
+ * disponibles dans le bucket. Pour les autres, on garde idle + talking
+ * uniquement (les 2 utilisées en pratique par `ARCharacterSpeaker.tsx`)
+ * et on fallback à `idle` si une autre pose est demandée. Évite les
+ * 404 silencieux quand un nouveau character n'a pas l'ensemble complet.
+ */
+const CHARACTERS_WITH_FULL_POSE_SET: ReadonlySet<string> = new Set([
+  "knight",
+  "witch",
+  "monk",
+  "sailor",
+  "detective",
+  "ghost",
+  "princess",
+  "peasant",
+  "soldier",
+  "guide_male",
+  "guide_female",
+]);
+
+/** Poses uploaded for every character (legacy + new). */
+const UNIVERSAL_POSES: ReadonlySet<ARPose> = new Set([
+  "idle",
+  "talking",
+  "pointing",
+  "surprised",
+]);
+
+/**
  * Build the public URL for a given character + pose.
  * If the character isn't in the catalogue, falls back to `guide_male`.
+ * If the character is in the catalogue but the requested pose isn't
+ * known to be uploaded (e.g. `thinking` for the 4 new characters
+ * added 2026-05-17), falls back to `idle` to avoid 404.
  */
 export function getSpriteUrl(
   characterType: string | null | undefined,
@@ -159,7 +226,13 @@ export function getSpriteUrl(
     characterType && ALL_AR_CHARACTERS.includes(characterType)
       ? characterType
       : "guide_male";
-  return `${BUCKET_BASE}/${type}_${pose}.png`;
+  // If the character is from the post-2026-05-17 batch (no thinking
+  // pose uploaded), serve `idle` instead of a 404 URL.
+  const safePose =
+    CHARACTERS_WITH_FULL_POSE_SET.has(type) || UNIVERSAL_POSES.has(pose)
+      ? pose
+      : "idle";
+  return `${BUCKET_BASE}/${type}_${safePose}.png`;
 }
 
 /**
