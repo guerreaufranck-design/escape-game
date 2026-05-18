@@ -33,13 +33,15 @@ const MAX_ATTEMPTS = 2;
  *   - collapse des whitespaces internes en un seul espace
  */
 function normalizeAnswer(input: string): string {
+  // Tolérant 2026-05-18 : on enlève AUSSI dashes, underscores, espaces,
+  // ponctuation. Comme ça "1990-3-1934-428" ≡ "199031934428" ≡ "1990 3 1934 428".
+  // Le joueur tape comme il veut, l'API comprend.
   return input
     .toLowerCase()
     .trim()
     .normalize("NFD")
     .replace(/[̀-ͯ]/g, "")
-    .replace(/[.,!?;:]+$/g, "")
-    .replace(/\s+/g, " ");
+    .replace(/[-_/\\.,!?;:\s]+/g, ""); // strip ALL separators + ponctuation
 }
 
 export async function POST(

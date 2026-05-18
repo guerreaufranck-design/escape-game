@@ -760,6 +760,12 @@ export const ui: Translations = {
   'play.assembleDashes': {
     fr: 'Assemblez vos reponses separees par des tirets :', en: 'Assemble your answers separated by dashes:', de: 'Setzen Sie Ihre Antworten mit Bindestrichen zusammen:', es: 'Junta tus respuestas separadas por guiones:', it: 'Assembla le tue risposte separate da trattini:',
   },
+  'play.yourClues': {
+    fr: 'Vos indices collectes', en: 'Your collected clues', de: 'Ihre gesammelten Hinweise', es: 'Tus pistas recogidas', it: 'I tuoi indizi raccolti',
+  },
+  'play.assembleHint': {
+    fr: 'Combinez ces indices pour former la reponse finale (espaces et tirets ignores)', en: 'Combine these clues to form the final answer (spaces and dashes ignored)', de: 'Kombinieren Sie diese Hinweise zur endgultigen Antwort (Leerzeichen und Bindestriche werden ignoriert)', es: 'Combina estas pistas para formar la respuesta final (espacios y guiones ignorados)', it: 'Combina questi indizi per formare la risposta finale (spazi e trattini ignorati)',
+  },
   'play.seeResults': {
     fr: 'Voir mes resultats !', en: 'See my results!', de: 'Meine Ergebnisse sehen!', es: 'Ver mis resultados!', it: 'Vedi i miei risultati!',
   },

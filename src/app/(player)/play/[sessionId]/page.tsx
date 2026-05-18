@@ -1930,48 +1930,57 @@ export default function PlayPage() {
               </Card>
             )}
 
-            {/* Notebook recap */}
-            <Card className="bg-slate-900/95 border-slate-800">
-              <CardContent className="pt-4">
-                <p className="text-xs text-slate-500 mb-2">Vos reponses :</p>
-                <div className="space-y-1">
-                  {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step) => (
-                    <div key={step} className="flex items-center gap-2 text-sm">
-                      <span className="text-slate-500 w-16 shrink-0">{tt('play.step', locale)} {step}</span>
-                      <span className="font-mono font-bold text-emerald-400">
-                        {notebook[step] || "???"}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Final code input */}
-            <Card className={`bg-slate-900/95 ${codeResult?.valid ? 'border-emerald-500' : 'border-emerald-500/30'}`}>
-              <CardContent className="pt-4">
-                <p className="text-sm text-slate-300 mb-2 text-center">
-                  {tt('play.assembleDashes', locale)}
-                </p>
-                <p className="text-xs text-slate-500 mb-3 text-center font-mono">
-                  ex: {Array.from({ length: gameState.totalSteps }, (_, i) => notebook[i + 1] || "?").join("-")}
-                </p>
-                <input
-                  type="text"
-                  value={finalCodeInput}
-                  onChange={(e) => { setFinalCodeInput(e.target.value); setCodeResult(null); }}
-                  placeholder="1990-3-1934-428-4-1502"
-                  className={`w-full px-4 py-3 bg-slate-800 border-2 rounded-xl text-white text-center text-xl font-mono font-bold tracking-wider focus:outline-none placeholder-slate-600 ${
-                    codeResult === null ? 'border-emerald-700/50 focus:border-emerald-500' :
-                    codeResult.valid ? 'border-emerald-500' : 'border-red-500'
-                  }`}
-                  autoFocus
-                />
-                {codeResult && (
-                  <p className={`text-sm text-center mt-2 font-medium ${codeResult.valid ? 'text-emerald-400' : 'text-red-400'}`}>
-                    {codeResult.message}
+            {/* S7 (2026-05-18) — Recap indices + input UNIFIÉS dans la
+                MÊME carte pour que le lien visuel soit évident. Les
+                indices du carnet sont affichés en gros, alignés, avec
+                des chevrons entre eux pour signaler la combinaison. */}
+            <Card className={`bg-slate-900/95 ${codeResult?.valid ? 'border-emerald-500' : 'border-emerald-500/40'}`}>
+              <CardContent className="pt-4 pb-4 space-y-4">
+                {/* Recap : les indices du carnet en gros, en ligne */}
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-slate-400 mb-2 text-center">
+                    {tt('play.yourClues', locale) || "Vos indices collectés"}
                   </p>
-                )}
+                  <div className="flex flex-wrap items-center justify-center gap-1.5 text-base font-mono font-bold">
+                    {Array.from({ length: gameState.totalSteps }, (_, i) => i + 1).map((step, idx) => (
+                      <span key={step} className="flex items-center gap-1.5">
+                        {idx > 0 && <span className="text-slate-600 text-xs">›</span>}
+                        <span className={`px-2 py-1 rounded-lg border ${
+                          notebook[step]
+                            ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-300'
+                            : 'bg-slate-800 border-slate-700 text-slate-500'
+                        }`}>
+                          {notebook[step] || "?"}
+                        </span>
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="border-t border-slate-800" />
+
+                {/* Input */}
+                <div>
+                  <p className="text-sm text-slate-300 mb-2 text-center">
+                    {tt('play.assembleHint', locale) || "Combinez ces indices pour former la réponse finale (les espaces/tirets sont ignorés)"}
+                  </p>
+                  <input
+                    type="text"
+                    value={finalCodeInput}
+                    onChange={(e) => { setFinalCodeInput(e.target.value); setCodeResult(null); }}
+                    placeholder={Array.from({ length: gameState.totalSteps }, (_, i) => notebook[i + 1] || "?").join("")}
+                    className={`w-full px-4 py-3 bg-slate-800 border-2 rounded-xl text-white text-center text-xl font-mono font-bold tracking-wider focus:outline-none placeholder-slate-600 ${
+                      codeResult === null ? 'border-emerald-700/50 focus:border-emerald-500' :
+                      codeResult.valid ? 'border-emerald-500' : 'border-red-500'
+                    }`}
+                    autoFocus
+                  />
+                  {codeResult && (
+                    <p className={`text-sm text-center mt-2 font-medium ${codeResult.valid ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {codeResult.message}
+                    </p>
+                  )}
+                </div>
               </CardContent>
             </Card>
 
