@@ -525,6 +525,13 @@ export async function prepareGamePackage(
   // rate-limit observé jusqu'à 8-10 req simultanées sur le plan Creator.
   // Gain : 32 jobs / 6 ≈ 6 batches × ~5s = ~30s (au lieu de 3-4 min).
   const BATCH_SIZE = 6;
+  // Track INCREMENTAL audio bytes generated in THIS call (not the total
+  // cache). Fix 2026-05-18 : précédemment on querryait tout l'audio_cache
+  // pour le game à la fin, qui donnait le cumul de tous les runs et
+  // produisait un over-count 5x dans la telemetry pour les games qui
+  // ont eu plusieurs runs de prepareGamePackage (race condition fixée
+  // mais le telemetry comptait toujours mal).
+  let incrementalAudioBytes = 0;
   for (let i = 0; i < jobs.length; i += BATCH_SIZE) {
     const batch = jobs.slice(i, i + BATCH_SIZE);
     const results = await Promise.allSettled(
@@ -552,7 +559,11 @@ export async function prepareGamePackage(
         if (insertErr) {
           throw new Error(`audio_cache upsert failed: ${insertErr.message}`);
         }
-        return { stepOrder: job.stepOrder, slot: job.slot };
+        return {
+          stepOrder: job.stepOrder,
+          slot: job.slot,
+          byteSize: result.byteSize ?? 0,
+        };
       }),
     );
     for (let j = 0; j < results.length; j++) {
@@ -560,10 +571,7 @@ export async function prepareGamePackage(
       const job = batch[j];
       if (r.status === "fulfilled") {
         audioGenerated++;
-        // Accumulate audio_bytes for cost computation. byteSize is
-        // returned inside the fulfilled result via generateAndStoreAudio.
-        // We re-fetch from the just-inserted audio_cache row instead
-        // to keep the wrapper simple (1 query per batch, not per job).
+        incrementalAudioBytes += r.value.byteSize;
       } else {
         const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
         errors.push(`step ${job.stepOrder} ${job.slot}: ${msg.slice(0, 150)}`);
@@ -572,24 +580,11 @@ export async function prepareGamePackage(
     }
   }
 
-  // C1 telemetry — fetch the actual audio_bytes from the rows just
-  // upserted to compute ElevenLabs cost. ~$0.0005 per second of speech,
-  // and 1s of speech ≈ 16 KB of MP3 @ Flash quality, so audioBytes/16384
-  // approximates audio_seconds.
-  try {
-    const { data: audioRows } = await supabase
-      .from("audio_cache")
-      .select("byte_size")
-      .eq("game_id", gameId)
-      .eq("language", language);
-    if (audioRows) {
-      for (const r of audioRows) {
-        totalAudioBytes += Number(r.byte_size ?? 0);
-      }
-    }
-  } catch {
-    /* telemetry is best-effort */
-  }
+  // C1 telemetry — utilise les bytes INCRÉMENTAUX accumulés dans le loop
+  // ci-dessus. Évite l'over-count 5x observé sur Concarneau quand plusieurs
+  // runs concurrents calculaient chacun le TOTAL cache.
+  // Flash pricing : ~$0.0005/s. 1s d'audio ≈ 16 KB MP3 Flash quality.
+  totalAudioBytes = incrementalAudioBytes;
   const totalAudioSeconds = totalAudioBytes / 16_384;
 
   // Log telemetry rows (fire-and-forget, won't throw).
