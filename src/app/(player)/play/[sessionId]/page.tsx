@@ -1621,7 +1621,12 @@ export default function PlayPage() {
               The manual "Valider la reponse" button is gone: validation
               is now automatic when the AR has shown the answer for
               ~3.5s. The skip button lives inside the AR overlay if the
-              player gets stuck. */}
+              player gets stuck.
+              B5 (2026-05-17) — Reassurance message under the button :
+                - in radius : "auto-validate when answer shows" (existing)
+                - between radius and ~250 m : "close — scan anyway if
+                  you're sure you're at the right spot" (player override)
+                - > 250 m : "still N m to target — keep walking"  */}
           <div className="sticky bottom-0 z-20 mt-auto bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4" style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}>
             <div className="max-w-lg mx-auto">
               <Button
@@ -1632,9 +1637,43 @@ export default function PlayPage() {
                 <Sparkles className="h-5 w-5 mr-2" />
                 {tt('play.arMode', locale)}
               </Button>
-              <p className="mt-2 text-center text-[11px] text-slate-500">
-                {tt('play.arAutoValidate', locale) || "Une fois en RA, l'etape se valide quand l'indice s'affiche."}
-              </p>
+              {(() => {
+                const radius = gameState.validationRadius;
+                if (distance === null) {
+                  return (
+                    <p className="mt-2 text-center text-[11px] text-slate-500">
+                      {tt('play.arAutoValidate', locale) || "Une fois en RA, l'etape se valide quand l'indice s'affiche."}
+                    </p>
+                  );
+                }
+                if (distance <= radius) {
+                  return (
+                    <p className="mt-2 text-center text-[11px] text-emerald-400/80 font-medium">
+                      {tt('play.arAutoValidate', locale) || "Une fois en RA, l'etape se valide quand l'indice s'affiche."}
+                    </p>
+                  );
+                }
+                if (distance <= 250) {
+                  // Close-but-not-there : remind the player that they can
+                  // scan from their current position if they're confident
+                  // they're at the right spot. Tackles the case where GPS
+                  // drift (~30 m on mobile) keeps the player just outside
+                  // the validation radius while standing in front of the
+                  // landmark.
+                  return (
+                    <p className="mt-2 text-center text-[11px] text-amber-300/85 leading-snug">
+                      {tt('play.arCloseButOutside', locale) ||
+                        `Vous etes a ~${Math.round(distance)} m. Si vous voyez deja le monument, ouvrez la RA — l'etape se validera quand l'indice s'affichera.`}
+                    </p>
+                  );
+                }
+                return (
+                  <p className="mt-2 text-center text-[11px] text-slate-500">
+                    {tt('play.arStillFar', locale) ||
+                      `Encore ~${Math.round(distance)} m a parcourir.`}
+                  </p>
+                );
+              })()}
             </div>
           </div>
         </div>

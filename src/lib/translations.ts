@@ -678,6 +678,20 @@ export const ui: Translations = {
     es: "Una vez en RA, la etapa se valida cuando aparece la pista.",
     it: "Una volta in AR, la tappa si convalida quando l'indizio appare.",
   },
+  'play.arCloseButOutside': {
+    fr: "Si vous voyez deja le monument, ouvrez la RA — l'etape se validera quand l'indice s'affichera.",
+    en: "If you can already see the landmark, open AR — the step will validate when the clue appears.",
+    de: "Wenn Sie das Denkmal bereits sehen, oeffnen Sie AR — die Etappe validiert sich, sobald der Hinweis erscheint.",
+    es: "Si ya ves el monumento, abre RA — la etapa se validara cuando aparezca la pista.",
+    it: "Se vedi gia il monumento, apri AR — la tappa si convalidera quando appare l'indizio.",
+  },
+  'play.arStillFar': {
+    fr: "Continuez vers le monument.",
+    en: "Keep walking toward the landmark.",
+    de: "Gehen Sie weiter zum Denkmal.",
+    es: "Continua hacia el monumento.",
+    it: "Continua verso il monumento.",
+  },
   'play.notTheTarget': {
     fr: 'Ce n\'est pas le bon endroit', en: 'Not the right place', de: 'Nicht der richtige Ort', es: 'No es el lugar correcto', it: 'Non e il posto giusto',
   },
