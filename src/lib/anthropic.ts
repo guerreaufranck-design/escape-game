@@ -521,47 +521,43 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
      Title Case for readability when it materialises on the AR
      facade. Max 25 characters total.
 
-6. "hints": Array of EXACTLY 3 hints, in this STRICT JSON shape:
+6. "hints": Array of EXACTLY 1 hint, in this STRICT JSON shape:
      [
-       { "order": 1, "text": "atmospheric nudge" },
-       { "order": 2, "text": "where to look + tell them to open the AR camera" },
-       { "order": 3, "text": "shape of the answer (no spoiler)" }
+       { "order": 1, "text": "where to point the AR camera" }
      ]
-   The "order" and "text" keys are MANDATORY. Do NOT return a string
-   array like ["hint"] or a bare object — that breaks the pipeline.
-   The array MUST be length 3, no more, no less.
+   The "order" and "text" keys are MANDATORY. The array MUST be
+   length 1.
 
-   Each hint serves a distinct purpose — together they form a
-   ladder so a stuck player can climb without skipping the step:
+   Decision history 2026-05-17 : the previous 3-hint ladder
+   (atmospheric / camera-pointing / answer-shape) was reduced to 1
+   because :
+     - The AR scan reveals the answer mechanically — there is no
+       intellectual puzzle that needs progressive hints
+     - The "atmospheric nudge" hint was redundant with riddle_text
+     - The "shape of the answer" hint outright gave away the answer
+       (e.g. "Latin word for sea, four letters" → trivially MARE)
+     - The "where to point the camera" hint is the ONLY one with real
+       gameplay value : without it, players unfamiliar with AR don't
+       know to open the camera and get stuck
 
-   Hint 1 — ATMOSPHERIC NUDGE
-     Re-anchors the player in the riddle's world without giving away
-     the mechanism. Refers to a real visible element of the place
-     (a stone, a window, a colour) without saying what to do.
-     Example: "The stones themselves remember the founding century."
+   So the surviving hint is the CRITICAL one — OPEN THE CAMERA +
+   WHERE TO LOOK. This hint MUST tell the player to:
+     (a) open / point their camera at a SPECIFIC surface
+         ("aim your phone camera at the pediment above the main
+         door", "open the AR camera and slowly sweep the south wall
+         left to right")
+     (b) name the surface in plain words anyone can find
 
-   Hint 2 — OPEN THE CAMERA + WHERE TO LOOK
-     This is the CRITICAL one. The player likely doesn't know the
-     answer is hidden in AR. This hint MUST tell them to:
-       (a) open / point their camera at a SPECIFIC surface
-           ("aim your phone camera at the pediment above the main
-           door", "open the AR camera and slowly sweep the south
-           wall left to right")
-       (b) name the surface in plain words anyone can find
-     Without this hint, the player thinks the answer is hidden in the
-     real-world stones and never opens the camera. Game-over.
-
-   Hint 3 — SHAPE OF THE ANSWER
-     Tells what FORMAT the answer takes, never the literal value.
-     Example: "It's a Roman numeral followed by a single Latin word."
-
-   Example (good for hint 2):
+   Example (good):
      "Open your phone's camera in the AR mode and aim it at the
      carved pediment above the main entrance — the magical letters
      will materialise on the stone."
 
    Example (bad — too vague):
      "Look around the church."
+
+   Example (bad — gives away answer):
+     "Latin word for crown, six letters."
 
    Example (bad — spoils the answer):
      "Scan the wall, the answer is 1532."
@@ -921,7 +917,7 @@ GPS: ${s.latitude}, ${s.longitude}
 Riddle: ${s.riddle_text}
 ANSWER: "${s.answer_text}"
 Source: ${s.answer_source}
-Hints: 1) ${s.hints[0]?.text || "(missing)"} | 2) ${s.hints[1]?.text || "(missing)"} | 3) ${s.hints[2]?.text || "(missing)"}
+Hint: ${s.hints[0]?.text || "(missing)"}
 Anecdote: ${s.anecdote}`,
     )
     .join("\n\n---\n\n");
@@ -1085,9 +1081,7 @@ Rewrite this single step as a JSON object with the same shape as before:
   "riddle_text": "immersive riddle 4-6 sentences (DO NOT name the answer; describe where to look)",
   ${answerLine},
   "hints": [
-    {"order": 1, "text": "atmospheric hint"},
-    {"order": 2, "text": "practical hint — what type of object and where"},
-    {"order": 3, "text": "format hint without the answer"}
+    {"order": 1, "text": "where to point the AR camera — name the SPECIFIC visible surface (pediment / colonnade / door / etc.) and tell them to open AR mode"}
   ],
   "landmark_history": "2-3 paragraphs telling the patrimonial story of the place — who built it and when, why it matters in the city, what makes it worth visiting (theme-independent)",
   "anecdote": "1-2 sentences connecting this lieu to the game's theme",

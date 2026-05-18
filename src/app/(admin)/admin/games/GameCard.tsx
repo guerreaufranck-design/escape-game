@@ -36,7 +36,7 @@ interface Health {
   packagedLanguages: string[];
   issues: {
     maxHintsCapTooLow: boolean;
-    stepsWithFewerThan3Hints: number[];
+    stepsWithNoHints: number[];
     languagesPackagedNotFullyTranslated: string[];
     languagesPackagedMissingAudio: string[];
   };

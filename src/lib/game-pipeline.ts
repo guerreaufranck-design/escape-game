@@ -1615,7 +1615,12 @@ async function insertGameIntoDatabase(
     // century in Roman numerals"). Without #2 and #3 the player has no
     // way to guess they should open the AR camera, which is exactly
     // what blocked Forest+Philippat in Tournus.
-    max_hints_per_step: 3,
+    // 2026-05-17 : reduced from 3 to 1. The pipeline now generates a
+    // single practical hint per step (the AR-camera pointing one), the
+    // 2 other legacy hints (atmospheric / answer-shape) were dropped
+    // as redundant or spoilery. UI button "request hint" stays — it
+    // just exposes 1 hint max now.
+    max_hints_per_step: 1,
     hint_penalty_seconds: 30,
     cover_image: template.coverImage || null,
     // Narrative epilogue (English only here — translated on demand like other fields)

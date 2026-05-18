@@ -18,7 +18,14 @@ export interface GameHealth {
   // the refresh API will need to fix.
   issues: {
     maxHintsCapTooLow: boolean;
-    stepsWithFewerThan3Hints: number[];
+    /**
+     * Steps with zero hints (= no AR-camera pointing hint generated).
+     * 2026-05-17 : threshold lowered from <3 to <1 — the pipeline now
+     * generates EXACTLY 1 practical hint (where to point the camera),
+     * not the legacy 3-hint ladder. Games stuck on the old schema
+     * still report this as healthy as long as they have ≥1 hint.
+     */
+    stepsWithNoHints: number[];
     languagesPackagedNotFullyTranslated: string[];
     languagesPackagedMissingAudio: string[];
   };
@@ -59,7 +66,7 @@ export async function auditGameHealth(gameId: string): Promise<GameHealth> {
       summary: "Jeu introuvable",
       issues: {
         maxHintsCapTooLow: false,
-        stepsWithFewerThan3Hints: [],
+        stepsWithNoHints: [],
         languagesPackagedNotFullyTranslated: [],
         languagesPackagedMissingAudio: [],
       },
@@ -76,11 +83,14 @@ export async function auditGameHealth(gameId: string): Promise<GameHealth> {
 
   const stepCount = steps?.length ?? 0;
   const stepIds = (steps ?? []).map((s) => s.id);
-  const stepsWithFewerThan3Hints = (steps ?? [])
-    .filter((s) => !Array.isArray(s.hints) || s.hints.length < 3)
+  // Threshold lowered 2026-05-17 from <3 to <1. The pipeline now
+  // generates 1 hint per step (the AR-camera pointing one). Old games
+  // with 3 hints still count as healthy ; new games with 1 hint do too.
+  const stepsWithNoHints = (steps ?? [])
+    .filter((s) => !Array.isArray(s.hints) || s.hints.length < 1)
     .map((s) => s.step_order);
 
-  const maxHintsCapTooLow = (game.max_hints_per_step ?? 0) < 3;
+  const maxHintsCapTooLow = (game.max_hints_per_step ?? 0) < 1;
 
   // 3. Find all languages already packaged for this game (audio_cache
   // is the canonical "this customer paid, prepareGamePackage ran" set).
@@ -170,17 +180,17 @@ export async function auditGameHealth(gameId: string): Promise<GameHealth> {
 
   // 5. Compute level
   let level: HealthLevel = "ok";
-  let summary = `À jour — 3 indices/étape, ${languagesPackaged.length || 0} langue(s) packagée(s).`;
+  let summary = `À jour — 1 indice/étape, ${languagesPackaged.length || 0} langue(s) packagée(s).`;
 
   if (
     maxHintsCapTooLow ||
-    stepsWithFewerThan3Hints.length > 0
+    stepsWithNoHints.length > 0
   ) {
     level = "stale";
     const parts: string[] = [];
     if (maxHintsCapTooLow) parts.push(`cap d'indices à ${game.max_hints_per_step ?? 0}`);
-    if (stepsWithFewerThan3Hints.length > 0)
-      parts.push(`${stepsWithFewerThan3Hints.length} étape(s) avec < 3 indices`);
+    if (stepsWithNoHints.length > 0)
+      parts.push(`${stepsWithNoHints.length} étape(s) sans indice`);
     summary = `Obsolète — ${parts.join(", ")}.`;
   } else if (
     languagesPackagedNotFullyTranslated.length > 0 ||
@@ -204,7 +214,7 @@ export async function auditGameHealth(gameId: string): Promise<GameHealth> {
     summary,
     issues: {
       maxHintsCapTooLow,
-      stepsWithFewerThan3Hints,
+      stepsWithNoHints,
       languagesPackagedNotFullyTranslated,
       languagesPackagedMissingAudio,
     },
