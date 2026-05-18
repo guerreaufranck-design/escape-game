@@ -849,43 +849,7 @@ export default function PlayPage() {
               Le contenu est désormais affiché DIRECTEMENT via le
               GuideNarrationOverlay modal qui s'auto-ouvre dès l'arrivée
               sur le briefing (sprite + audio + texte en pleine page).
-              Garder cette card en plus du modal = duplication écran que
-              l'utilisateur a confirmé être visible 2x. On garde le code
-              en commentaire pour pouvoir réafficher si besoin. */}
-          {false && gameState.introSpeech && (
-            <Card className="bg-slate-900/90 border-amber-700/40">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">🎙️</span>
-                    <CardTitle className="text-sm text-amber-300 uppercase tracking-wider">
-                      {tt('play.yourGuide', locale) || "Votre guide"}
-                    </CardTitle>
-                  </div>
-                  {narration.supported && (
-                    <NarrationButton
-                      text={gameState.introSpeech}
-                      speaking={narration.speaking}
-                      currentText={narrationText}
-                      onSpeak={(t) => speakWithOverlay(
-                        t,
-                        gameState.gameWideAudio?.introSpeech,
-                        tt('play.yourGuide', locale) || "Votre guide",
-                        "guide_male"
-                      )}
-                      variant="pill"
-                      locale={locale}
-                    />
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-slate-200 leading-relaxed text-sm whitespace-pre-line">
-                  {gameState.introSpeech}
-                </p>
-              </CardContent>
-            </Card>
-          )}
+              Garder cette card en plus du modal = duplication écran. */}
 
           {/* Scenario / description (fallback when no intro_speech) */}
           {!gameState.introSpeech && gameState.gameDescription && (
