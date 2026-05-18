@@ -55,6 +55,25 @@ export async function finalizeGame(params: {
   const { gameId, language, city, theme, narrative, genre } = params;
   const supabase = createAdminClient();
 
+  // ATOMIC LOCK (2026-05-18) : on set last_finalize_at = NOW() AU DÉBUT
+  // pour empêcher les calls concurrents (cron + Inngest generateGame qui
+  // tournent en parallèle sur le même game) de tous lancer prepareGamePackage.
+  // Sans ça : 5x overshoot observé sur Concarneau ($2.75 d'audio vs $0.55
+  // attendu, 5 cron polls successifs entre l'insert et le 1er last_finalize_at
+  // qui voyaient encore NULL).
+  // Le UPDATE est best-effort — si le lock fail (DB down), on continue
+  // quand même (mieux vaut un overshoot qu'un game bloqué).
+  try {
+    await supabase
+      .from("games")
+      .update({ last_finalize_at: new Date().toISOString() })
+      .eq("id", gameId);
+  } catch (err) {
+    console.warn(
+      `[finalize] couldn't acquire lock: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+
   // 1. prepareGamePackage : translations + audio (with built-in Gemini
   //    retries up to 4 per field, cf. translate-service.ts)
   let audioGenerated = 0;
