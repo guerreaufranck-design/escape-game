@@ -220,6 +220,44 @@ export async function geocodeLocation(
 
   let result: GeocodeResult | null = null;
 
+  /**
+   * Audit-log every accepted geocode result. Surface in Vercel runtime
+   * logs the `formatted_address` returned by Google + distance from
+   * the referencePoint + the resolved provider/confidence. This is the
+   * cheapest possible debug aid for the operator : grep the logs of any
+   * generation to see "this stop landed at <address>, <dist>m from
+   * city centre" and spot the homonyms / hallucinations BEFORE a player
+   * arrives there.
+   *
+   * Added 2026-05-17 post Aegina v1 (3/8 GPS hallucinated, none
+   * surfaced in logs at gen time).
+   */
+  const logResolution = (label: string, r: GeocodeResult) => {
+    const dist = refPoint
+      ? Math.round(haversineMeters({ lat: r.lat, lon: r.lon }, refPoint))
+      : null;
+    const distStr = dist !== null ? `${dist}m from refPoint` : "no refPoint";
+    console.info(
+      `[geocode] ✓ "${landmarkName}" via ${label} → "${r.displayName}" ` +
+        `(${r.confidence}, ${distStr})`,
+    );
+    // SUSPICIOUS signal : the resolved displayName doesn't contain the
+    // city we asked for. Possible homonym from another city slipped
+    // through the bias. Worth a manual look — not enough to reject
+    // (Google sometimes omits the city in formatted_address when it's
+    // implied by region).
+    if (city) {
+      const cityKey = city.toLowerCase().split(/[\s,]+/).find((t) => t.length >= 4);
+      if (cityKey && !r.displayName.toLowerCase().includes(cityKey)) {
+        console.warn(
+          `[geocode] ⚠ SUSPICIOUS: "${landmarkName}" resolved to ` +
+            `"${r.displayName}" which does NOT contain expected city ` +
+            `token "${cityKey}". Possible cross-city homonym.`,
+        );
+      }
+    }
+  };
+
   // Primary: Google when a key is present. Places "findplacefromtext"
   // targets named landmarks and is consistently sub-10 m on famous
   // locations; Geocoding is the fallback when Places returns nothing
@@ -324,6 +362,16 @@ export async function geocodeLocation(
       `[geocode] All providers returned low confidence for "${landmarkName}" — treating as miss`,
     );
     result = null;
+  }
+
+  // Audit log : surface the resolved address + distance from refPoint
+  // + provider so generation logs become greppable for GPS hallucinations.
+  if (result) {
+    logResolution(result.source, result);
+  } else {
+    console.warn(
+      `[geocode] ✗ NO MATCH for "${landmarkName}" in "${city}, ${country}" — all providers exhausted`,
+    );
   }
 
   cache.set(cacheKey, result);
