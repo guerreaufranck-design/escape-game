@@ -164,6 +164,75 @@ export async function logTelemetry(params: TelemetryParams): Promise<void> {
 }
 
 /**
+ * Log AT THE END of a generation pipeline the ESTIMATED cost breakdown
+ * for the providers that aren't instrumented inline (Anthropic, Gemini
+ * discovery, Google Places). Estimates are based on game shape (stop
+ * count, language, transport mode) and the typical call profile.
+ *
+ * Better-than-nothing visibility : sans ce log, l'utilisateur ne voit
+ * QUE le coût ElevenLabs (~$0.55) alors qu'il dépense en réalité
+ * ~$1.43 par jeu. Ce log capture les ~$0.88 manquants.
+ *
+ * Ces rows sont marquées `metadata.is_estimate = true` pour les
+ * distinguer des mesures réelles (audio = vraie mesure depuis byte_size).
+ */
+export async function logEstimatedGenerationCost(params: {
+  gameId: string;
+  stopCount: number;
+  language?: string;
+}): Promise<void> {
+  const { gameId, stopCount, language } = params;
+
+  // Anthropic Claude — pre-insert narrations + final riddle + epilogue + intro.
+  // generateGameSteps : 1 call avec ALL stops dans le prompt (~30k input + 8k output).
+  // generateFinalRiddle : 1 call (~2k in, 500 out).
+  // generateEpilogue : 1 call (~5k in, 2k out).
+  // generateIntroSpeech : 1 call (~2k in, 500 out).
+  // Total moyen par jeu : ~40k input + 11k output.
+  // Coût : 40k × $3/1M + 11k × $15/1M = $0.12 + $0.165 = ~$0.29.
+  await logTelemetry({
+    gameId,
+    phase: "narration",
+    provider: "claude",
+    language,
+    inputTokens: 30_000 + stopCount * 1_500, // 30k base + 1.5k par stop
+    outputTokens: 6_000 + stopCount * 1_000,
+    apiCalls: 4, // generateGameSteps + finalRiddle + epilogue + introSpeech
+    metadata: { is_estimate: true, model: "claude-sonnet-4" },
+  });
+
+  // Gemini discovery — grounded research + Pass 2 patrimoine-fill.
+  // Pass 1 : ~5k input + 3k output. Pass 2 (si trigger) : ~3k + 2k.
+  // Coût : ~$0.05 par jeu en moyenne.
+  await logTelemetry({
+    gameId,
+    phase: "discovery",
+    provider: "gemini",
+    language,
+    inputTokens: 8_000,
+    outputTokens: 5_000,
+    apiCalls: 2,
+    metadata: { is_estimate: true, model: "gemini-2.5-pro" },
+  });
+
+  // Google Places — geocoding + photos + B3 cross-validation + city centre.
+  // Par jeu : 1 city centre + N geocodes + N photos × 2 (Details + Photo) + N B3 cross-validation.
+  // Soit ~1 + N + 2N + N = 4N + 1 calls. Pour N=8 : ~33 calls × $0.024 = ~$0.79.
+  // Bonus discoverNearbyLandmarks : ~10 calls × $0.04 = $0.40 mais SEULEMENT
+  // pour les jeux qui font fallback Google Places nearbysearch (rare avec
+  // Gemini patrimoine-first). On garde l'estimation conservative.
+  const googleCalls = 4 * stopCount + 1;
+  await logTelemetry({
+    gameId,
+    phase: "geocoding",
+    provider: "google_places",
+    language,
+    apiCalls: googleCalls,
+    metadata: { is_estimate: true, breakdown: "1 center + N geocode + 2N photos + N B3" },
+  });
+}
+
+/**
  * Aggregates total cost for a game across all telemetry rows. Used by
  * the admin dashboard to spot expensive games.
  */

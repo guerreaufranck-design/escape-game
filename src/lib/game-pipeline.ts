@@ -1511,6 +1511,27 @@ export async function generateGameFromTemplate(
       );
     }
 
+    // Estimated telemetry for pre-insert providers (Anthropic narrations,
+    // Gemini discovery, Google Places geocode + photos + B3 cross-validation).
+    // Fire-and-forget — fail silently if anything goes wrong. Gives the
+    // admin visibility on the FULL cost per game (~$1.43 typical) instead
+    // of just the ElevenLabs portion ($0.55) which was the only previously
+    // tracked provider.
+    try {
+      const { logEstimatedGenerationCost } = await import(
+        "@/lib/pipeline-telemetry"
+      );
+      await logEstimatedGenerationCost({
+        gameId,
+        stopCount: steps.length,
+        language: template.language,
+      });
+    } catch (err) {
+      console.warn(
+        `[Pipeline] estimated telemetry failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
     // ════════════════════════════════════════════════════════════
     // CHAINED PIPELINE — prepare+validate+repair moved to Lambda 2
     // ════════════════════════════════════════════════════════════
