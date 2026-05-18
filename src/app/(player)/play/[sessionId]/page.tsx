@@ -319,13 +319,39 @@ export default function PlayPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [anecdote?.text, stepSuccess, skipAnswer]);
 
-  // Auto-narrate scenario on briefing screen
+  // S1 (2026-05-18) — Open GuideNarrationOverlay automatically on the
+  // briefing screen with audio auto-playing. Replaces the previous
+  // "auto-narrate gameDescription" effect which played audio without
+  // visual context. Now the player arrives directly on the immersive
+  // full-screen guide screen (sprite + halo + text + audio), not a
+  // text-heavy card.
+  //
+  // Latch via guideOverlayAutoOpenedRef so this fires only ONCE per
+  // session — re-opening the modal each time the briefing is shown
+  // would be annoying (e.g. after closing video/tutorial).
+  const guideOverlayAutoOpenedRef = useRef(false);
   useEffect(() => {
-    if (showIntro && gameState?.gameDescription && gameState.currentStep === 1 && gameState.completedSteps.length === 0 && videoWatched && tutorialDone) {
-      const t = setTimeout(() => autoSpeak(gameState.gameDescription!), 800);
-      return () => clearTimeout(t);
-    }
-  }, [showIntro, gameState?.gameDescription, videoWatched, tutorialDone]);
+    if (!showIntro || !gameState) return;
+    if (gameState.currentStep !== 1 || gameState.completedSteps.length !== 0) return;
+    if (!videoWatched || !tutorialDone) return;
+    if (guideOverlayAutoOpenedRef.current) return;
+
+    const text = gameState.introSpeech || gameState.gameDescription;
+    if (!text) return;
+    const audioUrl = gameState.gameWideAudio?.introSpeech ?? null;
+    guideOverlayAutoOpenedRef.current = true;
+    const t = setTimeout(() => {
+      speakWithOverlay(
+        text,
+        audioUrl,
+        tt("play.yourGuide", locale) || "Votre guide",
+        "guide_male",
+      );
+    }, 400);
+    return () => clearTimeout(t);
+    // speakWithOverlay is a stable closure (no deps from inside) — safe to omit
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showIntro, gameState, videoWatched, tutorialDone, locale]);
 
   // Auto-narrate new hints
   useEffect(() => {
@@ -1386,14 +1412,18 @@ export default function PlayPage() {
                   {formatTime(timer.elapsedSeconds)}
                 </span>
               </div>
+              {/* S6 (2026-05-18) — Hamburger menu retiré. Les actions
+                  Hint + Skip sont déjà dispo dans la RA (overlay AR
+                  buttons). Le carnet reste accessible direct via ce
+                  bouton 📓 unique. Beaucoup plus simple visuellement. */}
               <button
-                onClick={() => setShowActionMenu(true)}
-                className="relative p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors"
-                aria-label={tt('play.menu', locale)}
+                onClick={() => setShowNotebook(true)}
+                className="relative p-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/20 transition-colors flex items-center gap-1.5"
+                aria-label={tt('play.notebookTitle', locale)}
               >
-                <Menu className="h-5 w-5" />
+                <BookOpen className="h-5 w-5" />
                 {Object.keys(notebook).length > 0 && (
-                  <span className="absolute -top-1 -right-1 w-4 h-4 bg-emerald-500 rounded-full text-[10px] text-white flex items-center justify-center font-bold">
+                  <span className="text-xs font-bold text-emerald-200">
                     {Object.keys(notebook).length}
                   </span>
                 )}
