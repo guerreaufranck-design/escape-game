@@ -777,7 +777,14 @@ export default function PlayPage() {
     setCompletedStepAudios(null); // clear audio URLs précises du step skippé
     narration.stop();  // arrêter audio anecdote en cours si lecture
     if (skipCompleted) {
-      setShowFinalCode(true);
+      // S9 (2026-05-18) : tour mode skips final code modal direct to
+      // results. (Le skip button n'apparaît pas en tour mode, mais on
+      // garde la garde pour cohérence si le serveur force completion.)
+      if (gameState?.mode === "city_tour") {
+        router.push(`/results/${sessionId}`);
+      } else {
+        setShowFinalCode(true);
+      }
     } else {
       fetchGameState();
     }
@@ -1077,15 +1084,21 @@ export default function PlayPage() {
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-start justify-center p-4 pt-6 sm:pt-12 overflow-y-auto">
           <div className="max-w-md w-full">
             <Card className="bg-slate-900 border-emerald-500/40 shadow-2xl shadow-emerald-900/40 overflow-hidden">
-              {/* ── Header : Bravo + Answer + Treasure inline ── */}
+              {/* ── Header : Bravo + Answer + Treasure inline ──
+                  S9 (2026-05-18) : pour mode city_tour, pas d'énigme à
+                  trouver donc pas de "Bravo, indice trouvé" ni d'answer
+                  reveal. On affiche juste "Lieu découvert" et on passe
+                  directement à l'histoire encyclopédique. */}
               <CardContent className="pt-6 pb-4 text-center bg-gradient-to-b from-emerald-950/40 to-transparent">
                 <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 animate-bounce mb-3">
                   <CheckCircle2 className="h-8 w-8 text-emerald-400" />
                 </div>
                 <p className="text-sm font-medium text-emerald-300 mb-1">
-                  {tt('play.guideCongrats', locale) || "Bravo, vous avez trouvé l'indice !"}
+                  {gameState.mode === "city_tour"
+                    ? (tt('play.tourLocationFound', locale) || "Lieu découvert !")
+                    : (tt('play.guideCongrats', locale) || "Bravo, vous avez trouvé l'indice !")}
                 </p>
-                {correctAnswer && (
+                {gameState.mode === "city_game" && correctAnswer && (
                   <>
                     <p className="text-xs text-slate-400">
                       {tt('play.correctAnswerLabel', locale)}
@@ -1095,9 +1108,11 @@ export default function PlayPage() {
                     </p>
                   </>
                 )}
-                <p className="text-[11px] text-slate-400 italic mt-1">
-                  📓 {tt('play.guideNotebookAdded', locale) || "Ajouté à votre carnet pour l'énigme finale."}
-                </p>
+                {gameState.mode === "city_game" && (
+                  <p className="text-[11px] text-slate-400 italic mt-1">
+                    📓 {tt('play.guideNotebookAdded', locale) || "Ajouté à votre carnet pour l'énigme finale."}
+                  </p>
+                )}
 
                 {/* Treasure inline — petite version compacte (h-16 au lieu de h-32),
                     pas de carte séparée. */}
@@ -1207,14 +1222,23 @@ export default function PlayPage() {
 
                     const isLastStep = gameState.currentStep >= gameState.totalSteps;
                     if (isLastStep) {
-                      setShowFinalCode(true);
+                      // S9 (2026-05-18) : en mode city_tour, pas d'énigme
+                      // finale — on saute le finalCode modal et on file
+                      // direct à l'épilogue / results.
+                      if (gameState.mode === "city_tour") {
+                        router.push(`/results/${sessionId}`);
+                      } else {
+                        setShowFinalCode(true);
+                      }
                     } else {
                       fetchGameState();
                     }
                   }}
                 >
                   {gameState.currentStep >= gameState.totalSteps
-                    ? tt('play.finalCode', locale)
+                    ? (gameState.mode === "city_tour"
+                        ? (tt('play.tourFinish', locale) || "Voir l'épilogue")
+                        : tt('play.finalCode', locale))
                     : tt('play.nextStep', locale)}
                 </Button>
               </CardContent>
@@ -1393,16 +1417,11 @@ export default function PlayPage() {
                   </h2>
                 </div>
 
-                {/* AR-required banner. The riddle text on virtual_ar
-                    steps describes a story but never tells the player to
-                    open the camera — the answer materialises only in AR.
-                    Without this banner, players (Forest + Philippat in
-                    Tournus) read the riddle, search the real-world
-                    stones for an inscription that doesn't exist, and
-                    get stuck. The pulsing border + sparkle icon are
-                    intentional: this MUST be the first thing they see
-                    after the title. */}
-                {gameState.currentRiddle.answerSource === "virtual_ar" && (
+                {/* AR-required banner. S9 (2026-05-18) : skip pour
+                    mode city_tour — pas d'énigme à résoudre, l'AR sert
+                    juste de guidage. */}
+                {gameState.mode === "city_game" &&
+                  gameState.currentRiddle.answerSource === "virtual_ar" && (
                   <div className="mb-6 rounded-xl border border-fuchsia-500/40 bg-gradient-to-br from-fuchsia-500/15 via-violet-500/10 to-transparent p-4 shadow-lg shadow-fuchsia-900/20 animate-pulse-slow">
                     <div className="flex items-start gap-3">
                       <Sparkles className="h-5 w-5 text-fuchsia-300 shrink-0 mt-0.5" />
@@ -1524,7 +1543,11 @@ export default function PlayPage() {
                 <Sparkles className="h-5 w-5 mr-2" />
                 {tt('play.arMode', locale) || 'Mode AR'}
               </Button>
-              {/* Secondary actions */}
+              {/* Secondary actions — S9 (2026-05-18) : skip pour le
+                  mode city_tour (pas d'énigme à résoudre = pas d'indices
+                  ni de skip). En mode tour, le joueur valide juste qu'il
+                  est passé via le bouton AR. */}
+              {gameState.mode === "city_game" && (
               <div className="flex justify-center gap-4">
                 <button
                   className="inline-flex items-center gap-1.5 text-xs text-yellow-500 hover:text-yellow-400 disabled:opacity-50"
@@ -1543,6 +1566,7 @@ export default function PlayPage() {
                   {tt('play.skip', locale)}
                 </button>
               </div>
+              )}
             </div>
           </div>
         </div>

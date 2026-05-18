@@ -26,6 +26,14 @@ export interface GameState {
   totalSteps: number;
   status: "pending" | "active" | "completed" | "abandoned";
   startedAt: string | null;
+  /**
+   * S9 (2026-05-18) — Mode du jeu :
+   *   - "city_game" : escape game classique (énigmes, indices, code final)
+   *   - "city_tour" : audioguide enrichi (narration encyclopédique,
+   *     AR pour orientation, pas d'énigmes ni code final)
+   * Default 'city_game' pour rétrocompatibilité (jeux existants).
+   */
+  mode: "city_game" | "city_tour";
   currentRiddle: {
     title: string;
     text: string;

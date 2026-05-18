@@ -243,6 +243,14 @@ export async function POST(request: NextRequest) {
       // accidentellement "true"/"yes" et que la pipeline surface une
       // erreur cryptique. cf. game-pipeline.ts pour la logique.
       accessibility: body.accessibility === "free" ? "free" : "any",
+      // S9 (2026-05-18) — type de produit :
+      //   "city_game" (default) : escape game classique
+      //   "city_tour"          : audioguide enrichi (Lume — narration
+      //                          encyclopédique, AR conservée pour
+      //                          orientation, pas d'énigmes ni code final)
+      // OddballTrip/Lume peuvent désormais distinguer leurs catalogues
+      // au moment de la commande.
+      mode: body.mode === "city_tour" ? "city_tour" : "city_game",
       // ── ROADTRIP (contrat OddballTrip 2026-05-10) ────────────────
       // Tous les champs ci-dessous sont rétrocompat : si absents ou si
       // transportMode === "walking", la pipeline tourne EXACTEMENT
@@ -414,6 +422,8 @@ export async function POST(request: NextRequest) {
             callbackUrl: body.callbackUrl,
             callbackSecret: body.callbackSecret,
             accessibility: template.accessibility,
+            // S9 (2026-05-18) — propagate mode to durable pipeline
+            mode: template.mode,
           },
         });
         console.log(

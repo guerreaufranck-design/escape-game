@@ -424,6 +424,11 @@ export async function GET(
       gameTitle,
       gameDescription,
       introVideoUrl,
+      // S9 (2026-05-18) — mode propagé pour conditional rendering UI player.
+      // Default 'city_game' pour jeux antérieurs à la migration 031.
+      mode: (game as { mode?: string }).mode === "city_tour"
+        ? "city_tour"
+        : "city_game",
       estimatedDuration: game.estimated_duration_min ? `${Math.floor(game.estimated_duration_min / 60)}h${String(game.estimated_duration_min % 60).padStart(2, "0")}` : null,
       playerName: session.player_name || "Player",
       currentStep: session.current_step,
