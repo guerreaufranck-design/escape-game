@@ -87,7 +87,13 @@ export async function finalizeGame(params: {
   }
 
   // 2. Validator + auto-repair loop (max 3 iterations)
-  let finalValidation = await validateFinalGame(gameId, language);
+  // skipCrossValidation=true : on est dans finalizeGame, donc soit
+  // initial post-insert (B3 a déjà tourné dans la pipeline pre-insert),
+  // soit cron retry (les coords ne changent pas). Économie : ~$0.20 de
+  // Google Places par appel. Cf. incident 2026-05-18 (Lille loop coût $38).
+  let finalValidation = await validateFinalGame(gameId, language, {
+    skipCrossValidation: true,
+  });
   const MAX_REPAIR_ITERATIONS = 3;
   let repairIteration = 0;
   while (!finalValidation.ok && repairIteration < MAX_REPAIR_ITERATIONS) {
@@ -111,7 +117,23 @@ export async function finalizeGame(params: {
       );
       break;
     }
-    finalValidation = await validateFinalGame(gameId, language);
+    finalValidation = await validateFinalGame(gameId, language, {
+      skipCrossValidation: true,
+    });
+  }
+
+  // Persiste l'heure de finalisation pour le cooldown du cron
+  // process-pending-games (15 min entre 2 tentatives sur le même game).
+  // Cf. migration 030_last_finalize_at + cost incident 2026-05-18.
+  try {
+    await supabase
+      .from("games")
+      .update({ last_finalize_at: new Date().toISOString() })
+      .eq("id", gameId);
+  } catch (err) {
+    console.warn(
+      `[finalize] couldn't update last_finalize_at: ${err instanceof Error ? err.message : err}`,
+    );
   }
 
   // 3. Decide: publish or flag

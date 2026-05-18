@@ -141,9 +141,29 @@ function extractDates(text: string): number[] {
  * Validator final post-pipeline. Tourne après `prepareGamePackage` pour
  * avoir une vue complète game + steps + audios + translations.
  */
+/**
+ * Options de validation.
+ *
+ * `skipCrossValidation` : désactive le check B3 (`gps_cross_check_drift`)
+ * qui fait 8 appels Google Places par run à $0.024. Indispensable quand le
+ * validator est appelé en boucle par `finalizeGame` (auto-repair loop) :
+ * sans ce flag, on brûle ~$0.20 de Google par itération inutile (les coords
+ * ne changent pas entre 2 validations consécutives sur le même game).
+ *
+ * Politique :
+ *   - 1ère validation de la pipeline initiale : skipCrossValidation=false
+ *     (on VEUT le check définitif)
+ *   - Toutes les validations subséquentes (finalizeGame, cron re-run) :
+ *     skipCrossValidation=true (on a déjà la donnée)
+ */
+export interface ValidateOptions {
+  skipCrossValidation?: boolean;
+}
+
 export async function validateFinalGame(
   gameId: string,
   language: string | undefined,
+  options: ValidateOptions = {},
 ): Promise<ValidationResult> {
   const supabase = createAdminClient();
   const issues: ValidationIssue[] = [];
@@ -436,8 +456,11 @@ export async function validateFinalGame(
   // un commit de validation qualité avant facturation client.
   //
   // Skipped si GOOGLE_MAPS_API_KEY pas défini (préviews / local dev).
+  // Skipped aussi si options.skipCrossValidation=true (auto-repair loop,
+  // cron retries — pas de raison de re-payer les 8 appels Google si les
+  // coords n'ont pas changé). Cf. cost incident 2026-05-18.
   // ─────────────────────────────────────────────────────────────────
-  if (process.env.GOOGLE_MAPS_API_KEY) {
+  if (process.env.GOOGLE_MAPS_API_KEY && !options.skipCrossValidation) {
     const drifts: Array<{
       step: number;
       name: string;

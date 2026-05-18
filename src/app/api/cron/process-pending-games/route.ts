@@ -63,9 +63,17 @@ export async function GET(request: NextRequest) {
     // 5 min ce n'est toujours pas publié, c'est probablement que Lambda 2
     // n'a jamais démarré (fire-and-forget failed) ou qu'elle a crashé.
     const cutoff = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    // COOLDOWN : on ne retape pas un game qu'on a déjà tenté dans les
+    // 15 dernières minutes. Sans ce filtre, un game qui échoue à publish
+    // (e.g. audio_failed > 0) déclenche le cron à chaque tick (= toutes
+    // les minutes), brûlant des API calls Google + ElevenLabs même quand
+    // rien n'a changé. Observed 2026-05-18 sur Lille : 198 itérations
+    // en 3h = $38 brûlés en Google Places juste pour ce game.
+    // 15 min = 4 tentatives / heure max au lieu de 60. Largement suffisant.
+    const cooldownCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     const { data: stuckGames, error } = await supabase
       .from("games")
-      .select("id, slug, city, title, transport_mode, created_at")
+      .select("id, slug, city, title, transport_mode, created_at, last_finalize_at")
       .eq("is_published", false)
       // CRITICAL : skip games awaiting human review. They're not "stuck",
       // they're correctly flagged by validator and waiting for operator
@@ -75,6 +83,8 @@ export async function GET(request: NextRequest) {
       // test game : 396 telemetry rows in 3h, infinite loop.
       .eq("needs_review", false)
       .lt("created_at", cutoff)
+      // Cooldown : last_finalize_at NULL OK (jamais tenté) ou < cooldownCutoff
+      .or(`last_finalize_at.is.null,last_finalize_at.lt.${cooldownCutoff}`)
       .order("created_at", { ascending: true })
       .limit(3); // process up to 3 per cron run (each takes 5-15 min)
 
