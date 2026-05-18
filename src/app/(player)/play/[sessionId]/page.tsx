@@ -1027,353 +1027,273 @@ export default function PlayPage() {
         locale={locale}
       />
 
-      {/* Step success overlay with anecdote.
-          BUG C FIX (2026-05-18) : items-center centrait verticalement,
-          ce qui clippait le haut du contenu (le "Bravo !" + icône) quand
-          la carte dépassait la hauteur du viewport. items-start +
-          padding-top force le contenu à commencer en haut et à scroller
-          naturellement. */}
+      {/* Step success overlay — S3 (2026-05-18) : 5 cards séparées
+          condensées en 1 SEULE carte scrollable. Sections internes :
+          header (Bravo+answer+treasure inline) → histoire → anecdote
+          → sur le chemin → bouton Continuer. 1 seul bouton "Écouter"
+          en haut qui joue history + anecdote en séquence. */}
       {stepSuccess && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center p-4 pt-6 sm:pt-12 overflow-y-auto">
-          <div className="max-w-md w-full space-y-4">
-            {/* Guide congrats — vision 2026-05-16, symétrique avec
-                le message skip. Le guide félicite + indique que la
-                réponse a été ajoutée au carnet pour l'énigme finale. */}
-            <Card className="bg-slate-900 border-emerald-500/30">
-              <CardContent className="pt-6 text-center space-y-3">
-                <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500/20 border-2 border-emerald-400 animate-bounce">
-                  <CheckCircle2 className="h-10 w-10 text-emerald-400" />
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-start justify-center p-4 pt-6 sm:pt-12 overflow-y-auto">
+          <div className="max-w-md w-full">
+            <Card className="bg-slate-900 border-emerald-500/40 shadow-2xl shadow-emerald-900/40 overflow-hidden">
+              {/* ── Header : Bravo + Answer + Treasure inline ── */}
+              <CardContent className="pt-6 pb-4 text-center bg-gradient-to-b from-emerald-950/40 to-transparent">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-emerald-500/20 border-2 border-emerald-400 animate-bounce mb-3">
+                  <CheckCircle2 className="h-8 w-8 text-emerald-400" />
                 </div>
-                <p className="text-sm font-medium text-emerald-300">
-                  {tt('play.guideCongrats', locale) ||
-                    "Bravo, vous avez trouvé l'indice !"}
+                <p className="text-sm font-medium text-emerald-300 mb-1">
+                  {tt('play.guideCongrats', locale) || "Bravo, vous avez trouvé l'indice !"}
                 </p>
                 {correctAnswer && (
                   <>
-                    <p className="text-base text-slate-200">
+                    <p className="text-xs text-slate-400">
                       {tt('play.correctAnswerLabel', locale)}
                     </p>
-                    <p className="text-3xl font-bold text-emerald-400 my-2">
+                    <p className="text-3xl font-bold text-emerald-400 my-1">
                       {correctAnswer}
                     </p>
                   </>
                 )}
-                <p className="text-xs text-slate-400 italic">
-                  📓 {tt('play.guideNotebookAdded', locale) ||
-                    "Ajouté à votre carnet pour l'énigme finale. Continuons l'aventure !"}
+                <p className="text-[11px] text-slate-400 italic mt-1">
+                  📓 {tt('play.guideNotebookAdded', locale) || "Ajouté à votre carnet pour l'énigme finale."}
                 </p>
+
+                {/* Treasure inline — petite version compacte (h-16 au lieu de h-32),
+                    pas de carte séparée. */}
+                {treasure && (
+                  <div className="mt-3 inline-flex items-center gap-2 bg-amber-950/30 border border-amber-500/30 rounded-full px-3 py-1.5">
+                    <img
+                      src={`https://sijpbarxxcdkodhfrdyx.supabase.co/storage/v1/object/public/ar-sprites/${treasure.object}.png`}
+                      alt=""
+                      className="h-8 w-8 object-contain"
+                      draggable={false}
+                    />
+                    <span className="text-[11px] text-amber-200/90 italic max-w-[200px] text-left leading-snug">
+                      {treasure.text}
+                    </span>
+                  </div>
+                )}
+              </CardContent>
+
+              {/* ── Histoire du lieu + audio button unique ── */}
+              {landmarkHistory && (
+                <>
+                  <div className="border-t border-slate-800" />
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🏛️</span>
+                        <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                          {tt('play.theStory', locale) || "L'histoire du lieu"}
+                        </span>
+                      </div>
+                      {narration.supported && (
+                        <NarrationButton
+                          // Joue history + anecdote concaténés. 1 seul tap pour
+                          // tout entendre, pas 2 boutons séparés à manipuler.
+                          text={[landmarkHistory, anecdote?.text].filter(Boolean).join("\n\n")}
+                          speaking={narration.speaking}
+                          currentText={narrationText}
+                          onSpeak={(t) => handleSpeak(t, completedStepAudios?.landmarkHistory)}
+                          variant="pill"
+                          locale={locale}
+                        />
+                      )}
+                    </div>
+                    <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
+                      {landmarkHistory}
+                    </p>
+                  </CardContent>
+                </>
+              )}
+
+              {/* ── Anecdote (sans audio button — partagé avec history) ── */}
+              {anecdote && (
+                <>
+                  <div className="border-t border-slate-800" />
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-lg">📖</span>
+                      <span className="text-xs font-bold uppercase tracking-wider text-emerald-400">
+                        {tt('play.didYouKnow', locale)}
+                      </span>
+                    </div>
+                    <p className="text-sm text-slate-300 leading-relaxed">
+                      {anecdote.text}
+                    </p>
+                  </CardContent>
+                </>
+              )}
+
+              {/* ── Sur le chemin ── */}
+              {gameState?.routeAttractions && gameState.routeAttractions.length > 0 && (
+                <>
+                  <div className="border-t border-slate-800" />
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-lg">📍</span>
+                      <span className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                        {tt('play.onYourWay', locale) || "Sur le chemin"}
+                      </span>
+                    </div>
+                    <ul className="space-y-2">
+                      {gameState.routeAttractions.map((attr, i) => (
+                        <li key={i} className="border-l-2 border-cyan-500/40 pl-3">
+                          <p className="text-xs font-semibold text-cyan-200">{attr.name}</p>
+                          <p className="text-[11px] text-slate-400 leading-snug">{attr.fact}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </>
+              )}
+
+              {/* ── Continue button ── */}
+              <CardContent className="pt-2 pb-4">
+                <Button
+                  size="lg"
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
+                  onClick={() => {
+                    setNotebookInput("");
+                    setStepSuccess(false);
+                    setAnecdote(null);
+                    setLandmarkHistory(null);
+                    setCompletedStepAudios(null);
+                    setCorrectAnswer(null);
+                    setTreasure(null);
+                    narration.stop();
+                    setNarrationText("");
+
+                    const isLastStep = gameState.currentStep >= gameState.totalSteps;
+                    if (isLastStep) {
+                      setShowFinalCode(true);
+                    } else {
+                      fetchGameState();
+                    }
+                  }}
+                >
+                  {gameState.currentStep >= gameState.totalSteps
+                    ? tt('play.finalCode', locale)
+                    : tt('play.nextStep', locale)}
+                </Button>
               </CardContent>
             </Card>
-
-            {/* Treasure reveal — decorative AR object that "drops" for the
-                player when they solve the step. The sprite is picked
-                server-side from the EN treasure description (key, sword,
-                potion, parchment, treasure_chest). Pure flavour, no
-                gameplay impact. */}
-            {treasure && (
-              <Card className="bg-gradient-to-br from-amber-950/80 to-slate-900/95 border-amber-500/40 overflow-hidden">
-                <CardContent className="pt-4 pb-3">
-                  <div className="flex flex-col items-center gap-2">
-                    <p className="text-[11px] font-bold uppercase tracking-widest text-amber-400/90">
-                      {tt('play.treasureRevealed', locale)}
-                    </p>
-                    <div
-                      className="relative h-32 w-32"
-                      style={{ animation: "treasure-pop 700ms cubic-bezier(0.34, 1.56, 0.64, 1)" }}
-                    >
-                      {/* Soft golden aura behind the sprite */}
-                      <div
-                        className="absolute inset-0 rounded-full blur-2xl"
-                        style={{
-                          background:
-                            "radial-gradient(circle, rgba(251,191,36,0.45) 0%, transparent 70%)",
-                          animation: "treasure-pulse 2.4s ease-in-out infinite",
-                        }}
-                      />
-                      <img
-                        src={`https://sijpbarxxcdkodhfrdyx.supabase.co/storage/v1/object/public/ar-sprites/${treasure.object}.png`}
-                        alt={treasure.text}
-                        className="relative h-full w-full object-contain select-none"
-                        style={{
-                          filter:
-                            "drop-shadow(0 4px 14px rgba(0,0,0,0.6)) drop-shadow(0 0 20px rgba(251,191,36,0.35))",
-                        }}
-                        draggable={false}
-                      />
-                    </div>
-                    <p className="text-center text-sm text-amber-100/95 leading-snug italic px-2">
-                      {treasure.text}
-                    </p>
-                  </div>
-                </CardContent>
-                <style jsx>{`
-                  @keyframes treasure-pop {
-                    0% { opacity: 0; transform: translateY(40px) scale(0.5) rotate(-10deg); }
-                    60% { opacity: 1; transform: translateY(-6px) scale(1.05) rotate(2deg); }
-                    100% { opacity: 1; transform: translateY(0) scale(1) rotate(0deg); }
-                  }
-                  @keyframes treasure-pulse {
-                    0%, 100% { opacity: 0.6; transform: scale(1); }
-                    50% { opacity: 1; transform: scale(1.12); }
-                  }
-                `}</style>
-              </Card>
-            )}
-
-            {/* Landmark history card — PATRIMOINE first (vision 2026-05-16).
-                Full story of the place independently of the theme. Shown
-                BEFORE the thematic anecdote. This is what makes the player
-                feel they discovered the city, not just walked through it. */}
-            {landmarkHistory && (
-              <Card className="bg-slate-900/95 border-amber-700/50">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">🏛️</span>
-                      <CardTitle className="text-sm text-amber-300">
-                        {tt('play.theStory', locale) || "L'histoire du lieu"}
-                      </CardTitle>
-                    </div>
-                    {narration.supported && (
-                      <NarrationButton
-                        text={landmarkHistory}
-                        speaking={narration.speaking}
-                        currentText={narrationText}
-                        onSpeak={(t) => handleSpeak(t, completedStepAudios?.landmarkHistory)}
-                        variant="pill"
-                        locale={locale}
-                      />
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
-                    {landmarkHistory}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Anecdote card — thematic connection (1-2 sentences) */}
-            {anecdote && (
-              <Card className="bg-slate-900/95 border-emerald-800/50">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">📖</span>
-                      <CardTitle className="text-sm text-emerald-400">{tt('play.didYouKnow', locale)}</CardTitle>
-                    </div>
-                    {narration.supported && (
-                      <NarrationButton
-                        text={anecdote.text}
-                        speaking={narration.speaking}
-                        currentText={narrationText}
-                        onSpeak={(t) => handleSpeak(t, completedStepAudios?.anecdote)}
-                        variant="pill"
-                        locale={locale}
-                      />
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-slate-300 leading-relaxed">
-                    {anecdote.text}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Route attractions on the way to next stop — vision 2026-05-16.
-                Le guide signale les POIs remarquables sur le chemin pour
-                transformer la marche entre stops en visite culturelle. */}
-            {gameState?.routeAttractions && gameState.routeAttractions.length > 0 && (
-              <Card className="bg-slate-900/95 border-cyan-800/50">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">📍</span>
-                    <CardTitle className="text-sm text-cyan-300">
-                      {tt('play.onYourWay', locale) || "Sur le chemin vers le prochain stop"}
-                    </CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {gameState.routeAttractions.map((attr, i) => (
-                    <div key={i} className="border-l-2 border-cyan-500/40 pl-3">
-                      <p className="text-xs font-semibold text-cyan-200">{attr.name}</p>
-                      <p className="text-xs text-slate-300 leading-snug">{attr.fact}</p>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
-
-            {/* Continue button */}
-            <Button
-              size="lg"
-              className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-12 rounded-xl"
-              onClick={() => {
-                setNotebookInput("");
-                setStepSuccess(false);
-                setAnecdote(null);
-                setLandmarkHistory(null);
-                setCompletedStepAudios(null);
-                setCorrectAnswer(null);
-                setTreasure(null);
-                narration.stop();
-                setNarrationText("");
-
-                const isLastStep = gameState.currentStep >= gameState.totalSteps;
-                if (isLastStep) {
-                  setShowFinalCode(true);
-                } else {
-                  fetchGameState();
-                }
-              }}
-            >
-              {gameState.currentStep >= gameState.totalSteps
-                ? tt('play.finalCode', locale)
-                : tt('play.nextStep', locale)
-              }
-            </Button>
           </div>
         </div>
       )}
 
-      {/* Skip answer overlay */}
+      {/* Skip answer overlay — S3 (2026-05-18) : compression 5→1 carte
+          comme pour success. Variante orange (non félicitations). */}
       {skipAnswer && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center p-4 pt-6 sm:pt-12 overflow-y-auto">
-          <div className="max-w-sm w-full space-y-4 my-8">
-            {/* Guide message — vision 2026-05-16 : on ne félicite PAS,
-                on dit "pas trouvé c'est pas grave, voici la réponse et
-                je la mets dans votre carnet pour l'énigme finale". */}
-            <Card className="bg-slate-900 border-orange-500/30">
-              <CardContent className="pt-6 text-center space-y-3">
-                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-500/10">
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-start justify-center p-4 pt-6 sm:pt-12 overflow-y-auto">
+          <div className="max-w-md w-full">
+            <Card className="bg-slate-900 border-orange-500/40 shadow-2xl shadow-orange-900/40 overflow-hidden">
+              {/* ── Header : Guide message + Answer ── */}
+              <CardContent className="pt-6 pb-4 text-center bg-gradient-to-b from-orange-950/40 to-transparent">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-orange-500/15 mb-3">
                   <span className="text-3xl">🎙️</span>
                 </div>
-                <p className="text-sm font-medium text-orange-300">
-                  {tt('play.guideNotFound', locale) ||
-                    "Vous n'avez pas trouvé l'indice — c'est pas grave"}
+                <p className="text-sm font-medium text-orange-300 mb-1">
+                  {tt('play.guideNotFound', locale) || "Vous n'avez pas trouvé — c'est pas grave"}
                 </p>
-                <p className="text-base text-slate-200 leading-relaxed px-2">
-                  {tt('play.guideAnswerReveal', locale) ||
-                    "La réponse était :"}
+                <p className="text-xs text-slate-400">
+                  {tt('play.guideAnswerReveal', locale) || "La réponse était :"}
                 </p>
-                <p className="text-3xl font-bold text-orange-400 my-2">
+                <p className="text-3xl font-bold text-orange-400 my-1">
                   {skipAnswer}
                 </p>
-                <p className="text-xs text-slate-400 italic">
-                  📓 {tt('play.guideNotebookSaved', locale) ||
-                    "Je l'ai ajoutée à votre carnet pour l'énigme finale. Continuons l'aventure ensemble."}
+                <p className="text-[11px] text-slate-400 italic mt-1">
+                  📓 {tt('play.guideNotebookSaved', locale) || "Je l'ai ajoutée à votre carnet."}
                 </p>
               </CardContent>
-            </Card>
 
-            {/* Landmark history card — patrimoine first (vision 2026-05-16).
-                Le joueur qui skip mérite quand même de découvrir
-                l'histoire du lieu. C'est la promesse "découverte de
-                la ville" qui prime. */}
-            {landmarkHistory && (
-              <Card className="bg-slate-900/95 border-amber-700/50">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
-                      <span className="text-lg">🏛️</span>
-                      <CardTitle className="text-sm text-amber-300">
-                        {tt('play.theStory', locale) || "L'histoire du lieu"}
-                      </CardTitle>
+              {/* ── Histoire + audio button unique (joue history + anecdote) ── */}
+              {landmarkHistory && (
+                <>
+                  <div className="border-t border-slate-800" />
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <span className="text-lg">🏛️</span>
+                        <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                          {tt('play.theStory', locale) || "L'histoire du lieu"}
+                        </span>
+                      </div>
+                      {narration.supported && (
+                        <NarrationButton
+                          text={[landmarkHistory, anecdote?.text].filter(Boolean).join("\n\n")}
+                          speaking={narration.speaking}
+                          currentText={narrationText}
+                          onSpeak={(t) => speakWithOverlay(
+                            t,
+                            completedStepAudios?.landmarkHistory,
+                            tt('play.theStory', locale) || "L'histoire du lieu",
+                            gameState?.arCharacter?.type ?? "guide_male"
+                          )}
+                          variant="pill"
+                          locale={locale}
+                        />
+                      )}
                     </div>
-                    {narration.supported && (
-                      <NarrationButton
-                        text={landmarkHistory}
-                        speaking={narration.speaking}
-                        currentText={narrationText}
-                        onSpeak={(t) => speakWithOverlay(
-                          t,
-                          completedStepAudios?.landmarkHistory,
-                          tt('play.theStory', locale) || "L'histoire du lieu",
-                          // Sprite du personnage AR du stop courant (monk/ghost/guide_male...).
-                          // arCharacter type vient de gameState.arCharacter.type, qui
-                          // reflète le stop EN COURS dans la session API.
-                          gameState?.arCharacter?.type ?? "guide_male"
-                        )}
-                        variant="pill"
-                        locale={locale}
-                      />
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
-                    {landmarkHistory}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+                    <p className="text-sm text-slate-300 leading-relaxed whitespace-pre-line">
+                      {landmarkHistory}
+                    </p>
+                  </CardContent>
+                </>
+              )}
 
-            {/* Anecdote card — affichée aussi en cas de skip pour ne pas
-                priver le joueur du contenu pédagogique historique. */}
-            {anecdote && (
-              <Card className="bg-slate-900/95 border-orange-800/50">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2">
+              {/* ── Anecdote ── */}
+              {anecdote && (
+                <>
+                  <div className="border-t border-slate-800" />
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center gap-2 mb-2">
                       <span className="text-lg">📖</span>
-                      <CardTitle className="text-sm text-orange-300">
+                      <span className="text-xs font-bold uppercase tracking-wider text-orange-300">
                         {tt('play.didYouKnow', locale)}
-                      </CardTitle>
+                      </span>
                     </div>
-                    {narration.supported && (
-                      <NarrationButton
-                        text={anecdote.text}
-                        speaking={narration.speaking}
-                        currentText={narrationText}
-                        onSpeak={(t) => handleSpeak(t, completedStepAudios?.anecdote)}
-                        variant="pill"
-                        locale={locale}
-                      />
-                    )}
-                  </div>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-slate-300 leading-relaxed">
-                    {anecdote.text}
-                  </p>
-                </CardContent>
-              </Card>
-            )}
+                    <p className="text-sm text-slate-300 leading-relaxed">
+                      {anecdote.text}
+                    </p>
+                  </CardContent>
+                </>
+              )}
 
-            {/* Route attractions on the way to the next stop — vision
-                2026-05-16 : le guide signale les lieux remarquables sur
-                le chemin pour transformer la marche en visite. */}
-            {gameState?.routeAttractions && gameState.routeAttractions.length > 0 && (
-              <Card className="bg-slate-900/95 border-cyan-800/50">
-                <CardHeader className="pb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="text-lg">📍</span>
-                    <CardTitle className="text-sm text-cyan-300">
-                      {tt('play.onYourWay', locale) || "Sur le chemin, ne manque pas..."}
-                    </CardTitle>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-2">
-                  {gameState.routeAttractions.map((attr, i) => (
-                    <div key={i} className="border-l-2 border-cyan-500/40 pl-3">
-                      <p className="text-xs font-semibold text-cyan-200">{attr.name}</p>
-                      <p className="text-xs text-slate-300 leading-snug">{attr.fact}</p>
+              {/* ── Sur le chemin ── */}
+              {gameState?.routeAttractions && gameState.routeAttractions.length > 0 && (
+                <>
+                  <div className="border-t border-slate-800" />
+                  <CardContent className="pt-4 pb-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-lg">📍</span>
+                      <span className="text-xs font-bold uppercase tracking-wider text-cyan-300">
+                        {tt('play.onYourWay', locale) || "Sur le chemin"}
+                      </span>
                     </div>
-                  ))}
-                </CardContent>
-              </Card>
-            )}
+                    <ul className="space-y-2">
+                      {gameState.routeAttractions.map((attr, i) => (
+                        <li key={i} className="border-l-2 border-cyan-500/40 pl-3">
+                          <p className="text-xs font-semibold text-cyan-200">{attr.name}</p>
+                          <p className="text-[11px] text-slate-400 leading-snug">{attr.fact}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  </CardContent>
+                </>
+              )}
 
-            <Button
-              size="lg"
-              className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold h-12 rounded-xl"
-              onClick={dismissSkip}
-            >
-              {tt('play.nextStep', locale)}
-            </Button>
+              {/* ── Continue button ── */}
+              <CardContent className="pt-2 pb-4">
+                <Button
+                  size="lg"
+                  className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold h-12 rounded-xl"
+                  onClick={dismissSkip}
+                >
+                  {skipCompleted ? tt('play.finalCode', locale) : tt('play.nextStep', locale)}
+                </Button>
+              </CardContent>
+            </Card>
           </div>
         </div>
       )}
