@@ -136,6 +136,24 @@ export interface GameTemplate {
    * Le jeu publie au bon endroit (au mètre près du checkpoint réel).
    */
   startPointText?: string;
+  /**
+   * S9 (2026-05-18) — Mode du jeu :
+   *   - "city_game" (default) : escape game classique avec énigmes,
+   *     indices, code final, mécanique M3 sur final_answer.
+   *   - "city_tour" : audioguide enrichi (narration encyclopédique
+   *     longue par stop, AR orientation conservée, personnages
+   *     parlants, PAS d'énigmes ni code final).
+   *
+   * Phase 1 (cette commit) : juste le champ propagé en DB.
+   *   - Pipeline tour ALT (prompts encyclopédiques) : TODO
+   *   - Page de choix à l'activation : TODO
+   *   - Player UI conditionnelle : TODO
+   *
+   * Pour la Phase 1, mode="city_tour" est inserté en DB mais la pipeline
+   * de génération produit le MÊME contenu qu'un city_game. Permet de
+   * tester le flag avant de brancher la logique alt.
+   */
+  mode?: "city_game" | "city_tour";
   /** Combien de stops au final dans le jeu (défaut 8). Dans le modèle
    *  intent-first, c'est ce nombre que Perplexity essaie de produire,
    *  filtré ensuite par géocodage et walkability. Plancher dur = 6 ;
@@ -1692,6 +1710,9 @@ async function insertGameIntoDatabase(
     max_hints_per_step: 1,
     hint_penalty_seconds: 30,
     cover_image: template.coverImage || null,
+    // S9 (2026-05-18) — mode du jeu (city_game = escape, city_tour =
+    // audioguide). Default 'city_game' si non spécifié.
+    mode: template.mode ?? "city_game",
     // Narrative epilogue (English only here — translated on demand like other fields)
     epilogue_title: epilogue?.title ?? null,
     epilogue_text: epilogue?.text ?? null,

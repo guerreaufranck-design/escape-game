@@ -78,6 +78,10 @@ export const buildGameDurable = inngest.createFunction(
               ? { lat: data.startPointLat, lon: data.startPointLon }
               : undefined,
           accessibility: data.accessibility,
+          // S9 (2026-05-18) — propagate game mode through pipeline.
+          // OddballTrip peut maintenant envoyer mode="city_tour" pour
+          // déclencher la variante audioguide.
+          mode: data.mode,
         };
 
         const pipelineResult = await generateGameFromTemplate(template);

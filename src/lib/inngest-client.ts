@@ -105,6 +105,13 @@ export const gameBuildRequested = eventType("game/build.requested", {
     language?: string;
     /** Mode de transport (walking par défaut, mixed/driving si configuré). */
     transportMode?: "walking" | "driving" | "mixed";
+    /**
+     * S9 (2026-05-18) — Type de jeu produit :
+     *   - city_game (default) : escape game classique avec énigmes
+     *   - city_tour : audioguide enrichi (narration encyclopédique,
+     *     pas d'énigmes, AR pour orientation conservée)
+     */
+    mode?: "city_game" | "city_tour";
     /** Rayon en km pour mode roadtrip. */
     radiusKm?: number;
     /** Jours recommandés (mode roadtrip). */
