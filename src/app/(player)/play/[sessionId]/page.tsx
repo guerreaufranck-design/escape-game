@@ -177,6 +177,46 @@ export default function PlayPage() {
   useEffect(() => {
     autoOpenedArRef.current = null;
   }, [gameState?.currentStepId]);
+
+  // S4 (2026-05-18) — Alerte vocale "vous approchez" quand le joueur
+  // arrive à < 100m du target. Renforce l'immersion + signale qu'il
+  // doit ouvrir les yeux / lever la tête. Fires UNE FOIS par stop
+  // (latch via approachAlertedRef pour ne pas spammer si le GPS oscille
+  // autour de 100m). Reset sur changement de step.
+  const approachAlertedRef = useRef<string | null>(null);
+  useEffect(() => {
+    approachAlertedRef.current = null;
+  }, [gameState?.currentStepId]);
+  useEffect(() => {
+    if (!gameState) return;
+    if (distance === null) return;
+    if (distance > 100) return; // pas encore assez proche
+    if (distance <= gameState.validationRadius) return; // déjà arrivé, no alert
+    if (!tutorialDone || showIntro) return;
+    if (stepSuccess || skipAnswer || showFinalCode) return;
+    if (approachAlertedRef.current === gameState.currentStepId) return;
+    approachAlertedRef.current = gameState.currentStepId ?? "_";
+
+    const message =
+      tt("play.approachAlert", locale) ||
+      "Attention, vous approchez du lieu. Ouvrez les yeux et levez la tête !";
+    // Audio-only narration (pas de modal full-screen — le joueur marche,
+    // il ne va pas regarder son téléphone). Utilise Web Speech ou
+    // l'audio character du stop s'il est dispo.
+    if (narration.supported) {
+      narration.speak(message);
+    }
+  }, [
+    distance,
+    gameState,
+    tutorialDone,
+    showIntro,
+    stepSuccess,
+    skipAnswer,
+    showFinalCode,
+    locale,
+    narration,
+  ]);
   useEffect(() => {
     if (!gameState) return;
     if (gameState.currentRiddle?.answerSource !== "virtual_ar") return;

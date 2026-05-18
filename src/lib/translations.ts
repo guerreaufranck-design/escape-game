@@ -766,6 +766,13 @@ export const ui: Translations = {
   'play.assembleHint': {
     fr: 'Combinez ces indices pour former la reponse finale (espaces et tirets ignores)', en: 'Combine these clues to form the final answer (spaces and dashes ignored)', de: 'Kombinieren Sie diese Hinweise zur endgultigen Antwort (Leerzeichen und Bindestriche werden ignoriert)', es: 'Combina estas pistas para formar la respuesta final (espacios y guiones ignorados)', it: 'Combina questi indizi per formare la risposta finale (spazi e trattini ignorati)',
   },
+  'play.approachAlert': {
+    fr: 'Attention, vous approchez du lieu. Ouvrez les yeux et levez la tete !',
+    en: 'Heads up, you are approaching the spot. Open your eyes and look up!',
+    de: 'Achtung, Sie nahern sich dem Ort. Augen auf und Kopf hoch!',
+    es: 'Atencion, te estas acercando al lugar. Abre los ojos y mira arriba!',
+    it: 'Attenzione, ti stai avvicinando al luogo. Apri gli occhi e guarda in alto!',
+  },
   'play.seeResults': {
     fr: 'Voir mes resultats !', en: 'See my results!', de: 'Meine Ergebnisse sehen!', es: 'Ver mis resultados!', it: 'Vedi i miei risultati!',
   },
