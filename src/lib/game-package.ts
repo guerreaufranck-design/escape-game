@@ -23,6 +23,7 @@ import { translateGameField, translateStepFields, translateUIStrings } from "@/l
 import { generateAndStoreAudio, buildAudioPath } from "@/lib/elevenlabs";
 import { voiceFor } from "@/lib/voice-map";
 import { t, isStaticLocale } from "@/lib/i18n";
+import { logTelemetry } from "@/lib/pipeline-telemetry";
 import { ui } from "@/lib/translations";
 
 export interface PackageResult {
@@ -106,6 +107,12 @@ export async function prepareGamePackage(
   let audioGenerated = 0;
   let audioSkipped = 0;
   let audioFailed = 0;
+  // C1 telemetry accumulators (2026-05-17) : log 1 summary row per
+  // provider at the END of the function (vs N rows per call). Granular
+  // enough to spot anomalies in the admin dashboard ("game X cost 3×
+  // the average") without exploding row count.
+  let totalAudioBytes = 0;
+  let translationsAttempted = 0;
 
   const supabase = createAdminClient();
 
@@ -173,6 +180,7 @@ export async function prepareGamePackage(
     if (englishGameEpilogueText) gameFields.epilogue_text = englishGameEpilogueText;
     if (Object.keys(gameFields).length > 0) {
       try {
+        translationsAttempted++;
         await translateStepFields(game.id, gameFields, language, {
           sourceTable: "games",
         });
@@ -290,6 +298,7 @@ export async function prepareGamePackage(
         if (!englishHint) continue;
         await new Promise((r) => setTimeout(r, 400));
         try {
+          translationsAttempted++;
           await translateGameField(
             `hint-${gameId}-${step.step_order}-${hintIdx}`,
             "game_steps",
@@ -320,7 +329,8 @@ export async function prepareGamePackage(
         if (Object.keys(enFields).length === 0) continue;
         await new Promise((r) => setTimeout(r, 400));
         try {
-          await translateStepFields(
+          translationsAttempted++;
+        await translateStepFields(
             `${step.id}-attraction-${attrIdx}`,
             enFields,
             language,
@@ -433,6 +443,7 @@ export async function prepareGamePackage(
     let translatedText = englishText;
     if (language !== "en") {
       try {
+        translationsAttempted++;
         translatedText = await translateGameField(
           game.id,
           "games",
@@ -549,6 +560,10 @@ export async function prepareGamePackage(
       const job = batch[j];
       if (r.status === "fulfilled") {
         audioGenerated++;
+        // Accumulate audio_bytes for cost computation. byteSize is
+        // returned inside the fulfilled result via generateAndStoreAudio.
+        // We re-fetch from the just-inserted audio_cache row instead
+        // to keep the wrapper simple (1 query per batch, not per job).
       } else {
         const msg = r.reason instanceof Error ? r.reason.message : String(r.reason);
         errors.push(`step ${job.stepOrder} ${job.slot}: ${msg.slice(0, 150)}`);
@@ -556,6 +571,53 @@ export async function prepareGamePackage(
       }
     }
   }
+
+  // C1 telemetry — fetch the actual audio_bytes from the rows just
+  // upserted to compute ElevenLabs cost. ~$0.0005 per second of speech,
+  // and 1s of speech ≈ 16 KB of MP3 @ Flash quality, so audioBytes/16384
+  // approximates audio_seconds.
+  try {
+    const { data: audioRows } = await supabase
+      .from("audio_cache")
+      .select("byte_size")
+      .eq("game_id", gameId)
+      .eq("language", language);
+    if (audioRows) {
+      for (const r of audioRows) {
+        totalAudioBytes += Number(r.byte_size ?? 0);
+      }
+    }
+  } catch {
+    /* telemetry is best-effort */
+  }
+  const totalAudioSeconds = totalAudioBytes / 16_384;
+
+  // Log telemetry rows (fire-and-forget, won't throw)
+  await Promise.all([
+    logTelemetry({
+      gameId,
+      phase: "audio",
+      provider: "elevenlabs",
+      language,
+      audioSeconds: Number(totalAudioSeconds.toFixed(2)),
+      apiCalls: audioGenerated,
+      durationMs: Date.now() - t0,
+      metadata: { audioGenerated, audioSkipped, audioFailed, totalAudioBytes },
+    }),
+    // Translations : 1 row aggregated. translationsAttempted is approx
+    // (we batch 5-6 fields per call). The cost figure is best-effort
+    // since Gemini API doesn't expose tokens in our wrapper.
+    translationsAttempted > 0
+      ? logTelemetry({
+          gameId,
+          phase: "translation",
+          provider: "gemini",
+          language,
+          apiCalls: translationsAttempted,
+          metadata: { batches: translationsAttempted },
+        })
+      : Promise.resolve(),
+  ]);
 
   return {
     success: audioFailed === 0,
