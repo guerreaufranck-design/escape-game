@@ -1463,6 +1463,54 @@ export async function generateGameFromTemplate(
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
+    // C3 (2026-05-17) — Fetch landmark photos in PARALLEL after insert.
+    // Each photo : 1 Place Details + 1 Place Photo = ~$0.024. For 8 stops
+    // ≈ $0.19/game. UX win is massive for unfamiliar cities (target
+    // audience = newcomers per project_target_audience.md).
+    // Fire-and-forget — if Google quota / network fails, stop has no
+    // photo, UI hides the card gracefully.
+    try {
+      const { fetchAndStoreLandmarkPhoto } = await import("@/lib/landmark-photos");
+      const supabase = createAdminClient();
+      const photoResults = await Promise.allSettled(
+        steps.map(async (_step, idx) => {
+          const verified = verifiedLocations[idx];
+          const landmarkName =
+            verified?.landmarkName?.trim() ||
+            verified?.name ||
+            null;
+          if (!landmarkName) return null;
+          const photo = await fetchAndStoreLandmarkPhoto({
+            gameId,
+            stepOrder: idx + 1,
+            landmarkName,
+            city: template.city,
+            country: template.country ?? "",
+          });
+          if (!photo) return null;
+          await supabase
+            .from("game_steps")
+            .update({
+              landmark_photo_url: photo.publicUrl,
+              landmark_photo_credit: photo.attribution,
+            })
+            .eq("game_id", gameId)
+            .eq("step_order", idx + 1);
+          return idx + 1;
+        }),
+      );
+      const fetched = photoResults.filter(
+        (r) => r.status === "fulfilled" && r.value !== null,
+      ).length;
+      console.log(
+        `[Pipeline] Landmark photos fetched : ${fetched}/${steps.length} stops`,
+      );
+    } catch (err) {
+      console.warn(
+        `[Pipeline] landmark photos batch failed: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+
     // ════════════════════════════════════════════════════════════
     // CHAINED PIPELINE — prepare+validate+repair moved to Lambda 2
     // ════════════════════════════════════════════════════════════
@@ -1702,15 +1750,14 @@ async function insertGameIntoDatabase(
   // Insert steps
   const stepsToInsert = steps.map((step, index) => {
     const hints = normalizeHints(step.hints as unknown);
-    if (hints.length < 3) {
-      // Hard fail rather than silently shipping a step the player can't
-      // get unstuck on. AR-locked steps need the full 3-hint ladder
-      // (atmosphere → where to look → shape of the answer) — without it,
-      // a player whose AR doesn't render perfectly has no way forward.
-      // The throw surfaces in the pipeline failure email so we know to
-      // re-prompt Claude rather than ship a broken game.
+    // Threshold lowered 2026-05-17 (A1 commit cc8a1a0) — pipeline now
+    // generates EXACTLY 1 practical hint per step (where to point the
+    // AR camera). The previous 3-hint ladder was redundant : Hint 1
+    // (atmospheric) was a clone of riddle_text, and Hint 3 (shape of
+    // answer) was a spoiler. Only the camera-pointing hint kept.
+    if (hints.length < 1) {
       throw new Error(
-        `Step ${index + 1} has only ${hints.length} hint(s), need >= 3. Raw: ${JSON.stringify(step.hints).slice(0, 200)}`,
+        `Step ${index + 1} has 0 hints. Pipeline expects EXACTLY 1 AR-camera-pointing hint. Raw: ${JSON.stringify(step.hints).slice(0, 200)}`,
       );
     }
 
