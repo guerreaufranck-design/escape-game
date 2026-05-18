@@ -195,6 +195,7 @@ export default function ResultsPage() {
           <GameEpilogue
             title={results.epilogue.title}
             text={results.epilogue.text}
+            audioUrl={results.epilogue.audioUrl ?? null}
             overline={revealed ? undefined : `✓ ${tt('epilogue.codeUnlocked', locale)}`}
             locale={locale}
           />

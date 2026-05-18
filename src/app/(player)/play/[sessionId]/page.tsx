@@ -368,7 +368,20 @@ export default function PlayPage() {
       if (!res.ok) throw new Error(tt('play.error.loadFailed', locale));
       const data: GameState = await res.json();
       setGameState(data);
-      if (data.status === "completed") {
+      // BUG A FIX (2026-05-18) : ne PAS rediriger automatiquement vers
+      // /results si un overlay post-game est en cours (skip reveal,
+      // step success, final code modal). Sans ce gate, quand le joueur
+      // skip le dernier stop, le serveur marque la session "completed",
+      // fetchGameState() détecte ce status et router.push("/results")
+      // fire AVANT que le joueur ait pu cliquer "Continuer" → final
+      // code modal. Le joueur saute direct à l'épilogue sans entrer
+      // la combinaison finale.
+      if (
+        data.status === "completed" &&
+        !skipAnswer &&
+        !stepSuccess &&
+        !showFinalCode
+      ) {
         router.push(`/results/${sessionId}`);
       }
     } catch (err) {
@@ -1005,9 +1018,14 @@ export default function PlayPage() {
         locale={locale}
       />
 
-      {/* Step success overlay with anecdote */}
+      {/* Step success overlay with anecdote.
+          BUG C FIX (2026-05-18) : items-center centrait verticalement,
+          ce qui clippait le haut du contenu (le "Bravo !" + icône) quand
+          la carte dépassait la hauteur du viewport. items-start +
+          padding-top force le contenu à commencer en haut et à scroller
+          naturellement. */}
       {stepSuccess && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center p-4 pt-6 sm:pt-12 overflow-y-auto">
           <div className="max-w-md w-full space-y-4">
             {/* Guide congrats — vision 2026-05-16, symétrique avec
                 le message skip. Le guide félicite + indique que la
@@ -1214,7 +1232,7 @@ export default function PlayPage() {
 
       {/* Skip answer overlay */}
       {skipAnswer && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-start justify-center p-4 pt-6 sm:pt-12 overflow-y-auto">
           <div className="max-w-sm w-full space-y-4 my-8">
             {/* Guide message — vision 2026-05-16 : on ne félicite PAS,
                 on dit "pas trouvé c'est pas grave, voici la réponse et
@@ -1883,7 +1901,7 @@ export default function PlayPage() {
 
       {/* Final code screen */}
       {showFinalCode && (
-        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur flex items-center justify-center p-4 overflow-y-auto">
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur flex items-start justify-center p-4 pt-6 sm:pt-12 overflow-y-auto">
           <div className="max-w-md w-full space-y-4">
             <div className="text-center">
               <div className="inline-flex items-center justify-center w-20 h-20 rounded-full bg-emerald-500/10 border-2 border-emerald-500/30 mb-3">

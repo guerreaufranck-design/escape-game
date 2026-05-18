@@ -896,6 +896,12 @@ export const ui: Translations = {
   'epilogue.codeUnlocked': {
     fr: 'Code final trouve', en: 'Final code unlocked', de: 'Code geknackt', es: 'Codigo final descifrado', it: 'Codice finale svelato',
   },
+  'epilogue.listen': {
+    fr: 'Ecouter le recit complet', en: 'Listen to the full story', de: 'Die ganze Geschichte horen', es: 'Escuchar la historia completa', it: "Ascolta l'intero racconto",
+  },
+  'epilogue.pause': {
+    fr: 'Pause', en: 'Pause', de: 'Pause', es: 'Pausa', it: 'Pausa',
+  },
 
   // ── Results page ─────────────────────────────────────────────────────
   'results.unavailable': {

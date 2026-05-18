@@ -242,7 +242,30 @@ export async function POST(
       }
 
       if (epilogueTitle && epilogueText) {
-        epilogue = { title: epilogueTitle, text: epilogueText };
+        // BUG B FIX (2026-05-18) : fetch pre-generated MP3 URL for the
+        // epilogue narration. The audio is stored in audio_cache at
+        // step_order=0, slot='epilogue' for the player's locale.
+        // Sans ça, GameEpilogue ne pouvait pas rendre de bouton "Écouter"
+        // alors que l'audio existait bel et bien en DB.
+        let epilogueAudioUrl: string | null = null;
+        try {
+          const { data: audioRow } = await supabase
+            .from("audio_cache")
+            .select("public_url")
+            .eq("game_id", session.game_id)
+            .eq("step_order", 0)
+            .eq("slot", "epilogue")
+            .eq("language", locale)
+            .maybeSingle();
+          epilogueAudioUrl = audioRow?.public_url ?? null;
+        } catch {
+          // best-effort — si l'audio manque, on continue sans
+        }
+        epilogue = {
+          title: epilogueTitle,
+          text: epilogueText,
+          audioUrl: epilogueAudioUrl,
+        };
       }
     }
 

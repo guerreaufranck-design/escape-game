@@ -17,8 +17,9 @@
  */
 
 import { useEffect, useState } from "react";
-import { BookOpen } from "lucide-react";
+import { BookOpen, Volume2, Pause } from "lucide-react";
 import { tt } from "@/lib/translations";
+import { useNarration } from "@/hooks/useNarration";
 
 interface GameEpilogueProps {
   title: string;
@@ -27,6 +28,13 @@ interface GameEpilogueProps {
   /** Optional intro line shown above the title, e.g. "✓ Code final trouvé !" */
   overline?: string;
   locale?: string;
+  /**
+   * Optional MP3 URL for the epilogue narration. When present, renders a
+   * prominent "Écouter" button. Bug B fix 2026-05-18 — l'audio existait
+   * en DB mais le composant ne l'exposait pas, rendant les frais
+   * ElevenLabs invisibles au joueur.
+   */
+  audioUrl?: string | null;
 }
 
 export function GameEpilogue({
@@ -35,7 +43,27 @@ export function GameEpilogue({
   imageUrl = null,
   overline,
   locale = "fr",
+  audioUrl = null,
 }: GameEpilogueProps) {
+  const narration = useNarration(locale);
+  const handleListen = () => {
+    if (narration.speaking) {
+      narration.stop();
+      return;
+    }
+    // useNarration handles both ElevenLabs MP3 + Web Speech fallback
+    narration.speak(text, { audioUrl });
+  };
+
+  // Auto-stop when component unmounts
+  useEffect(() => {
+    return () => {
+      narration.stop();
+    };
+  }, [narration]);
+
+  const canListen = !!audioUrl || narration.supported;
+
   // Split the text into paragraphs (on double newline, single newline fallback)
   const paragraphs = text
     .split(/\n{2,}/)
@@ -104,6 +132,36 @@ export function GameEpilogue({
         >
           {title}
         </h2>
+
+        {/* Bouton "Écouter" — TRÈS VISIBLE (vision S5 2026-05-18 :
+            le joueur doit avoir envie de cliquer. Pulse animation +
+            gradient amber pour attirer l'œil). */}
+        {canListen && (
+          <div className="flex justify-center">
+            <button
+              type="button"
+              onClick={handleListen}
+              className={`group flex items-center gap-3 rounded-full border border-amber-400/60 bg-gradient-to-br from-amber-500/30 to-amber-700/40 px-6 py-3 text-base font-bold text-amber-100 shadow-lg shadow-amber-900/40 transition-all hover:scale-105 hover:from-amber-500/50 hover:to-amber-700/60 ${
+                narration.speaking ? "" : "animate-pulse-slow"
+              }`}
+            >
+              {narration.speaking ? (
+                <>
+                  <Pause className="h-5 w-5" />
+                  <span>{tt("epilogue.pause", locale) || "Pause"}</span>
+                </>
+              ) : (
+                <>
+                  <Volume2 className="h-5 w-5" />
+                  <span>
+                    {tt("epilogue.listen", locale) ||
+                      "Écouter le récit complet"}
+                  </span>
+                </>
+              )}
+            </button>
+          </div>
+        )}
 
         <div className="mx-auto max-w-2xl space-y-4">
           {paragraphs.map((para, i) => (
