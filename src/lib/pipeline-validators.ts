@@ -22,6 +22,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { WEAK_ANSWERS, KNOWN_FAKE_TOKENS } from "@/lib/answer-blacklists";
+import { geocodeLocation } from "@/lib/geocode";
 
 /** Une issue détectée par le validator. */
 export interface ValidationIssue {
@@ -41,7 +42,9 @@ export interface ValidationIssue {
     | "ar_diversity_low"
     | "gps_out_of_cluster"
     | "sources_thin"
-    | "missing_final_explanation";
+    | "missing_final_explanation"
+    // Added 2026-05-17 (B3 GPS cross-validation) :
+    | "gps_cross_check_drift";
   /** Message humain pour l'email d'alerte. */
   message: string;
   /** Détails techniques pour debug. */
@@ -149,7 +152,7 @@ export async function validateFinalGame(
   const { data: game, error: gameErr } = await supabase
     .from("games")
     .select(
-      "id, slug, title, transport_mode, final_answer, final_answer_explanation",
+      "id, slug, title, transport_mode, final_answer, final_answer_explanation, city",
     )
     .eq("id", gameId)
     .single();
@@ -413,6 +416,78 @@ export async function validateFinalGame(
             .map((o) => `Step ${o.step} "${o.name}" = ${Math.round(o.distance / 1000)} km`)
             .join(" ; "),
         details: { medianLat, medianLon, outliers },
+      });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // 4.45 (NEW B3 2026-05-17) — GPS cross-validation : pour chaque stop,
+  // on refait UN appel `geocodeLocation(landmark_name, city, country)`
+  // avec un rayon de bias plus large (10 km au lieu de 2 km) et on
+  // compare les coords retournées avec celles déjà stockées en DB.
+  //
+  // Pourquoi : le geocoding initial utilise un bias de 2 km centré sur
+  // le startPoint. Si Gemini a fourni un name + address légèrement
+  // décalés, Google a pu accepter un POI homonyme à 200-500m du bon.
+  // En re-geocodant SANS le bias serré, on vérifie que Google retourne
+  // toujours le même endroit. Divergence > 300 m = drift suspect.
+  //
+  // Coût : 8 appels Google Places par jeu (~$0.04). Acceptable pour
+  // un commit de validation qualité avant facturation client.
+  //
+  // Skipped si GOOGLE_MAPS_API_KEY pas défini (préviews / local dev).
+  // ─────────────────────────────────────────────────────────────────
+  if (process.env.GOOGLE_MAPS_API_KEY) {
+    const drifts: Array<{
+      step: number;
+      name: string;
+      dbCoords: { lat: number; lon: number };
+      googleCoords: { lat: number; lon: number };
+      driftM: number;
+    }> = [];
+    const cityForGeocode = game.city ?? "";
+    for (const s of steps) {
+      // Skip stops sans nom (data corruption — déjà flaggé ailleurs)
+      if (!s.landmark_name || typeof s.landmark_name !== "string") continue;
+      try {
+        const result = await geocodeLocation(s.landmark_name, cityForGeocode, "", {
+          // Pas de referencePoint = pas de bias = Google libre de retourner
+          // le POI le plus probable au monde pour ce nom. Si city dans le
+          // nom suffit (Gemini envoie typiquement "Cathedral of X, Y"),
+          // Google va converger sur le bon endroit.
+          referencePoint: undefined,
+        });
+        if (!result) continue; // pas trouvé sans bias, skip silencieusement
+        const drift = haversineMeters(
+          { lat: s.latitude, lon: s.longitude },
+          { lat: result.lat, lon: result.lon },
+        );
+        if (drift > 300) {
+          drifts.push({
+            step: s.step_order,
+            name: s.landmark_name,
+            dbCoords: { lat: s.latitude, lon: s.longitude },
+            googleCoords: { lat: result.lat, lon: result.lon },
+            driftM: Math.round(drift),
+          });
+        }
+      } catch {
+        // Network errors silently ignored — c'est un check de qualité,
+        // pas un blocker fonctionnel.
+      }
+    }
+    if (drifts.length > 0) {
+      issues.push({
+        code: "gps_cross_check_drift",
+        message:
+          `${drifts.length} stop(s) drift > 300 m between stored GPS and clean re-geocode (without 2 km bias). Possible Gemini-supplied name+coords accepted by biased Google but contradicted by unbiased Google : ` +
+          drifts
+            .map(
+              (d) =>
+                `Step ${d.step} "${d.name}" = ${d.driftM} m off`,
+            )
+            .join(" ; "),
+        details: { drifts },
       });
     }
   }
