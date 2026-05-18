@@ -101,7 +101,11 @@ export default function PlayPage() {
   const [skipAnswer, setSkipAnswer] = useState<string | null>(null);
   const [skipping, setSkipping] = useState(false);
   const [videoWatched, setVideoWatched] = useState(false);
-  const [tutorialDone, setTutorialDone] = useState(false);
+  // Tutorial désactivé par défaut (2026-05-18, demande user).
+  // Les 5 slides étaient redondantes avec le briefing + modal guide.
+  // Si on veut le réactiver, repasser à useState(false).
+  const [tutorialDone, setTutorialDone] = useState(true);
+  void setTutorialDone; // keep setter for future re-enabling
   const [anecdote, setAnecdote] = useState<{ title: string; text: string } | null>(null);
   // landmark_history = histoire patrimoniale complète du lieu (vision client 2026-05-16).
   // Affichée APRÈS la trouvaille AR, AVANT l'anecdote thématique.
@@ -606,7 +610,12 @@ export default function PlayPage() {
         // success modal anyway → use those seconds to translate. By the
         // time they tap "Continue", gameState is hot and the transition
         // feels instant instead of a 30-40s blocking wait.
-        void fetchGameState();
+        //
+        // BUG (2026-05-18) : si data.completed===true (dernier stop), on
+        // ne fetch PAS pour les mêmes raisons que skipStep (cf. fix ci-dessus).
+        if (!data.completed) {
+          void fetchGameState();
+        }
       } else if (data.reason === "wrong_answer") {
         setError(tt('play.error.wrongAnswer', locale));
         setTimeout(() => setError(null), 3500);
@@ -698,7 +707,16 @@ export default function PlayPage() {
         // Pre-fetch next step (background) — same trick as validateStep
         // so the player isn't blocked on a 30-40s translation when they
         // tap "Continue" after the skip-reveal screen.
-        void fetchGameState();
+        //
+        // BUG (2026-05-18) : si data.completed===true (dernier stop), on
+        // ne fetch PAS — le serveur a déjà marqué status="completed",
+        // donc fetchGameState verrait ce status et triggerait
+        // router.push('/results') AVANT que le joueur clique "Continuer"
+        // → on saute le final code modal. dismissSkip() prend la suite
+        // avec setShowFinalCode(true) sans avoir besoin de fetch.
+        if (!data.completed) {
+          void fetchGameState();
+        }
       }
     } catch {
       setError(tt('play.error.skipFailed', locale));
@@ -827,13 +845,14 @@ export default function PlayPage() {
             </div>
           </div>
 
-          {/* Guide's intro speech (vision 2026-05-16) — played before stop 1.
-              Welcomes the player, sets duration / battery / AR expectations,
-              and explicitly states the patrimoine-first philosophy : "all
-              stops are valuable for the city, not all of them link directly
-              to the theme — time erases traces". This is what manages the
-              "we just walked for nothing" frustration before it can happen. */}
-          {gameState.introSpeech && (
+          {/* Guide's intro speech card — RETIRÉ 2026-05-18 (S1 fix).
+              Le contenu est désormais affiché DIRECTEMENT via le
+              GuideNarrationOverlay modal qui s'auto-ouvre dès l'arrivée
+              sur le briefing (sprite + audio + texte en pleine page).
+              Garder cette card en plus du modal = duplication écran que
+              l'utilisateur a confirmé être visible 2x. On garde le code
+              en commentaire pour pouvoir réafficher si besoin. */}
+          {false && gameState.introSpeech && (
             <Card className="bg-slate-900/90 border-amber-700/40">
               <CardHeader className="pb-2">
                 <div className="flex items-center justify-between">
@@ -1566,14 +1585,19 @@ export default function PlayPage() {
           {/* Bottom actions for riddle view */}
           <div className="sticky bottom-0 bg-slate-900/95 backdrop-blur-sm border-t border-slate-800 p-4">
             <div className="max-w-lg mx-auto space-y-3">
-              {/* Main CTA: go to navigation */}
+              {/* Main CTA: open AR directly. La vue Navigation (avec map)
+                  est retirée du flow utilisateur (S2 partiel 2026-05-18).
+                  L'AR sert maintenant à la fois de guidage (radar +
+                  flèches + distance + horizon) ET de scan. Plus de map
+                  par stop — seule la map du starting point est conservée
+                  dans le briefing initial. */}
               <Button
                 size="lg"
-                className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold h-14 rounded-xl text-base"
-                onClick={() => setView("navigation")}
+                className="w-full bg-gradient-to-br from-fuchsia-600 to-violet-700 hover:from-fuchsia-500 hover:to-violet-600 text-white font-bold h-14 rounded-xl text-base shadow-lg shadow-fuchsia-900/40"
+                onClick={() => setArOpen(true)}
               >
-                <Navigation className="h-5 w-5 mr-2" />
-                {tt('play.understood', locale)}
+                <Sparkles className="h-5 w-5 mr-2" />
+                {tt('play.arMode', locale) || 'Mode AR'}
               </Button>
               {/* Secondary actions */}
               <div className="flex justify-center gap-4">

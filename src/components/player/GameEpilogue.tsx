@@ -55,12 +55,12 @@ export function GameEpilogue({
     narration.speak(text, { audioUrl });
   };
 
-  // Auto-stop when component unmounts
-  useEffect(() => {
-    return () => {
-      narration.stop();
-    };
-  }, [narration]);
+  // PAS de cleanup ici (bug observé 2026-05-18) : `narration` est recréé
+  // à CHAQUE render (useCallback recompute quand speaking flip à true),
+  // et l'effet [narration] firait son cleanup `narration.stop()` IMMÉDIATEMENT
+  // après que l'audio démarre → l'audio se coupait instantanément, donnant
+  // l'illusion d'un bouton "fonctionnel mais sans son". useNarration a son
+  // PROPRE useEffect de cleanup sur unmount (line 164) qui suffit.
 
   const canListen = !!audioUrl || narration.supported;
 
