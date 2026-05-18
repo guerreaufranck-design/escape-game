@@ -83,8 +83,18 @@ export interface GameState {
   } | null;
   /** Touristic POIs the player walks past on the way to this step.
    *  Surfaced as an expandable card "Sur le chemin, ne manque pas..."
-   *  on the riddle screen. Empty array if none. */
-  routeAttractions: Array<{ name: string; fact: string }>;
+   *  on the riddle screen. Empty array if none.
+   *  Schema enriched 2026-05-17 with category + distance + GPS for
+   *  UI categorisation and clickable navigation. Old games stored
+   *  before this date have only {name, fact} — both schemas coexist. */
+  routeAttractions: Array<{
+    name: string;
+    fact: string;
+    category?: "heritage" | "viewpoint" | "quirky" | "food" | "nature";
+    distance_m?: number;
+    lat?: number;
+    lon?: number;
+  }>;
   approximateTarget: {
     latitude: number;
     longitude: number;

@@ -1832,23 +1832,79 @@ async function insertGameIntoDatabase(
       ar_facade_text: enforcedFacade,
       ar_treasure_reward: step.ar_treasure_reward || null,
       // Route POIs — defensive normalization (drop entries missing
-      // name or fact, cap at 3). We log a warning when a step has 0
-      // entries so the post-generation alert email surfaces the gap;
-      // we don't hard-fail (legacy games would break) but the next
-      // attractions-fill script can pick up the slack.
+      // name or fact, cap at 4). Cap raised 2026-05-17 from 3 → 4
+      // and the schema enriched with category + distance_m + lat/lon
+      // (all optional). The filter ONLY requires name + fact ; the
+      // enrichment fields are preserved when present and dropped
+      // silently when malformed.
+      // We log a warning when a step has 0 entries so the post-
+      // generation alert email surfaces the gap ; we don't hard-fail
+      // (legacy games would break) but the next attractions-fill
+      // script can pick up the slack.
       route_attractions: (() => {
+        const VALID_CATEGORIES = new Set([
+          "heritage",
+          "viewpoint",
+          "quirky",
+          "food",
+          "nature",
+        ]);
+        type RawAttr = {
+          name?: unknown;
+          fact?: unknown;
+          category?: unknown;
+          distance_m?: unknown;
+          lat?: unknown;
+          lon?: unknown;
+        };
         const valid = Array.isArray(step.route_attractions)
-          ? step.route_attractions
+          ? (step.route_attractions as RawAttr[])
               .filter(
-                (a): a is { name: string; fact: string } =>
+                (a): a is RawAttr & { name: string; fact: string } =>
                   !!a &&
                   typeof a === "object" &&
-                  typeof (a as { name?: unknown }).name === "string" &&
-                  typeof (a as { fact?: unknown }).fact === "string" &&
-                  (a as { name: string }).name.trim().length > 0 &&
-                  (a as { fact: string }).fact.trim().length > 0,
+                  typeof a.name === "string" &&
+                  typeof a.fact === "string" &&
+                  a.name.trim().length > 0 &&
+                  a.fact.trim().length > 0,
               )
-              .slice(0, 3)
+              .map((a) => {
+                const out: {
+                  name: string;
+                  fact: string;
+                  category?: string;
+                  distance_m?: number;
+                  lat?: number;
+                  lon?: number;
+                } = { name: a.name, fact: a.fact };
+                if (
+                  typeof a.category === "string" &&
+                  VALID_CATEGORIES.has(a.category)
+                ) {
+                  out.category = a.category;
+                }
+                if (
+                  typeof a.distance_m === "number" &&
+                  Number.isFinite(a.distance_m) &&
+                  a.distance_m >= 0 &&
+                  a.distance_m <= 5_000
+                ) {
+                  out.distance_m = Math.round(a.distance_m);
+                }
+                if (
+                  typeof a.lat === "number" &&
+                  typeof a.lon === "number" &&
+                  Number.isFinite(a.lat) &&
+                  Number.isFinite(a.lon) &&
+                  Math.abs(a.lat) <= 90 &&
+                  Math.abs(a.lon) <= 180
+                ) {
+                  out.lat = a.lat;
+                  out.lon = a.lon;
+                }
+                return out;
+              })
+              .slice(0, 4)
           : [];
         if (valid.length === 0) {
           console.warn(

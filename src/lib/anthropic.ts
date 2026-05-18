@@ -53,10 +53,27 @@ export interface GeneratedStep {
    * step is solved (e.g. "a silver key engraved with a galleon"). 1
    * sentence — themed to the step's narrative. */
   ar_treasure_reward: string;
-  /** 1-3 real cultural / heritage points the player passes ON THE WAY
-   * to this step. Surfaced as a separate card in the UI so players
-   * can expand "things to spot on the route". */
-  route_attractions: Array<{ name: string; fact: string }>;
+  /** 3-4 real cultural / heritage / quirky / viewpoint points the
+   * player passes ON THE WAY to this step. Surfaced as a separate card
+   * in the UI ("Sur le chemin, ne manque pas...") so players can slow
+   * down and observe. Enriched 2026-05-17 with category + distance +
+   * GPS to make the card scannable + clickable for navigation. */
+  route_attractions: Array<{
+    name: string;
+    fact: string;
+    /** Bucket pour styling UI + filtering : heritage (monument,
+     *  église), viewpoint (panorama, place), quirky (anecdote
+     *  insolite, statue inattendue), food (boulangerie iconique,
+     *  café historique), nature (parc, jardin). */
+    category?: "heritage" | "viewpoint" | "quirky" | "food" | "nature";
+    /** Distance approximative en mètres depuis ce stop. Aide le
+     *  joueur à savoir si c'est un crochet de 50m ou de 500m. */
+    distance_m?: number;
+    /** Coords optionnelles. Quand présentes, le UI peut afficher un
+     *  bouton "ouvrir dans Maps" / "Navigate" pour ce sous-point. */
+    lat?: number;
+    lon?: number;
+  }>;
 }
 
 let anthropicClient: Anthropic | null = null;
@@ -618,25 +635,52 @@ ${buildCharacterSelectionGuidance(stepCount)}
     galleon and a crescent moon"). Pure flavour, themed to the narrative
     beat. Under 130 chars.
 
-14. "route_attractions": Array of EXACTLY 1-3 short cultural / heritage
-    points-of-interest the player will physically pass ON THE WAY to
-    this step (or right next to it). Real, factual, concrete buildings
-    / statues / fountains / bakeries / plaques. NOT fictional. Each
-    entry uses this STRICT JSON shape:
+14. "route_attractions": Array of EXACTLY 3-4 real, concrete points-of-
+    interest the player will physically pass or see ON THE WAY to this
+    step (or right next to it). Real buildings / statues / fountains /
+    bakeries / plaques / viewpoints. NOT fictional. Each entry uses
+    this ENRICHED JSON shape (schema updated 2026-05-17) :
       [
         {
           "name": "Maison Borghi (XVIIe siecle)",
-          "fact": "Balcons en fer forge classes monuments historiques, restaures en 1987."
+          "fact": "Balcons en fer forge classes monuments historiques.",
+          "category": "heritage",
+          "distance_m": 80,
+          "lat": 43.5234,
+          "lon": 5.1234
         },
         ...
       ]
-    Mandatory keys: "name" (under 60 chars) + "fact" (one sentence
-    factual under 140 chars). Do NOT return a string array — that
-    breaks the pipeline. The UI shows these as a small expandable
-    card "Sur le chemin, ne manque pas..." above the riddle, so the
-    player can slow down and observe. Step 1 has no "way to" — for
-    step 1, these can be points BEHIND the player or visible from
-    the starting point. Always 1-3 entries, never empty.
+
+    MANDATORY keys :
+      - "name"  (under 60 chars)
+      - "fact"  (one factual sentence under 140 chars)
+      - "category" — bucket pour le UI : doit être EXACTEMENT l'une
+        des 5 valeurs suivantes :
+          • "heritage"  — monument, église, fortification, plaque
+          • "viewpoint" — panorama, place, point de vue, terrasse
+          • "quirky"    — détail insolite, anecdote, statue inattendue
+          • "food"      — boulangerie iconique, café historique, marché
+          • "nature"    — parc, jardin, fontaine, arbre remarquable
+      - "distance_m" — entier en mètres depuis le stop. Approximatif
+        mais réaliste : 50 pour "juste à côté", 200 pour "petit
+        crochet", 500 max (au-delà ça n'est plus "sur le chemin")
+
+    OPTIONAL keys :
+      - "lat" / "lon" — décimal coords si tu les connais avec confiance
+        depuis Wikipedia / Google Maps. Si pas sûr, OMETS le champ
+        plutôt que d'inventer (le UI affichera juste le nom + fact).
+
+    UI : carte expandable "Sur le chemin, ne manque pas...". Le UI
+    groupe les attractions par catégorie avec une icone et un bouton
+    "Navigate" si lat/lon présents.
+
+    QUALITÉ : varie les catégories (au moins 2 différentes sur les 3-4
+    entries). Évite la monotonie type "4 églises". Pioche du local /
+    quirky / food en mélange avec le heritage pur. Step 1 n'a pas de
+    "way to" → pour step 1, ces points sont BEHIND the player ou
+    visible from the starting point. Toujours 3-4 entries, jamais
+    moins.
 
 ═══════════════════════════════════════════════════════════════════════
 GAME-WIDE INVARIANTS (apply across the whole array of ${stepCount} steps)
