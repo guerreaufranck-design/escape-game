@@ -29,12 +29,16 @@ import { allInngestFunctions } from "@/lib/inngest";
  * Vercel maxDuration de cet endpoint.
  *
  * Chaque invocation d'Inngest = exécution d'UN seul step. Le step le plus
- * long est `prepare-package` qui peut prendre 5-10 min (translations
- * Gemini + audio ElevenLabs). On met 600s (10 min, max Vercel) pour
- * couvrir tous les cas. Si un step dépasse 10 min, Inngest le retry
- * automatiquement.
+ * long est `build-from-template` (Gemini discovery + Claude narrations +
+ * C3 photo fetch + B3 cross-validation + DB insert) qui peut prendre
+ * 7-13 min en cumulé.
+ *
+ * Bumped 600 → 800 le 2026-05-18 après le 504 sur le test client : Gemini
+ * discovery seul prend parfois 5-7 min, et les additions récentes (C3 photo
+ * fetch, B3 cross-validation) ont ajouté ~40-60s au cumul. 800 = max Vercel
+ * Pro plan. Si on dépasse encore, Inngest retry automatique.
  */
-export const maxDuration = 600;
+export const maxDuration = 800;
 
 export const { GET, POST, PUT } = serve({
   client: inngest,
