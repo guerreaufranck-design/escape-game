@@ -323,21 +323,39 @@ export async function POST(request: NextRequest) {
     const supabase = createAdminClient();
     const recentCutoff = new Date(Date.now() - 60 * 60 * 1000).toISOString();
 
-    // Case 1: published game of any age (priority)
+    // S9 (2026-05-19) — Idempotency MODE-AWARE.
+    //
+    // Bug rapporté Montpellier audioguide : OddballTrip utilise le MÊME
+    // slug pour la variante escape ET la variante audioguide d'un même
+    // parcours physique (cf. leur dev : "même slug, même parcours
+    // physique, même table generated_games"). Sans le filtre mode dans
+    // l'idempotency, une commande city_tour pour un slug déjà publié
+    // en city_game retournait l'ID escape existant → joueur recevait
+    // un escape game alors qu'il avait acheté un audioguide.
+    //
+    // Fix : on filtre désormais sur (slug, mode). Deux jeux peuvent
+    // donc coexister pour le même slug à condition d'être de modes
+    // différents. La table games n'a PAS de UNIQUE(slug) constraint
+    // (cf. migration 005), donc rien ne bloque cette coexistence.
+    const targetMode = template.mode ?? "city_game";
+
+    // Case 1: published game of any age (priority), SAME mode
     const { data: publishedMatch } = await supabase
       .from("games")
       .select("id, is_published, created_at")
       .eq("slug", template.slug)
+      .eq("mode", targetMode)
       .eq("is_published", true)
       .order("created_at", { ascending: false })
       .limit(1);
 
-    // Case 2: unpublished but recent game (anti-retry-storm)
+    // Case 2: unpublished but recent game (anti-retry-storm), SAME mode
     const { data: recentUnpublished } = !publishedMatch?.[0]
       ? await supabase
           .from("games")
           .select("id, is_published, created_at")
           .eq("slug", template.slug)
+          .eq("mode", targetMode)
           .eq("is_published", false)
           .gte("created_at", recentCutoff)
           .order("created_at", { ascending: false })
@@ -346,7 +364,7 @@ export async function POST(request: NextRequest) {
 
     const existingGame = publishedMatch?.[0] || recentUnpublished?.[0];
     if (existingGame) {
-      console.log(`[GenerateGame] Game already exists for slug "${template.slug}" → ${existingGame.id} (is_published=${existingGame.is_published}, created ${existingGame.created_at}) — returning existing instead of generating duplicate.`);
+      console.log(`[GenerateGame] Game already exists for slug "${template.slug}" + mode=${targetMode} → ${existingGame.id} (is_published=${existingGame.is_published}, created ${existingGame.created_at}) — returning existing instead of generating duplicate.`);
 
       // Still send callback so oddballtrip can process pending purchases
       if (body.callbackUrl) {
