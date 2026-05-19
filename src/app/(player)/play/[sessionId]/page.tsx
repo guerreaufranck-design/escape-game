@@ -890,47 +890,15 @@ export default function PlayPage() {
             </div>
           </div>
 
-          {/* Guide's intro speech card — RESTAURÉ 2026-05-19.
-              Bug rapporté Montpellier : le modal auto-open peut être
-              avalé par iOS Safari (audio autoplay policy) → le joueur
-              tape "Let's go" sans avoir vu le briefing du guide.
-              Solution : afficher TOUJOURS le speech en carte visible sur
-              la page briefing. Le modal auto-open reste mais devient
-              un bonus, pas la seule source. */}
-          {gameState.introSpeech && (
-            <Card className="bg-gradient-to-br from-amber-950/40 via-slate-900/80 to-slate-900 border-amber-700/50 shadow-lg shadow-amber-900/20">
-              <CardHeader className="pb-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-xl">🎙️</span>
-                    <CardTitle className="text-sm text-amber-300 uppercase tracking-wider">
-                      {tt('play.yourGuide', locale) || "Votre guide"}
-                    </CardTitle>
-                  </div>
-                  {narration.supported && (
-                    <NarrationButton
-                      text={gameState.introSpeech}
-                      speaking={narration.speaking}
-                      currentText={narrationText}
-                      onSpeak={(t) => speakWithOverlay(
-                        t,
-                        gameState.gameWideAudio?.introSpeech,
-                        tt("play.yourGuide", locale) || "Votre guide",
-                        "guide_male",
-                      )}
-                      variant="pill"
-                      locale={locale}
-                    />
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-slate-200 leading-relaxed text-sm whitespace-pre-wrap">
-                  {gameState.introSpeech}
-                </p>
-              </CardContent>
-            </Card>
-          )}
+          {/* Guide's intro speech card — RETIRÉ DE NOUVEAU 2026-05-19
+              (suite test 2).
+              La carte créait un doublon avec le GuideNarrationOverlay
+              auto-open : le joueur voyait le même texte 2 fois (une
+              fois en modal plein écran + une fois en carte sur la page).
+              Le flow correct : modal seul en page 1, briefing map en
+              page 2. Le modal s'auto-ouvre dès qu'on arrive sur la
+              page briefing (cf. useEffect L344-366). Si iOS Safari
+              bloque l'audio, le texte reste visible jusqu'au "Fermer". */}
 
           {/* Scenario / description (fallback when no intro_speech) */}
           {!gameState.introSpeech && gameState.gameDescription && (

@@ -412,6 +412,16 @@ export async function GET(
     // 2026-05-16 fix : si le JSONB ne contient que {en: ...} et que la
     // langue cible != en, on déclenche translateGameField pour avoir
     // le contenu localisé (cohérence avec l'audio déjà généré).
+    //
+    // Bug fix 2026-05-19 (Montpellier intro_speech anglais) : passage
+    // en cacheOnly. Avant, translateGameField pouvait passer 4 minutes
+    // en retries Gemini sur un seul champ. Sur 3 champs (introSpeech,
+    // finalRiddleText, finalAnswerExplanation), ça peut atteindre
+    // 12 min synchrone → Vercel function timeout → joueur reçoit EN
+    // brut. Maintenant : cacheOnly garantit réponse instantanée. Si
+    // la traduction n'est pas en cache, on retourne EN et on FIRE
+    // une réhydratation Gemini en arrière-plan pour que le prochain
+    // call ait le cache chaud.
     const translateOrFallback = async (
       val: unknown,
       column: string,
@@ -421,21 +431,41 @@ export async function GET(
       // Si direct est différent du fallback EN, on a déjà la bonne langue
       const en = getEnglishBase(val);
       if (locale === "en" || direct !== en) return direct;
-      // Sinon on traduit avec cache
+      // Tentative cacheOnly d'abord (instantané)
       try {
-        return await translateGameField(
+        const cached = await translateGameField(
           session.game_id,
           "games",
           column,
           en,
           locale,
+          { cacheOnly: true },
         );
+        if (cached && cached !== en) {
+          return cached; // cache hit FR ✓
+        }
       } catch (err) {
         console.warn(
-          `[game/${sessionId}] ${column} translation failed: ${err instanceof Error ? err.message : err} — keeping EN`,
+          `[game/${sessionId}] ${column} cacheOnly threw: ${err instanceof Error ? err.message : err}`,
         );
-        return en;
       }
+      // Cache miss → fire async background translation (sans await), retour
+      // immédiat avec EN. Le prochain GET du joueur aura le FR en cache.
+      void translateGameField(
+        session.game_id,
+        "games",
+        column,
+        en,
+        locale,
+      ).catch((err) => {
+        console.warn(
+          `[game/${sessionId}] ${column} async warmup failed: ${err instanceof Error ? err.message : err}`,
+        );
+      });
+      console.warn(
+        `[game/${sessionId}] ${column} cache miss for locale=${locale}, serving EN + async warmup fired`,
+      );
+      return en;
     };
 
     const introSpeech = await translateOrFallback(
