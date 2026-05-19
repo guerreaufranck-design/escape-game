@@ -499,13 +499,38 @@ export async function GET(
     // If the customer chose their language at purchase, /api/external/
     // generate-code already populated audio_cache. Otherwise nothing here
     // and the player falls back to Web Speech.
+    //
+    // Bug fix 2026-05-19 (Montpellier) : si la locale runtime du joueur ne
+    // matche AUCUNE row audio_cache (e.g. iPhone EN qui joue un jeu généré
+    // en FR), on retombe sur la PREMIÈRE langue disponible plutôt que le
+    // robot voice Web Speech. Mieux entendre du français avec un texte
+    // anglais que du robot. Le joueur peut forcer sa langue via ?lang=xx.
     if (gameState.currentStepId && session.status !== "completed") {
-      const { data: audioRows } = await supabase
+      let audioRows: { slot: string; public_url: string }[] | null = null;
+      // 1er essai : strict sur la locale demandée
+      const strict = await supabase
         .from("audio_cache")
         .select("slot, public_url")
         .eq("game_id", session.game_id)
         .eq("language", locale)
         .eq("step_order", session.current_step);
+      if (strict.data && strict.data.length > 0) {
+        audioRows = strict.data;
+      } else {
+        // 2e essai : ANY language pour ce step (fallback any-audio-better-than-robot)
+        const fallback = await supabase
+          .from("audio_cache")
+          .select("slot, public_url, language")
+          .eq("game_id", session.game_id)
+          .eq("step_order", session.current_step);
+        if (fallback.data && fallback.data.length > 0) {
+          const firstLang = fallback.data[0].language;
+          audioRows = fallback.data.filter((r) => r.language === firstLang);
+          console.warn(
+            `[game/${sessionId}] No audio for locale=${locale} step ${session.current_step}, fallback to language=${firstLang}`,
+          );
+        }
+      }
 
       if (audioRows && audioRows.length > 0) {
         gameState.audioMap = {
@@ -521,14 +546,31 @@ export async function GET(
     // Game-wide audio slots (step_order=0) — intro_speech, final_riddle,
     // final_explanation. Fetched separately to avoid coupling them to the
     // current step. Useful for the intro screen + final puzzle overlay
-    // (vision 2026-05-16).
+    // (vision 2026-05-16). Même stratégie fallback que step audio.
     {
-      const { data: gameWideAudio } = await supabase
+      let gameWideAudio: { slot: string; public_url: string }[] | null = null;
+      const strict = await supabase
         .from("audio_cache")
         .select("slot, public_url")
         .eq("game_id", session.game_id)
         .eq("language", locale)
         .eq("step_order", 0);
+      if (strict.data && strict.data.length > 0) {
+        gameWideAudio = strict.data;
+      } else {
+        const fallback = await supabase
+          .from("audio_cache")
+          .select("slot, public_url, language")
+          .eq("game_id", session.game_id)
+          .eq("step_order", 0);
+        if (fallback.data && fallback.data.length > 0) {
+          const firstLang = fallback.data[0].language;
+          gameWideAudio = fallback.data.filter((r) => r.language === firstLang);
+          console.warn(
+            `[game/${sessionId}] No game-wide audio for locale=${locale}, fallback to language=${firstLang}`,
+          );
+        }
+      }
 
       if (gameWideAudio && gameWideAudio.length > 0) {
         gameState.gameWideAudio = {
