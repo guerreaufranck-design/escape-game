@@ -920,6 +920,454 @@ function replaceRomansEmbedded(text: string): string {
 }
 
 // ===========================================================================
+// CITY TOUR GENERATION (S9 — 2026-05-19)
+// ===========================================================================
+//
+// Génère le contenu narratif pour le mode city_tour (audioguide enrichi).
+// Différences fondamentales vs generateGameSteps :
+//   - Pas d'énigme ni d'answer : le joueur n'a rien à résoudre
+//   - encyclopedic_text remplace riddle_text — 200-300 mots narration riche
+//   - Tonalité "audioguide chaleureux", pas "escape game mystérieux"
+//   - Pas de hints, pas de ar_treasure_reward (le tour ne récompense pas
+//     un puzzle résolu, l'enrichissement est la récompense)
+//   - architectural_focus + cultural_connection : nouveaux champs pour
+//     guider l'observation et tisser le parcours
+//
+// Le squelette du parcours (locations, GPS, validation_radius) reste
+// IDENTIQUE au mode escape — on réutilise la même discovery, on change
+// juste la couche narrative. C'est ce qui permet à un même slug d'être
+// vendu en escape OU en tour (futur : both).
+
+/**
+ * Schema produit par generateTourSteps.
+ * Différent de GeneratedStep — pas d'answer, pas de hints, narration
+ * riche au lieu de riddle énigmatique.
+ */
+export interface GeneratedTourStep {
+  title: string;
+  latitude: number;
+  longitude: number;
+  validation_radius_meters: number;
+  /**
+   * Le cœur du mode tour : 200-300 mots de narration audioguide
+   * structurés en 4 mouvements (Anchor → Story → Observation →
+   * Connection). C'est ce texte qui est lu par ElevenLabs et affiché
+   * à chaque stop. Il REMPLACE riddle_text de l'escape — le joueur
+   * tour n'a pas d'énigme, juste cette narration immersive.
+   */
+  encyclopedic_text: string;
+  /**
+   * Histoire patrimoniale du lieu (2-3 paragraphes). Même rôle qu'en
+   * escape mais peut être plus dense en tour (le joueur veut tout
+   * savoir, pas juste un teaser).
+   */
+  landmark_history: string;
+  /**
+   * Anecdote courte (1-2 sentences) — un détail mémorable qui reste
+   * en tête après le tour. Pas thématique au sens escape, juste
+   * un "bonus knowledge" qui fait sourire.
+   */
+  anecdote: string;
+  /**
+   * NOUVEAU — Ce que le joueur doit OBSERVER précisément maintenant.
+   * 1-2 phrases concrètes : "Regardez la corniche au-dessus du
+   * portail — vous y verrez les blasons des trois familles qui ont
+   * financé la chapelle." Affiché en complément de l'audio dans une
+   * petite carte "À observer" sur l'écran du stop.
+   */
+  architectural_focus: string;
+  /**
+   * NOUVEAU — Lien narratif avec les autres stops du parcours. 1-2
+   * phrases qui tissent la cohérence : "Vous retrouverez ce motif
+   * d'étoile à six branches sur la fontaine du stop suivant — c'est
+   * la signature des bâtisseurs de la guilde de Saint-Jean." Sert
+   * à donner du sens au parcours global, pas une suite de stops
+   * indépendants.
+   */
+  cultural_connection: string;
+  /**
+   * Personnage AR — identique à l'escape mais avec un dialogue plus
+   * "guide" qu'énigmatique. Le perso introduit le lieu, ne tease
+   * pas un puzzle.
+   */
+  ar_character_type: string;
+  ar_character_dialogue: string;
+  /**
+   * Optionnel — photo historique du lieu pour overlay AR. Identique
+   * à l'escape, le mécanisme AR de superposition fonctionne pareil.
+   */
+  ar_historical_photo_url?: string;
+  /**
+   * Route attractions inchangées — même UX que l'escape : "sur le
+   * chemin, ne manque pas...".
+   */
+  route_attractions: Array<{
+    name: string;
+    fact: string;
+    category?: "heritage" | "viewpoint" | "quirky" | "food" | "nature";
+    distance_m?: number;
+    lat?: number;
+    lon?: number;
+  }>;
+}
+
+/**
+ * Génère N steps en mode city_tour. Réutilise le verifiedContext et les
+ * patrimonialAnchors fournis par la discovery (Gemini-first flow) — c'est
+ * la même couche de recherche pour les deux modes, c'est ce qui garantit
+ * que les deux produits soient ancrés sur les mêmes faits documentés.
+ *
+ * Cible audio : ~90 secondes par stop = 200-300 mots français.
+ * Total parcours 8-15 stops = 12-22 min d'audio.
+ *
+ * Coût : ~$0.06 par jeu (légèrement plus que escape car prompts plus
+ * longs et output plus dense). 2× plus en audio ElevenLabs car ~3×
+ * plus de chars à vocaliser.
+ */
+export async function generateTourSteps(
+  city: string,
+  country: string,
+  theme: string,
+  narrative: string,
+  locations: ResearchedLocation[],
+  genre: GameGenre = DEFAULT_GENRE,
+  verifiedContext?: VerifiedThemeContext,
+  maxStops: number = 15,
+): Promise<GeneratedTourStep[]> {
+  void genre; // genre overlay non utilisé en tour (la tonalité est uniforme audioguide)
+
+  // RAG : pull lessons from past feedback (même mécanique que l'escape).
+  let feedbackBlock = "";
+  try {
+    const feedback = await getRelevantNegativeFeedback({ city, theme, limit: 8 });
+    feedbackBlock = formatFeedbackForPrompt(feedback);
+    if (feedbackBlock) {
+      console.log(
+        `[generateTourSteps] Injecting ${feedback.length} lessons from past feedback`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[generateTourSteps] Could not fetch feedback memory: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+  const client = getAnthropicClient();
+
+  // Tour mode : stop count variable selon la richesse de la ville.
+  // On prend ce que la discovery a trouvé (jusqu'à maxStops), mais au
+  // moins 6 stops pour que le parcours ait du sens narratif.
+  const stepCount = Math.max(6, Math.min(locations.length, maxStops));
+
+  // Locations text — même format que l'escape, mais avec un focus
+  // patrimonial plutôt que "answer-oriented".
+  const locationsText = locations
+    .map(
+      (loc, i) => `Location ${i + 1}: ${loc.name}
+- GPS: ${loc.latitude}, ${loc.longitude}
+- What to observe: ${loc.whatToObserve}
+- Source: ${loc.source}${
+        loc.patrimonialRole
+          ? `
+- 🏛️ FULL PATRIMONIAL HISTORY (use as PRIMARY anchor): ${loc.patrimonialRole}${loc.citation ? ` (Source: ${loc.citation})` : ""}`
+          : ""
+      }${
+        loc.thematicRole
+          ? `
+- 🎭 THEMATIC CONNECTION: ${loc.thematicRole}`
+          : ""
+      }${
+        loc.poiCategory
+          ? `
+- Category: ${loc.poiCategory}`
+          : ""
+      }`,
+    )
+    .join("\n\n");
+
+  // Verified facts block — identique à l'escape, mais le rôle change :
+  // en tour, ces faits sont la MATIÈRE PRINCIPALE de la narration,
+  // pas juste un ancrage pour anecdote.
+  const verifiedFactsBlock = (() => {
+    if (!verifiedContext) return "";
+    const hasContent =
+      verifiedContext.iconicSites.length > 0 ||
+      verifiedContext.realFigures.length > 0 ||
+      verifiedContext.events.length > 0 ||
+      verifiedContext.localTraditions.length > 0;
+    if (!hasContent) return "";
+    const sites = verifiedContext.iconicSites
+      .map((s, i) => `  ${i + 1}. ${s.name}${s.locationHint ? ` (${s.locationHint})` : ""} — ${s.significance}`)
+      .join("\n");
+    const figures = verifiedContext.realFigures
+      .map((f, i) => `  ${i + 1}. ${f.name}${f.lifespan ? ` (${f.lifespan})` : ""} — ${f.role}`)
+      .join("\n");
+    const events = verifiedContext.events
+      .map((e, i) => `  ${i + 1}. ${e.date} — ${e.description}`)
+      .join("\n");
+    const traditions = verifiedContext.localTraditions
+      .map((t, i) => `  ${i + 1}. ${t.description}`)
+      .join("\n");
+    return `
+═══════════════════════════════════════════════════════════════════════
+VERIFIED FACTS (use these as the PRIMARY content of your narration)
+═══════════════════════════════════════════════════════════════════════
+In TOUR MODE, these facts are not just anchors — they are the MEAT of
+each encyclopedic_text. Cite full names, exact dates, real events.
+The tour mode promises "deep knowledge", so deliver it.
+
+ICONIC SITES:
+${sites || "  (none)"}
+
+REAL HISTORICAL FIGURES (cite by full name + lifespan + role):
+${figures || "  (none)"}
+
+DATED EVENTS (cite exact years, NEVER round to "around X"):
+${events || "  (none)"}
+
+LOCAL TRADITIONS (weave into narration where relevant):
+${traditions || "  (none)"}
+
+═══════════════════════════════════════════════════════════════════════
+`;
+  })();
+
+  const prompt = `${verifiedFactsBlock}You are a master audioguide writer. Your job: craft an immersive, knowledge-rich audio tour of ${city}, ${country}, around the theme "${theme}".
+
+This is NOT an escape game. There are NO riddles to solve, NO answers to find, NO time pressure. The player walks at their own pace, listens to your narration at each stop (90 seconds of audio per stop), observes what you point out, and connects the dots between locations.
+
+Your tone: warm, knowledgeable, intimate. Like the best local guide who happens to be passionate about history but never lectures. Concrete details, not abstract claims. Specific names and dates, not "around the 14th century". The player wants to feel SMARTER and MORE CONNECTED to the place after listening to you.
+
+═══════════════════════════════════════════════════════════════════════
+ABSOLUTE RULES
+═══════════════════════════════════════════════════════════════════════
+
+A. NO RIDDLES, NO PUZZLES, NO QUESTIONS-WITH-ANSWERS. The player has
+   nothing to "find". Don't write "what does the inscription say?" —
+   write "the inscription, carved in 1574, reads HOC OPVS FECIT".
+
+B. CONCRETE OVER GENERIC. "In 1374, the Black Death had just claimed
+   one-third of the city's residents, and the council voted to build
+   this fountain as a public-health measure" beats "this fountain has
+   medieval origins".
+
+C. NAMES + DATES + EVENTS, ALWAYS. Use the verified figures and events
+   above. If you don't have a real figure for a stop, prefer omission
+   over fabrication ("the builders" rather than "Maître Gaspard").
+
+D. AUDIO-FIRST. Every word will be read aloud by ElevenLabs in French.
+   Spell out abbreviations ("avant Jésus-Christ" not "av JC"),
+   "kilomètres" not "km", "Saint Pierre" not "St Pierre", convert
+   roman numerals to arabic ("XIVe siècle" → "quatorzième siècle"
+   or "1340s"). Read your text aloud mentally before submitting.
+
+E. PARCOURS COHERENCE. Each stop is part of a journey. Reference what
+   came before ("au stop précédent, vous avez vu le blason de la
+   famille X — vous le retrouverez ici sur le linteau") and tease what's
+   ahead ("dans quelques minutes, nous découvrirons comment ce même
+   architecte a réinventé le campanile…"). This is what makes a tour
+   greater than the sum of its stops.
+
+F. NO LATIN / GREEK / LOCAL WORDS as the "magic answer". This isn't an
+   escape game. If you cite a Latin phrase that exists on the building,
+   translate it inline: "the inscription reads 'TEMPVS FVGIT' — 'time
+   flees'". The player learns, they don't decode.
+
+TOUR PARAMETERS:
+- City: ${city}, ${country}
+- Theme angle: ${theme}
+- Narrative arc: ${narrative}
+- Steps: ${stepCount}
+- Language: French (final TTS will narrate in French; translations to
+  other languages handled downstream by Gemini)
+- Audio target per stop: ~90 seconds = 200-300 French words
+
+═══════════════════════════════════════════════════════════════════════
+FOR EACH STOP, produce a JSON object with these fields:
+═══════════════════════════════════════════════════════════════════════
+
+1. "title": Evocative, 4-8 words. Avoid "L'énigme de…" / "Le mystère de…"
+   (escape vibes). Prefer "La fontaine des pestiférés" / "Le balcon des
+   amants" / "Les marques du tailleur de pierre". Concrete + intriguing.
+
+2. "latitude", "longitude": COPY EXACTLY from the location data. Do not
+   round, do not improve. Coordinates are immutable input.
+
+3. "validation_radius_meters": 25-50m. Larger for plazas, smaller for
+   precise monuments.
+
+4. "encyclopedic_text": THE CORE FIELD — 200-300 words, in French, in
+   FOUR distinct movements. This is your audioguide narration.
+
+   MOVEMENT 1 — ANCHOR (40-60 words):
+     Plant the player in front of the place. State what you see and
+     when it was built. Set the historical scene.
+     Example: "Vous voici devant la Maison des Têtes, construite en
+     1532 par Antoine de Vaucanson, riche marchand de soie. Au
+     XVIe siècle, cette maison était la plus opulente du quartier —
+     ses fenêtres à meneaux et ses sculptures rivalisaient avec les
+     hôtels particuliers de Lyon."
+
+   MOVEMENT 2 — STORY (100-150 words):
+     The real narrative. A specific event, a real person, a key date.
+     Cite verified figures. Tell ONE story well rather than ten facts
+     in a row. The player should feel like they're hearing a secret
+     a real local guide would share.
+     Example: "En septembre 1572, alors que les massacres de la
+     Saint-Barthélemy faisaient rage à Paris, Antoine de Vaucanson —
+     huguenot convaincu — cacha trois pasteurs dans la cave qui
+     s'étend encore sous vos pieds. Pendant onze nuits, ils dormirent
+     parmi les tonneaux de vin, nourris par la cuisinière de la
+     maison, Marguerite Brun, dont le nom apparaît dans les registres
+     paroissiaux de l'année suivante. Quand la situation se calma,
+     les pasteurs partirent par les souterrains qui rejoignaient
+     l'ancienne abbaye Saint-Pierre — souterrains que vous découvrirez
+     au stop quatre de ce parcours."
+
+   MOVEMENT 3 — OBSERVATION (40-60 words):
+     Direct the player's eye to something specific. They're standing
+     RIGHT THERE — make them notice what they'd miss otherwise.
+     Example: "Levez les yeux vers le premier étage : voyez les six
+     têtes sculptées au-dessus des fenêtres. Trois portent la barbe,
+     trois sont rasées. Ce sont les six fils d'Antoine, les barbus
+     représentant ceux qui sont morts à la guerre, les autres ceux
+     qui lui ont survécu."
+
+   MOVEMENT 4 — CONNECTION (30-50 words):
+     Tie this stop to the broader parcours. Reference a past stop
+     OR tease a future one. Builds the tour as one cohesive story.
+     Example: "Au prochain stop, vous découvrirez l'église réformée
+     dans laquelle Antoine de Vaucanson fut finalement enterré —
+     une église que les autorités catholiques laissèrent debout
+     contre toute attente. Une histoire de pierre, de foi et de
+     tolérance forcée."
+
+   TOTAL : 4 mouvements = ~250 mots. Lis ton texte à voix haute avant
+   de soumettre. Si ça dure plus de 110 secondes en français à débit
+   normal, coupe.
+
+5. "landmark_history": 2-3 paragraphs (5-8 sentences total) — l'histoire
+   patrimoniale du lieu hors de la narration audio. Sert pour la version
+   texte affichée à côté de l'audio. Quand un anchor "🏛️ FULL
+   PATRIMONIAL HISTORY" est fourni dans les locations, use it as primary
+   source. Sinon, fais avec ton training data — mais factuel, pas hedgé.
+
+6. "anecdote": 1-2 phrases (sous 200 chars). Un détail mémorable que le
+   joueur retiendra 6 mois plus tard. Pas pédagogique, pas thématique
+   au sens escape. Juste "ah ouais, c'est cool ça". Exemple : "La
+   cuisinière Marguerite Brun fut payée 3 livres pour son silence —
+   l'équivalent d'un an de salaire."
+
+7. "architectural_focus": 1-2 phrases CONCRÈTES (sous 200 chars). Pointe
+   l'oeil du joueur vers UN détail visuel précis qu'il peut voir
+   maintenant. Pas "regardez le bâtiment". Plutôt "regardez les six
+   têtes sculptées au-dessus des fenêtres du premier étage : trois
+   ont la barbe."
+
+8. "cultural_connection": 1-2 phrases (sous 200 chars). Lien narratif
+   avec un autre stop du parcours. Doit créer une attente ou
+   recontextualiser ce qui précède. Exemple : "Vous retrouverez la
+   même croix huguenote sur le portail du stop suivant — c'est la
+   signature d'Antoine et des trois familles qui le protégèrent."
+   Sur step 1 : référence un stop futur. Sur step ${stepCount} :
+   referme la boucle avec le stop 1.
+
+9. "ar_character_type": archetype du guide AR. Sélectionne dans le
+   catalogue selon la procédure ci-dessous. Le perso "incarne" le
+   lieu — un moine pour une église, un marchand pour une halle, etc.
+${buildCharacterSelectionGuidance(stepCount)}
+
+10. "ar_character_dialogue": 1-2 phrases (sous 180 chars). Le perso
+    parle au joueur en première personne, en français. Tonalité
+    GUIDE bienveillant, pas mystérieuse. Exemple (un marchand) :
+    "Bienvenue dans ma maison, étranger. Laissez-moi vous raconter
+    ce que ces murs ont vu en l'an 1572…"
+
+11. "route_attractions": 3-4 entries — IDENTIQUE au mode escape.
+    Same JSON shape :
+      [
+        {
+          "name": "Maison Borghi (XVIIe siècle)",
+          "fact": "Balcons en fer forgé classés monuments historiques.",
+          "category": "heritage",
+          "distance_m": 80,
+          "lat": 43.5234,
+          "lon": 5.1234
+        },
+        ...
+      ]
+    MANDATORY: name, fact, category, distance_m. category ∈
+    {heritage, viewpoint, quirky, food, nature}. Vary categories
+    across the 3-4 entries (no "4 churches"). lat/lon optional but
+    welcome if you're confident.
+
+═══════════════════════════════════════════════════════════════════════
+GAME-WIDE INVARIANTS
+═══════════════════════════════════════════════════════════════════════
+
+INV-T1 NARRATIVE ARC. Step 1 sets the scene + introduces the
+recurring thread. Middle steps deepen and complicate. Step ${stepCount}
+closes the loop — references step 1, provides a sense of completion.
+
+INV-T2 CHARACTER DIVERSITY. Across ${stepCount} steps, use at least
+${Math.min(5, stepCount)} distinct ar_character_type values. No
+character on consecutive steps.
+
+INV-T3 VARIED OPENERS. Each encyclopedic_text Movement 1 must open
+differently. Don't start each stop with "Vous voici devant…". Mix
+in: "Levez les yeux : …", "1532. Une année charnière…", "Cette
+fontaine, à l'apparence si banale aujourd'hui, …", "Si vous écoutez
+attentivement, …".
+
+INV-T4 NO ABBREVIATIONS in any TTS field. encyclopedic_text,
+landmark_history, anecdote, architectural_focus, cultural_connection,
+ar_character_dialogue — all must be spelled out for ElevenLabs.
+
+VERIFIED LOCATIONS:
+
+${locationsText}
+
+Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional text, no commentary, no markdown formatting.${feedbackBlock}`;
+
+  // Tour outputs are longer than escape (encyclopedic_text 200-300 words
+  // vs riddle 5-7 sentences). Budget 1000-1200 tokens per stop ×
+  // ${stepCount} = up to ~20k tokens for 15 stops. Cap at 24k to be safe.
+  const message = await client.messages.create({
+    model: "claude-sonnet-4-20250514",
+    max_tokens: 24000,
+    temperature: 0.7,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const stopReason = message.stop_reason;
+  if (stopReason === "max_tokens") {
+    console.warn(
+      `[generateTourSteps] Claude hit max_tokens=24000. Output likely truncated; JSON parse may fail. Consider raising the cap or reducing stop count.`,
+    );
+  }
+
+  const responseText =
+    message.content[0].type === "text" ? message.content[0].text : "";
+  const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+  if (!jsonMatch) {
+    throw new Error("Could not extract JSON from Claude response (tour)");
+  }
+
+  const steps = JSON.parse(jsonMatch[0]) as GeneratedTourStep[];
+
+  if (!Array.isArray(steps) || steps.length < Math.max(6, stepCount - 1)) {
+    throw new Error(
+      `Expected ~${stepCount} tour steps (matching ${locations.length} input locations), got ${steps?.length || 0}`,
+    );
+  }
+
+  console.log(
+    `[generateTourSteps] Generated ${steps.length} tour steps for ${city} (theme: ${theme})`,
+  );
+
+  return steps;
+}
+
+// ===========================================================================
 // VALIDATION (Claude #2 — auto-correction layer)
 // ===========================================================================
 

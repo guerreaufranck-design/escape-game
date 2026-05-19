@@ -22,6 +22,8 @@ import {
 } from "./perplexity";
 import {
   generateGameSteps,
+  generateTourSteps,
+  type GeneratedTourStep,
   generateEpilogue,
   generateIntroSpeech,
   generateFinalRiddle,
@@ -700,25 +702,31 @@ export async function generateGameFromTemplate(
     }
     void startPointSource; // garder TS happy si non utilisé downstream
 
-    // Plancher commercial : 6 stops minimum, plafond 9 (cf.
-    // ABSOLUTE_MIN_STOPS et ABSOLUTE_MAX_STOPS dans parcours-discovery.ts).
-    // Politique 2026-05-09 :
-    //   - body.stopCount absent ou < 6 → bump à 6
-    //   - body.stopCount > 9 → cap à 9
-    //   - Default si rien envoyé : 9 (le but est de viser le MAX dans la
-    //     tranche 6-9, le pipeline élague vers le bas si la zone n'a pas
-    //     assez de POIs walkables).
-    const requestedStopCount = template.stopCount ?? 9;
-    const stopCount = Math.max(6, Math.min(9, requestedStopCount));
+    // Plancher commercial : 6 stops minimum.
+    // Plafond selon mode :
+    //   - city_game : 9 (parcours compact, défi cognitif, ~2h)
+    //   - city_tour : 15 (audioguide enrichi, on saturé la richesse de la
+    //                ville sans dépasser ~2h30 de marche)
+    // Politique 2026-05-19 (S9) :
+    //   - body.stopCount absent → default selon mode (9 escape, 12 tour)
+    //   - clamp final dans [6, ceiling] où ceiling dépend du mode
+    const isTourMode = template.mode === "city_tour";
+    const stopCeiling = isTourMode ? 15 : 9;
+    const defaultStops = isTourMode ? 12 : 9;
+    const requestedStopCount = template.stopCount ?? defaultStops;
+    const stopCount = Math.max(6, Math.min(stopCeiling, requestedStopCount));
     if (requestedStopCount < 6) {
       console.warn(
         `[Pipeline] stopCount=${requestedStopCount} below commercial floor of 6 — bumped to 6`,
       );
-    } else if (requestedStopCount > 9) {
+    } else if (requestedStopCount > stopCeiling) {
       console.warn(
-        `[Pipeline] stopCount=${requestedStopCount} above commercial ceiling of 9 — capped to 9`,
+        `[Pipeline] stopCount=${requestedStopCount} above ceiling for mode=${template.mode ?? "city_game"} (${stopCeiling}) — capped to ${stopCeiling}`,
       );
     }
+    console.log(
+      `[Pipeline] Mode=${template.mode ?? "city_game"} → stopCount=${stopCount} (ceiling=${stopCeiling}, default=${defaultStops})`,
+    );
 
     // ============================================
     // STEP 1 : Discovery avec WIDENING progressif
@@ -1097,28 +1105,92 @@ export async function generateGameFromTemplate(
     }
 
     // ============================================
-    // STEP 4 : Génération des énigmes (Claude #1)
+    // STEP 4 : Génération du contenu narratif (Claude #1)
     // ============================================
+    // S9 (2026-05-19) : branche selon mode du jeu.
+    //   - city_game → generateGameSteps (énigmes courtes, answers, hints)
+    //   - city_tour → generateTourSteps (narration encyclopédique 200-300
+    //                 mots, pas d'énigme ni d'answer)
+    //
+    // Pour homogénéiser l'insert flow downstream (qui attend GeneratedStep),
+    // on convertit les tour steps en GeneratedStep-compatible avec des
+    // placeholders pour les champs escape-only. Le contenu RICHE tour
+    // (encyclopedic_text, architectural_focus, cultural_connection) est
+    // écrit dans `step_content` après l'insert game_steps.
     const creationStart = Date.now();
     const genre: GameGenre = template.genre ?? DEFAULT_GENRE;
     console.log(`[Pipeline] Genre: ${genre} (${template.genre ? "from operator" : "default fallback"})`);
-    let steps: GeneratedStep[] = await generateGameSteps(
-      template.city,
-      template.country,
-      template.theme,
-      effectiveNarrative,
-      effectiveDifficulty,
-      verifiedLocations,
-      genre,
-      discovery.verifiedContext,
-    );
+
+    // Tour steps mémorisés en parallèle de steps[] pour l'écriture
+    // step_content plus tard dans insertGameIntoDatabase. Vide en mode
+    // city_game.
+    let tourSteps: GeneratedTourStep[] = [];
+    let steps: GeneratedStep[];
+
+    if (template.mode === "city_tour") {
+      console.log(`[Pipeline] Mode city_tour → generateTourSteps (${stopCount} stops, encyclopedic)`);
+      tourSteps = await generateTourSteps(
+        template.city,
+        template.country,
+        template.theme,
+        effectiveNarrative,
+        verifiedLocations,
+        genre,
+        discovery.verifiedContext,
+        stopCount,
+      );
+
+      // Conversion tour → GeneratedStep shape pour l'insert legacy.
+      // Le riddle_text accueille l'encyclopedic_text (devient le "main
+      // text" du stop). Les champs escape-only ont des placeholders
+      // neutres — ils ne seront jamais lus côté player UI mode tour,
+      // mais évitent les erreurs NOT NULL côté DB.
+      steps = tourSteps.map((t, i) => ({
+        title: t.title,
+        latitude: t.latitude,
+        longitude: t.longitude,
+        validation_radius_meters: t.validation_radius_meters,
+        riddle_text: t.encyclopedic_text,           // CŒUR du tour
+        answer_text: `STOP_${i + 1}`,               // placeholder, jamais comparé
+        hints: [
+          {
+            order: 1,
+            text: "Ouvre l'AR pour découvrir les détails du lieu et écouter sa narration complète.",
+          },
+        ],
+        landmark_history: t.landmark_history,
+        anecdote: t.anecdote,
+        bonus_time_seconds: 0,
+        answer_source: "virtual_ar" as const,
+        ar_character_type: t.ar_character_type,
+        ar_character_dialogue: t.ar_character_dialogue,
+        ar_facade_text: "",                          // pas de magic word en tour
+        ar_treasure_reward: "",                      // pas de récompense puzzle
+        route_attractions: t.route_attractions,
+      }));
+    } else {
+      steps = await generateGameSteps(
+        template.city,
+        template.country,
+        template.theme,
+        effectiveNarrative,
+        effectiveDifficulty,
+        verifiedLocations,
+        genre,
+        discovery.verifiedContext,
+      );
+    }
 
     // Garde anti-DUPLICATE indices (vision 2026-05-16, suite bug Séville
     // avec 2 stops sur AURUM). Claude doit avoir respecté INV-1, on
     // re-vérifie côté code. Si doublon détecté, on log un warn et on
     // tente de désambiguïser en suffixant le 2e occurrence — c'est un
     // patch d'urgence, le vrai fix c'est le prompt INV-1 renforcé.
-    {
+    //
+    // S9 (2026-05-19) : skip pour city_tour — pas d'answer à dédupliquer
+    // en tour mode (les placeholders STOP_1, STOP_2... sont naturellement
+    // uniques par construction).
+    if (template.mode !== "city_tour") {
       const seen = new Set<string>();
       const dupes: string[] = [];
       for (let i = 0; i < steps.length; i++) {
@@ -1147,7 +1219,7 @@ export async function generateGameFromTemplate(
           `[Pipeline] ${dupes.length} duplicate indice(s) had to be patched: ${dupes.join(", ")}. Investigate prompt drift.`,
         );
       }
-    }
+    } // end if mode !== city_tour (duplicate guard)
 
     // Garde anti-AUTO leak : si Claude a renvoyé le placeholder "AUTO"
     // (au lieu d'inventer un mot thématique), on régénère ce stop avec
@@ -1159,10 +1231,13 @@ export async function generateGameFromTemplate(
     // de "AUTO" → "INVENT" pour que le prompt regenerateStep ne re-locke
     // pas Claude sur "AUTO" (cf. fix dans regenerateStep). Sinon le bug
     // se réplique à l'identique.
+    //
+    // S9 (2026-05-19) : skip pour city_tour — pas d'answer en tour mode.
     const isAutoLeaked = (s: GeneratedStep): boolean =>
       s.answer_text?.toUpperCase().trim() === "AUTO" ||
       s.ar_facade_text?.toUpperCase().trim() === "AUTO";
 
+    if (template.mode !== "city_tour") {
     for (let i = 0; i < steps.length; i++) {
       let regenAttempts = 0;
       while (isAutoLeaked(steps[i]) && regenAttempts < 2) {
@@ -1207,6 +1282,7 @@ export async function generateGameFromTemplate(
         steps[i].ar_facade_text = fallbackAnswer;
       }
     }
+    } // end if mode !== city_tour (AUTO leak guard)
 
     // ============================================
     // STEP 4.5 : Roman numeral AUTO-FIX
@@ -1225,6 +1301,10 @@ export async function generateGameFromTemplate(
     //
     // Le auto-fix s'applique AVANT la génération de l'épilogue, donc
     // l'épilogue référencera les bonnes valeurs.
+    //
+    // S9 (2026-05-19) : skip pour city_tour — pas de Roman numerals
+    // dans les placeholders STOP_N, donc rien à corriger.
+    if (template.mode !== "city_tour") {
     for (let i = 0; i < steps.length; i++) {
       const ans = steps[i].answer_text?.trim() ?? "";
       if (!isRomanNumeral(ans)) continue;
@@ -1278,10 +1358,16 @@ export async function generateGameFromTemplate(
         }
       }
     }
+    } // end if mode !== city_tour (Roman numeral fix)
 
     // ============================================
     // STEP 5 : QA Claude #2 + regen ciblé
     // ============================================
+    // S9 (2026-05-19) : skip pour city_tour — le validator vérifie des
+    // règles AR/answer-text/hint qui n'existent pas en tour mode. Le tour
+    // est validé implicitement par le prompt encyclopédique strict + les
+    // gardes downstream (telemetry + admin review).
+    if (template.mode !== "city_tour") {
     const validation = await validateGeneratedSteps({
       steps,
       city: template.city,
@@ -1309,6 +1395,7 @@ export async function generateGameFromTemplate(
         });
       }
     }
+    } // end if mode !== city_tour (validator)
     const creationDurationMs = Date.now() - creationStart;
 
     // ============================================
@@ -1400,6 +1487,13 @@ export async function generateGameFromTemplate(
         return null;
       }),
       (async () => {
+        // S9 (2026-05-19) : skip final riddle pour city_tour — pas
+        // d'énigme finale dans un audioguide, le tour se termine par
+        // l'épilogue narratif et basta.
+        if (template.mode === "city_tour") {
+          console.log(`[Pipeline] city_tour mode : skip finalRiddle generation`);
+          return null;
+        }
         // Retry-with-rejection-fallback for final riddle generation
         // (2026-05-16). If the 1st attempt returns a weak/generic answer
         // ("renaissance", "harmony", etc.) we reject it via the sanity
@@ -1478,6 +1572,12 @@ export async function generateGameFromTemplate(
       reviewReason,
       introSpeech,
       finalRiddle,
+      // S9 (2026-05-19) : tour steps (vide en mode city_game). Écrits
+      // dans step_content avec le contenu narratif riche pour le mode
+      // city_tour. Le riddle_text de game_steps contient juste
+      // l'encyclopedic_text (utilisé en fallback).
+      tourSteps,
+      template.language ?? "en",
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
@@ -1671,6 +1771,10 @@ async function insertGameIntoDatabase(
   // mais l'UX dégrade (pas de page intro / pas d'énigme finale).
   introSpeech: { text: string } | null = null,
   finalRiddle: { riddle: string; answer: string; explanation: string } | null = null,
+  // S9 (2026-05-19) : tour steps (vide pour city_game). Quand non-vide,
+  // on écrit le contenu riche dans step_content après l'insert game_steps.
+  tourSteps: GeneratedTourStep[] = [],
+  contentLanguage: string = "en",
 ): Promise<string> {
   const supabase = createAdminClient();
   const gameId = uuidv4();
@@ -2013,6 +2117,60 @@ async function insertGameIntoDatabase(
     // Rollback: delete the game if steps fail
     await supabase.from("games").delete().eq("id", gameId);
     throw new Error(`Failed to insert steps: ${stepsError.message}`);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // S9 (2026-05-19) — Tour content : écrire dans step_content
+  // ════════════════════════════════════════════════════════════════
+  // Pour les jeux en mode city_tour, on écrit le contenu narratif
+  // riche dans step_content (key par step_id + mode + language).
+  // game_steps a déjà reçu le riddle_text = encyclopedic_text (utilisé
+  // en fallback). step_content ajoute architectural_focus +
+  // cultural_connection qui ne tiennent pas dans game_steps.
+  if (template.mode === "city_tour" && tourSteps.length > 0) {
+    const stepContentRows = stepsToInsert.map((dbStep, idx) => {
+      const t = tourSteps[idx];
+      if (!t) return null;
+      return {
+        step_id: dbStep.id,
+        mode: "city_tour" as const,
+        language: contentLanguage,
+        title: t.title,
+        landmark_history: t.landmark_history,
+        anecdote: t.anecdote,
+        // Tour-only fields
+        encyclopedic_text: t.encyclopedic_text,
+        architectural_focus: t.architectural_focus,
+        cultural_connection: t.cultural_connection,
+        // Escape-only fields NULL pour les rows tour
+        riddle_text: null,
+        hints: null,
+        answer: null,
+        answer_source: null,
+        ar_character: t.ar_character_type
+          ? { type: t.ar_character_type, dialogue: t.ar_character_dialogue }
+          : null,
+        ar_facade_text: null,
+        ar_treasure_reward: null,
+      };
+    }).filter((r): r is NonNullable<typeof r> => r !== null);
+
+    const { error: contentError } = await supabase
+      .from("step_content")
+      .insert(stepContentRows);
+
+    if (contentError) {
+      // Non-bloquant : si step_content fail, on continue. Le jeu publie
+      // quand même mais l'API tombera en fallback sur game_steps qui
+      // contient déjà l'encyclopedic_text dans riddle_text. Log + flag.
+      console.error(
+        `[Pipeline] step_content insert failed (non-blocking, fallback game_steps): ${contentError.message}`,
+      );
+    } else {
+      console.log(
+        `[Pipeline] step_content ✓ ${stepContentRows.length} rows écrites pour le mode city_tour (lang=${contentLanguage})`,
+      );
+    }
   }
 
   return gameId;
