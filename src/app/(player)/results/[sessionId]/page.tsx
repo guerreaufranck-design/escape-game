@@ -190,12 +190,27 @@ export default function ResultsPage() {
           />
         )}
 
-        {/* Epilogue — the narrative reward, shown before everything else */}
-        {results.epilogue && (
+        {/* Epilogue — the narrative reward, shown before everything else.
+            Fallback 2026-05-19 (bug Montpellier) : quand le pipeline n'a
+            pas généré d'épilogue (échec Claude silencieux), on montre
+            QUAND MÊME une carte de clôture. Mieux qu'un saut brutal
+            vers le score. */}
+        {results.epilogue ? (
           <GameEpilogue
             title={results.epilogue.title}
             text={results.epilogue.text}
             audioUrl={results.epilogue.audioUrl ?? null}
+            overline={revealed ? undefined : `✓ ${tt('epilogue.codeUnlocked', locale)}`}
+            locale={locale}
+          />
+        ) : (
+          <GameEpilogue
+            title={tt('epilogue.fallbackTitle', locale) || "Votre aventure prend fin"}
+            text={
+              tt('epilogue.fallbackText', locale) ||
+              `Vous voici de retour au point de départ, mais avec un regard nouveau sur ${results.city}. Chaque pierre que vous avez longée, chaque place que vous avez traversée, gardait un fragment de l'histoire que vous venez de découvrir. Cette ville, désormais, vous appartient un peu. Merci d'avoir joué.`
+            }
+            audioUrl={null}
             overline={revealed ? undefined : `✓ ${tt('epilogue.codeUnlocked', locale)}`}
             locale={locale}
           />

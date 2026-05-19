@@ -559,22 +559,19 @@ export default function PlayPage() {
     setView("riddle");
   }, [gameState?.currentStep]);
 
-  // Auto-fill the FINAL CODE input from the notebook the moment the
-  // final-code screen opens. The player has been collecting answers
-  // step by step; making them retype the concatenation is busywork
-  // and a source of typos. We pre-fill with `notebook[1]-notebook[2]-…`
-  // so the player just has to confirm. They can still edit it if they
-  // want to challenge the order or the format.
-  useEffect(() => {
-    if (showFinalCode && gameState && !finalCodeInput.trim()) {
-      const parts: string[] = [];
-      for (let i = 1; i <= gameState.totalSteps; i++) {
-        const v = (notebook[i] || "").trim();
-        if (v) parts.push(v);
-      }
-      if (parts.length > 0) setFinalCodeInput(parts.join("-"));
-    }
-  }, [showFinalCode, gameState, notebook, finalCodeInput]);
+  // Auto-fill RETIRÉ 2026-05-19 (bug rapport√© Montpellier).
+  //
+  // L'auto-fill pré-remplissait l'input final avec la concaténation
+  // des indices (ex: "HERBA-CIRCULUS-1955-ASTRA-PACTUM-TENEBRAE").
+  // Mais avec les jeux modernes finalRiddle, la vraie réponse est un
+  // mot DÉRIVÉ des indices (anagramme, surnom du méchant, mot caché),
+  // pas leur concaténation. Le pré-remplissage poussait le joueur à
+  // valider le mauvais format, ou pire, à effacer manuellement avant
+  // de pouvoir réfléchir.
+  //
+  // Plus juste : laisser l'input vide, les indices sont déjà visibles
+  // en gros au-dessus, le joueur réfléchit lui-même à la combinaison.
+  // Le placeholder de l'input rappelle le format attendu.
 
   // Validate step. AR-first model:
   //   - Auto-fire from ARCameraOverlay onAutoValidate after the player
@@ -893,11 +890,47 @@ export default function PlayPage() {
             </div>
           </div>
 
-          {/* Guide's intro speech card — RETIRÉ 2026-05-18 (S1 fix).
-              Le contenu est désormais affiché DIRECTEMENT via le
-              GuideNarrationOverlay modal qui s'auto-ouvre dès l'arrivée
-              sur le briefing (sprite + audio + texte en pleine page).
-              Garder cette card en plus du modal = duplication écran. */}
+          {/* Guide's intro speech card — RESTAURÉ 2026-05-19.
+              Bug rapporté Montpellier : le modal auto-open peut être
+              avalé par iOS Safari (audio autoplay policy) → le joueur
+              tape "Let's go" sans avoir vu le briefing du guide.
+              Solution : afficher TOUJOURS le speech en carte visible sur
+              la page briefing. Le modal auto-open reste mais devient
+              un bonus, pas la seule source. */}
+          {gameState.introSpeech && (
+            <Card className="bg-gradient-to-br from-amber-950/40 via-slate-900/80 to-slate-900 border-amber-700/50 shadow-lg shadow-amber-900/20">
+              <CardHeader className="pb-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xl">🎙️</span>
+                    <CardTitle className="text-sm text-amber-300 uppercase tracking-wider">
+                      {tt('play.yourGuide', locale) || "Votre guide"}
+                    </CardTitle>
+                  </div>
+                  {narration.supported && (
+                    <NarrationButton
+                      text={gameState.introSpeech}
+                      speaking={narration.speaking}
+                      currentText={narrationText}
+                      onSpeak={(t) => speakWithOverlay(
+                        t,
+                        gameState.gameWideAudio?.introSpeech,
+                        tt("play.yourGuide", locale) || "Votre guide",
+                        "guide_male",
+                      )}
+                      variant="pill"
+                      locale={locale}
+                    />
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                <p className="text-slate-200 leading-relaxed text-sm whitespace-pre-wrap">
+                  {gameState.introSpeech}
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Scenario / description (fallback when no intro_speech) */}
           {!gameState.introSpeech && gameState.gameDescription && (
@@ -1710,11 +1743,15 @@ export default function PlayPage() {
             </div>
 
             {/* Final riddle brief from the guide (vision 2026-05-16).
-                The guide explains what the player has to do : combine the
-                indices from their notebook to reveal the secret. Shown
-                when the pipeline curated a final_riddle_text — otherwise
-                we keep the legacy "type your dashes" instruction below. */}
-            {gameState.finalRiddleText && (
+                Shown TOUJOURS pour que le joueur sache ce qu'on attend
+                de lui avant de taper. Si le pipeline n'a pas généré un
+                finalRiddleText spécifique (rare mais possible), on
+                montre un fallback générique qui reste utile. Bug fix
+                2026-05-19 (Montpellier) : avant, sans finalRiddleText
+                on n'affichait QUE l'input → le joueur tapait à l'aveugle
+                la concaténation, perdait, puis voyait l'explication
+                après validation. Frustrant et bug d'attente. */}
+            {(gameState.finalRiddleText || true) && (
               <Card className="bg-slate-900/95 border-amber-700/50">
                 <CardHeader className="pb-2">
                   <div className="flex items-center justify-between">
@@ -1724,7 +1761,7 @@ export default function PlayPage() {
                         {tt('play.theGuideSays', locale) || "Le guide vous parle"}
                       </CardTitle>
                     </div>
-                    {narration.supported && (
+                    {narration.supported && gameState.finalRiddleText && (
                       <NarrationButton
                         text={gameState.finalRiddleText}
                         speaking={narration.speaking}
@@ -1743,7 +1780,10 @@ export default function PlayPage() {
                 </CardHeader>
                 <CardContent>
                   <p className="text-sm text-slate-200 leading-relaxed whitespace-pre-line">
-                    {gameState.finalRiddleText}
+                    {gameState.finalRiddleText || (
+                      tt('play.finalRiddleFallback', locale) ||
+                      "Tous vos indices pointent vers une même réponse cachée. Ce n'est PAS leur simple concaténation — c'est un mot, un nom, ou une idée qu'ils évoquent tous ensemble. Réfléchissez à ce qui les unit, puis tapez votre réponse ci-dessous."
+                    )}
                   </p>
                 </CardContent>
               </Card>
