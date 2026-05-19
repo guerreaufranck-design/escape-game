@@ -49,6 +49,13 @@ interface GuideNarrationOverlayProps {
    *  (no user gesture yet) — the player needs an explicit tap to start
    *  the audio. If omitted, the play button is hidden. */
   onPlayAudio?: () => void;
+  /** Optional "Start" action. When provided, the bottom button changes
+   *  from "Close" to "Start" (Démarrer) — used on the intro_speech
+   *  overlay where the narration ends with "click démarrer to begin
+   *  the adventure". Tapping it triggers the parent's start logic
+   *  (close modal + start game). If omitted, the bottom button
+   *  remains "Close" / "Skip". */
+  onStart?: () => void;
 }
 
 const CLOSE_DELAY_MS = 1200; // let the last word breathe before auto-close
@@ -87,6 +94,7 @@ export function GuideNarrationOverlay({
   characterSprite,
   locale = "en",
   onPlayAudio,
+  onStart,
 }: GuideNarrationOverlayProps) {
   // Track if we've ever been speaking — used to detect the speaking →
   // not-speaking transition and trigger the auto-close. Without this
@@ -272,23 +280,42 @@ export function GuideNarrationOverlay({
         </Card>
       </div>
 
-      {/* Bottom action — "Pause/Skip" while playing OR "Close" when finished */}
+      {/* Bottom action — varie selon le contexte :
+          - Si onStart fourni (cas intro_speech) : bouton "Démarrer"
+            saillant qui lance le jeu. Le guide audio termine par
+            "cliquez sur Démarrer", donc on matche le wording exact.
+          - Sinon (autres overlays guide : énigme finale, etc.) :
+            "Passer" pendant la lecture, "Fermer" après. */}
       <div className="px-6 pb-6">
-        <Button
-          variant="outline"
-          size="lg"
-          className="w-full border-amber-700/40 text-amber-200 hover:bg-amber-900/30"
-          onClick={onClose}
-        >
-          {speaking ? (
-            <>
-              <Pause className="h-4 w-4 mr-2" />
-              {locale === "fr" ? "Passer" : locale === "es" ? "Saltar" : locale === "de" ? "Überspringen" : "Skip"}
-            </>
-          ) : (
-            <>{dismissLabel}</>
-          )}
-        </Button>
+        {onStart ? (
+          <Button
+            size="lg"
+            className="w-full bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-slate-950 font-bold shadow-lg shadow-amber-900/40"
+            onClick={onStart}
+          >
+            {locale === "fr" ? "Démarrer l'aventure" :
+             locale === "es" ? "Comenzar la aventura" :
+             locale === "de" ? "Abenteuer starten" :
+             locale === "it" ? "Inizia l'avventura" :
+             "Start the adventure"}
+          </Button>
+        ) : (
+          <Button
+            variant="outline"
+            size="lg"
+            className="w-full border-amber-700/40 text-amber-200 hover:bg-amber-900/30"
+            onClick={onClose}
+          >
+            {speaking ? (
+              <>
+                <Pause className="h-4 w-4 mr-2" />
+                {locale === "fr" ? "Passer" : locale === "es" ? "Saltar" : locale === "de" ? "Überspringen" : "Skip"}
+              </>
+            ) : (
+              <>{dismissLabel}</>
+            )}
+          </Button>
+        )}
       </div>
 
       <style jsx>{`

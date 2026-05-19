@@ -138,6 +138,10 @@ export default function PlayPage() {
      *  Stocké pour permettre au bouton "Écouter" de re-déclencher la
      *  lecture en cas d'autoplay bloqué (iOS). */
     audioUrl?: string | null;
+    /** True pour l'intro_speech (auto-open au briefing). Détermine
+     *  si le bouton du bas s'affiche en "Démarrer" (intro) ou
+     *  "Fermer/Passer" (autres overlays guide). */
+    isIntro?: boolean;
   } | null>(null);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [treasure, setTreasure] = useState<{
@@ -245,6 +249,7 @@ export default function PlayPage() {
     audioUrl?: string | null,
     title?: string,
     characterType?: string | null,
+    isIntro: boolean = false,
   ) => {
     // Toggle off if user re-taps the same narration
     if (narration.speaking && narrationText === text) {
@@ -254,7 +259,13 @@ export default function PlayPage() {
       return;
     }
     const sprite = arCharacterSpriteUrl(characterType);
-    setGuideOverlay({ text, title, characterSprite: sprite, audioUrl: audioUrl ?? null });
+    setGuideOverlay({
+      text,
+      title,
+      characterSprite: sprite,
+      audioUrl: audioUrl ?? null,
+      isIntro,
+    });
     setNarrationText(text);
     narration.speak(text, audioUrl ? { audioUrl } : undefined);
   };
@@ -367,6 +378,7 @@ export default function PlayPage() {
         audioUrl,
         tt("play.yourGuide", locale) || "Votre guide",
         "guide_male",
+        true, // isIntro = true → bouton "Démarrer l'aventure" en bas
       );
     }, 400);
     return () => clearTimeout(t);
@@ -1096,6 +1108,30 @@ export default function PlayPage() {
             guideOverlay.audioUrl ? { audioUrl: guideOverlay.audioUrl } : undefined,
           );
         }}
+        onStart={guideOverlay?.isIntro ? async () => {
+          // Bouton "Démarrer l'aventure" : ferme le modal, stoppe l'audio,
+          // et lance la session via /start (même path que le bouton
+          // "C'est parti !" du briefing). Le briefing map est sauté
+          // entièrement — le guide a déjà tout dit, on enchaîne sur la
+          // 1re énigme. Le joueur peut toujours revenir sur la map
+          // via le bouton "AR" sur l'écran riddle.
+          narration.stop();
+          setNarrationText("");
+          setGuideOverlay(null);
+          try {
+            setStartingGame(true);
+            const res = await fetch(`/api/game/${sessionId}/start`, { method: "POST" });
+            const data = await res.json();
+            if (data.success) {
+              await fetchGameState();
+              setShowIntro(false);
+            }
+          } catch {
+            setError(tt('play.error.startFailed', locale));
+          } finally {
+            setStartingGame(false);
+          }
+        } : undefined}
       />
 
       {/* Step success overlay — S3 (2026-05-18) : 5 cards séparées
@@ -1460,14 +1496,19 @@ export default function PlayPage() {
                   </div>
                 )}
 
-                {/* Riddle text - immersive */}
+                {/* Riddle text - immersive.
+                    Bug fix UX 2026-05-19 : bouton "Écouter" REMONTÉ
+                    en HAUT du texte (avant le contenu). Avant, il
+                    était sous le texte → le joueur lisait l'énigme
+                    en entier puis découvrait l'option audio en bas,
+                    trop tard. Maintenant, dès qu'il arrive sur la
+                    page il voit "▶ Écouter" et peut choisir avant
+                    de lire : écoute OR lecture, pas les deux par
+                    accident. */}
                 <div className="relative mb-6">
                   <div className="absolute -left-3 top-0 bottom-0 w-0.5 bg-gradient-to-b from-emerald-500/50 via-emerald-500/20 to-transparent" />
-                  <p className="text-slate-200 leading-relaxed text-[15px] pl-3 whitespace-pre-wrap">
-                    {gameState.currentRiddle.text}
-                  </p>
                   {narration.supported && (
-                    <div className="mt-4 pl-3">
+                    <div className="mb-3 pl-3">
                       <NarrationButton
                         text={gameState.currentRiddle.text}
                         speaking={narration.speaking}
@@ -1478,6 +1519,9 @@ export default function PlayPage() {
                       />
                     </div>
                   )}
+                  <p className="text-slate-200 leading-relaxed text-[15px] pl-3 whitespace-pre-wrap">
+                    {gameState.currentRiddle.text}
+                  </p>
                 </div>
 
                 {gameState.currentRiddle.image && (

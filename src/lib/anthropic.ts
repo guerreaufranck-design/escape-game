@@ -2277,9 +2277,14 @@ REQUIRED CONTENT (in this order, weave naturally):
   1. Greet the player + introduce yourself as "your OddballTrip guide"
   2. State you'll accompany them through ${params.city}, telling the
      story of its past around the theme "${params.theme}".
-  3. Practical instructions in ONE sentence each:
-     - "Turn on your phone camera — most stops use AR"
-     - "Make sure your battery is charged"
+  3. Practical instructions in ONE sentence each. CRITICAL — explain
+     that AR is used THROUGHOUT THE WHOLE GAME, not just at each stop :
+     - "Augmented Reality is at the heart of this game from start to
+        finish — keep your camera open as you walk : it acts as your
+        compass, shows you the distance and direction to the next
+        location, and reveals the hidden secret once you arrive."
+     - "Make sure your battery is charged — the camera is running
+        most of the time."
      - "This adventure takes between 1h30 and 3h30 depending on your pace"
      - "Don't panic if you can't finish today — you have 7 days to complete it"
   4. Philosophy (CRITICAL — this manages player expectations and prevents
@@ -2291,7 +2296,7 @@ REQUIRED CONTENT (in this order, weave naturally):
      just one episode. Our goal is to take you to places of real value
      for the city's history and beauty, and tell you a story that ties
      them together."
-  5. Final beat — "Are you ready? Tap Start whenever you are."
+  5. Final beat — "Are you ready? Tap Démarrer / Start whenever you are."
 
 STYLE
   - English. Spoken-word friendly (no bullet points, no headings).
