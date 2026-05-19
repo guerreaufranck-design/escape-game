@@ -412,6 +412,68 @@ export async function geocodeStop(
  * forme courte ("...Rouen", "...Lyon", "...Roma"). Le pays est
  * toujours ajouté pour disambiguer le pays côté Google.
  */
+/**
+ * Types Google Places à REJETER quand on cherche un landmark touristique.
+ *
+ * Origine du fix (2026-05-19, bug Montpellier stop 3) : Google a renvoyé
+ * le `place_id` du "Tunnel de la Comédie" (route 4 voies souterraine)
+ * pour la requête "Place de la Comédie". Le tunnel a un meilleur score
+ * de pertinence chez Google parce qu'il est nommé de la même façon
+ * et le routing API le retourne par défaut.
+ *
+ * Politique : on filtre TOUT candidat qui contient l'un de ces types,
+ * peu importe les autres types qu'il a. Si le seul candidat valide est
+ * rejeté, on bascule sur viaGoogleGeocoding puis Nominatim.
+ *
+ * On NE liste PAS `establishment` ni `point_of_interest` comme requis
+ * positifs — ça exclurait des places publiques sans POI dédié, des
+ * jardins, des cimetières, etc. qui sont des landmarks valides.
+ */
+const FORBIDDEN_PLACE_TYPES = new Set([
+  // Infrastructures routières — JAMAIS un landmark touristique
+  "route",
+  "street_address",
+  "street_number",
+  "intersection",
+  "premise",
+  "subpremise",
+  // Transit — le joueur ne veut pas atterrir dans une station
+  "bus_station",
+  "subway_station",
+  "train_station",
+  "transit_station",
+  "light_rail_station",
+  "airport",
+  "taxi_stand",
+  // Parkings & service — non touristique
+  "parking",
+  "gas_station",
+  "car_rental",
+  "car_repair",
+  "car_wash",
+  "car_dealer",
+  // ATM / divers utilitaires
+  "atm",
+  "bank",
+  "post_office",
+  // Tunnels & routes secondaires (Google ne les tag pas tous mais
+  // certains apparaissent avec ces types via OSM cross-refs)
+  "tunnel",
+  "highway",
+]);
+
+/**
+ * Vérifie qu'un candidat Google Places est un landmark acceptable.
+ * Rejette si AU MOINS UN type interdit est présent.
+ */
+function isAcceptablePlaceType(types: string[] | undefined): boolean {
+  if (!types || types.length === 0) return true; // Google a omis → on tolère
+  for (const t of types) {
+    if (FORBIDDEN_PLACE_TYPES.has(t)) return false;
+  }
+  return true;
+}
+
 function buildGeocodeQuery(landmark: string, city: string, country: string): string {
   if (!city) return country ? `${landmark}, ${country}` : landmark;
 
@@ -445,7 +507,11 @@ async function viaGooglePlaces(
   );
   url.searchParams.set("input", query);
   url.searchParams.set("inputtype", "textquery");
-  url.searchParams.set("fields", "name,geometry,place_id,formatted_address");
+  // 2026-05-19 — `types` ajouté au fields pour pouvoir filtrer les
+  // candidats infrastructurels (route, tunnel, transit, parking…). Sans
+  // ce filtre, Google retournait "Tunnel de la Comédie" (route 4 voies
+  // souterraine) pour la query "Place de la Comédie, Montpellier".
+  url.searchParams.set("fields", "name,geometry,place_id,formatted_address,types");
   url.searchParams.set("key", apiKey);
   // Anti-homonyme : pousse Google vers la zone du jeu. Format Places
   // API : `circle:RADIUS@LAT,LNG`. Si le landmark a un homonyme célèbre
@@ -471,19 +537,37 @@ async function viaGooglePlaces(
         formatted_address?: string;
         place_id: string;
         geometry?: { location: { lat: number; lng: number } };
+        types?: string[];
       }>;
     };
     if (data.status !== "OK" || !data.candidates?.length) return null;
-    const c = data.candidates[0];
-    if (!c.geometry?.location) return null;
-    return {
-      lat: c.geometry.location.lat,
-      lon: c.geometry.location.lng,
-      displayName: c.formatted_address || c.name,
-      source: "google_places",
-      confidence: "high",
-      externalId: c.place_id,
-    };
+    // Parcours TOUS les candidats (findplacefromtext peut en renvoyer
+    // jusqu'à plusieurs sur des requêtes ambiguës). On garde le PREMIER
+    // qui a un type acceptable. Si tous sont rejetés, on retourne null
+    // et le fallback viaGoogleGeocoding / Nominatim prend la relève.
+    //
+    // Bug fix Montpellier 2026-05-19 : Google retournait le tunnel
+    // (type=`route`) comme premier candidat pour "Place de la Comédie".
+    // Avec ce filtre, le tunnel est rejeté → fallback sur Geocoding API
+    // qui retourne la vraie place.
+    for (const c of data.candidates) {
+      if (!c.geometry?.location) continue;
+      if (!isAcceptablePlaceType(c.types)) {
+        console.warn(
+          `[geocode] Google Places candidate REJECTED for "${landmark}" — types=[${(c.types ?? []).join(",")}] include forbidden infra type. Candidate name="${c.name}". Falling through to next candidate / fallback.`,
+        );
+        continue;
+      }
+      return {
+        lat: c.geometry.location.lat,
+        lon: c.geometry.location.lng,
+        displayName: c.formatted_address || c.name,
+        source: "google_places",
+        confidence: "high",
+        externalId: c.place_id,
+      };
+    }
+    return null;
   } finally {
     clearTimeout(timer);
   }
@@ -522,6 +606,7 @@ async function viaGoogleGeocoding(
       results?: Array<{
         formatted_address: string;
         place_id: string;
+        types?: string[];
         geometry: {
           location: { lat: number; lng: number };
           location_type: string;
@@ -529,25 +614,37 @@ async function viaGoogleGeocoding(
       }>;
     };
     if (data.status !== "OK" || !data.results?.length) return null;
-    const r = data.results[0];
-    // Google's location_type indicates how precise the match is.
-    // ROOFTOP / RANGE_INTERPOLATED = high; GEOMETRIC_CENTER = medium;
-    // APPROXIMATE = low.
-    const lt = r.geometry.location_type;
-    const confidence: GeocodeResult["confidence"] =
-      lt === "ROOFTOP" || lt === "RANGE_INTERPOLATED"
-        ? "high"
-        : lt === "GEOMETRIC_CENTER"
-          ? "medium"
-          : "low";
-    return {
-      lat: r.geometry.location.lat,
-      lon: r.geometry.location.lng,
-      displayName: r.formatted_address,
-      source: "google_geocoding",
-      confidence,
-      externalId: r.place_id,
-    };
+    // Bug fix Montpellier 2026-05-19 : même filtrage que viaGooglePlaces.
+    // Geocoding API peut aussi retourner des infrastructures (route,
+    // tunnel, transit) — on rejette et on parcourt jusqu'au premier
+    // candidat acceptable.
+    for (const r of data.results) {
+      if (!isAcceptablePlaceType(r.types)) {
+        console.warn(
+          `[geocode] Google Geocoding result REJECTED for "${landmark}" — types=[${(r.types ?? []).join(",")}] include forbidden infra type. Result address="${r.formatted_address}". Falling through.`,
+        );
+        continue;
+      }
+      // Google's location_type indicates how precise the match is.
+      // ROOFTOP / RANGE_INTERPOLATED = high; GEOMETRIC_CENTER = medium;
+      // APPROXIMATE = low.
+      const lt = r.geometry.location_type;
+      const confidence: GeocodeResult["confidence"] =
+        lt === "ROOFTOP" || lt === "RANGE_INTERPOLATED"
+          ? "high"
+          : lt === "GEOMETRIC_CENTER"
+            ? "medium"
+            : "low";
+      return {
+        lat: r.geometry.location.lat,
+        lon: r.geometry.location.lng,
+        displayName: r.formatted_address,
+        source: "google_geocoding",
+        confidence,
+        externalId: r.place_id,
+      };
+    }
+    return null;
   } finally {
     clearTimeout(timer);
   }
