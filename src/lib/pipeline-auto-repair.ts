@@ -286,39 +286,63 @@ async function applyStepReorder(
 ): Promise<void> {
   const supabase = createAdminClient();
   const OFFSET = 1000;
-  // Phase 1 : shift `from` au temporaire
+
+  // Phase 1 : shift `from` au temporaire (game_steps uniquement,
+  // pas audio_cache — on va le purger plus bas).
   await supabase
     .from("game_steps")
     .update({ step_order: OFFSET + from })
     .eq("game_id", gameId)
     .eq("step_order", from);
-  await supabase
-    .from("audio_cache")
-    .update({ step_order: OFFSET + from })
-    .eq("game_id", gameId)
-    .eq("step_order", from);
+
   // Phase 2 : `to` → `from`
   await supabase
     .from("game_steps")
     .update({ step_order: from })
     .eq("game_id", gameId)
     .eq("step_order", to);
-  await supabase
-    .from("audio_cache")
-    .update({ step_order: from })
-    .eq("game_id", gameId)
-    .eq("step_order", to);
+
   // Phase 3 : temporaire → `to`
   await supabase
     .from("game_steps")
     .update({ step_order: to })
     .eq("game_id", gameId)
     .eq("step_order", OFFSET + from);
+
+  // ════════════════════════════════════════════════════════════
+  // AUDIO_CACHE : PURGE complète des slots des 2 stops impactés
+  // ════════════════════════════════════════════════════════════
+  // Bug rapporté Montpellier 2026-05-19 (root cause) : l'ancien code
+  // swappait juste step_order dans audio_cache mais gardait le
+  // storage_path qui encode l'ancien step_order dans le nom de
+  // fichier (`step1_landmark_history.mp3`). Conséquence :
+  //   - Après swap : row(step_order=1) avait storage_path=stepN_*.mp3
+  //   - prepareGamePackage 2e passe : cache check (step_order, slot)
+  //     voyait que tout était cached → no-op
+  //   - MAIS si un slot manquait au moment du swap et était généré
+  //     plus tard, l'upsert écrasait le storage file via upsert:true
+  //     → 2 rows DB pointant vers le même fichier → audio dupliqué
+  //
+  // Fix : DELETE les rows audio_cache pour les 2 step_orders impactés.
+  // La prochaine passe prepareGamePackage régénère tous les slots avec
+  // les bons step_orders et les bons paths déterministes. Coût : ~$0.05
+  // en ElevenLabs Flash v2.5 pour ~8 slots × ~$0.006 = négligeable vs
+  // un jeu cassé.
+  //
+  // Les fichiers en storage (mp3 ancien) sont volontairement laissés
+  // orphelins — ils seront overwrités par le prochain upload au même
+  // path (idempotent). Pas de fuite : storage Supabase coûte $0.021/GB.
   await supabase
     .from("audio_cache")
-    .update({ step_order: to })
+    .delete()
     .eq("game_id", gameId)
-    .eq("step_order", OFFSET + from);
+    .in("step_order", [from, to]);
+
+  console.log(
+    `[applyStepReorder] swapped step_order ${from} ↔ ${to} for game ${gameId}. ` +
+      `Purged audio_cache rows for these 2 steps — next prepareGamePackage pass ` +
+      `will regenerate all audio with correct step_order mapping.`,
+  );
 }
 
 /**
