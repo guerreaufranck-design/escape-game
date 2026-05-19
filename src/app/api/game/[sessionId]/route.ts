@@ -124,6 +124,8 @@ export async function GET(
     let hintsAvailable = 0;
     let currentStepId: string | null = null;
     let routeAttractions: GameState["routeAttractions"] = [];
+    // S9 (2026-05-19) — tour content (null en mode city_game).
+    let tourContent: GameState["tourContent"] = null;
 
     if ((session.status === "active" || session.status === "pending") && session.current_step <= session.total_steps) {
       const { data: step } = await supabase
@@ -184,6 +186,42 @@ export async function GET(
             url: step.ar_historical_photo_url,
             credit: step.ar_historical_photo_credit || null,
           };
+        }
+
+        // S9 (2026-05-19) — Tour content : pour mode city_tour on
+        // charge step_content avec les 3 champs riches (encyclopedic_text,
+        // architectural_focus, cultural_connection). Stratégie de
+        // langue : on essaie d'abord la locale du joueur, puis on
+        // retombe sur n'importe quelle row dispo (utile si le client
+        // a acheté en FR mais joue avec un téléphone EN).
+        const gameMode = (game as { mode?: string }).mode === "city_tour"
+          ? "city_tour"
+          : "city_game";
+        if (gameMode === "city_tour") {
+          const { data: tourRows } = await supabase
+            .from("step_content")
+            .select("encyclopedic_text, architectural_focus, cultural_connection, language")
+            .eq("step_id", step.id)
+            .eq("mode", "city_tour");
+
+          if (tourRows && tourRows.length > 0) {
+            // Prefer the player's locale ; otherwise pick the first
+            // available row (any language). The tour is read aloud by
+            // ElevenLabs in the language the customer chose at purchase,
+            // so the textual rendering follows the same source.
+            const preferred = tourRows.find(
+              (r) => r.language === locale,
+            ) || tourRows[0];
+            if (preferred?.encyclopedic_text) {
+              tourContent = {
+                encyclopedicText: preferred.encyclopedic_text as string,
+                architecturalFocus:
+                  (preferred.architectural_focus as string) || null,
+                culturalConnection:
+                  (preferred.cultural_connection as string) || null,
+              };
+            }
+          }
         }
 
         const hints = (step.hints as unknown as Hint[]) || [];
@@ -437,6 +475,7 @@ export async function GET(
       status: session.status,
       startedAt: session.started_at,
       currentRiddle,
+      tourContent,
       arHistoricalPhoto,
       arFacadeText,
       arTreasureReward,

@@ -89,6 +89,21 @@ export interface GameState {
     finalExplanation: string | null;
     epilogue: string | null;
   } | null;
+  /**
+   * S9 (2026-05-19) — Tour-mode rich content. Populé UNIQUEMENT pour
+   * les jeux mode='city_tour', via la table step_content. Null en mode
+   * city_game (le contenu reste dans currentRiddle.text + audioMap).
+   *
+   * Le player UI tour mode rend ces 3 champs en cartes séparées :
+   *   1. Narration principale (encyclopedicText, ~250 mots)
+   *   2. "À observer" (architecturalFocus, ce qu'il faut regarder maintenant)
+   *   3. "Au prochain stop..." (culturalConnection, tisse le parcours)
+   */
+  tourContent: {
+    encyclopedicText: string;
+    architecturalFocus: string | null;
+    culturalConnection: string | null;
+  } | null;
   /** Touristic POIs the player walks past on the way to this step.
    *  Surfaced as an expandable card "Sur le chemin, ne manque pas..."
    *  on the riddle screen. Empty array if none.

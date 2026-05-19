@@ -1465,6 +1465,42 @@ export default function PlayPage() {
                   />
                 )}
 
+                {/* S9 (2026-05-19) — Tour-specific cards.
+                    Affichées UNIQUEMENT en mode city_tour, en complément
+                    de l'encyclopedic_text (qui rend dans la carte
+                    principale ci-dessus via currentRiddle.text). */}
+                {gameState.mode === "city_tour" && gameState.tourContent?.architecturalFocus && (
+                  <div className="mb-4 rounded-xl border border-amber-500/40 bg-gradient-to-br from-amber-950/40 via-amber-900/20 to-transparent p-4 shadow-lg shadow-amber-900/20">
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">👀</span>
+                      <div className="flex-1">
+                        <p className="text-xs font-bold uppercase tracking-wider text-amber-300 mb-1">
+                          {tt('play.observeNow', locale) || "À observer maintenant"}
+                        </p>
+                        <p className="text-sm text-amber-50/95 leading-relaxed">
+                          {gameState.tourContent.architecturalFocus}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {gameState.mode === "city_tour" && gameState.tourContent?.culturalConnection && (
+                  <div className="mb-6 rounded-xl border border-cyan-500/40 bg-gradient-to-br from-cyan-950/40 via-cyan-900/20 to-transparent p-4 shadow-lg shadow-cyan-900/20">
+                    <div className="flex items-start gap-3">
+                      <span className="text-2xl">🔗</span>
+                      <div className="flex-1">
+                        <p className="text-xs font-bold uppercase tracking-wider text-cyan-300 mb-1">
+                          {tt('play.tourThread', locale) || "Le fil du parcours"}
+                        </p>
+                        <p className="text-sm text-cyan-50/95 leading-relaxed">
+                          {gameState.tourContent.culturalConnection}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
                 {/* Route POIs — expandable card the player can open
                     to see real heritage points to spot ON THE WAY.
                     Pure tour-guide flavour, doesn't impact gameplay. */}
