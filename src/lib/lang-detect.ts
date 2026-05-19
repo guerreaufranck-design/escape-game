@@ -54,15 +54,14 @@ export function detectSourceLanguage(text: string): string {
 
   const lowered = text.toLowerCase();
 
-  // Strong signal: French-specific diacritics. A single one is enough on a
-  // field that's supposed to be English — English doesn't naturally use é
-  // or ç in original content.
-  for (const marker of FRENCH_MARKERS) {
-    if (lowered.includes(marker)) return "fr";
-  }
-
-  // Word-boundary scan. Tokenise on anything that isn't a letter, then
-  // count how many tokens hit each list.
+  // Word-boundary scan : on tokenise et on COMPTE D'ABORD avant de
+  // décider. Avant (commit antérieur) : un seul diacritique français
+  // suffisait à short-circuit "fr" — KO sur les intros anglaises qui
+  // mentionnent un nom propre français ("Canédrac", "Montpellier",
+  // "café", etc.). Conséquence Montpellier 2026-05-19 : intro_speech
+  // EN détecté comme FR, translateGameField skippait Gemini, le
+  // joueur recevait l'EN brut. Désormais : function words priment,
+  // diacritique est un tie-breaker seulement.
   const tokens = lowered.split(/[^a-zà-ÿœæ]+/).filter(Boolean);
   if (tokens.length === 0) return "en";
 
@@ -75,6 +74,22 @@ export function detectSourceLanguage(text: string): string {
     if (enSet.has(tok)) enScore++;
   }
 
-  if (frScore > enScore && frScore >= 2) return "fr";
+  // Diacritique = signal complémentaire (pas un veto)
+  let hasDiacritic = false;
+  for (const marker of FRENCH_MARKERS) {
+    if (lowered.includes(marker)) {
+      hasDiacritic = true;
+      break;
+    }
+  }
+
+  // 1) Si EN écrase FR (≥ 3 mots EN ET au moins 2× plus que FR) → anglais,
+  //    même avec quelques diacritiques (probablement noms propres FR).
+  if (enScore >= 3 && enScore >= frScore * 2) return "en";
+  // 2) Si FR domine clairement (≥ 2 function words FR ET > EN) → français.
+  if (frScore >= 2 && frScore > enScore) return "fr";
+  // 3) Tie-breaker diacritique : 1 function word FR + au moins un diacritique → FR.
+  if (hasDiacritic && frScore >= 1) return "fr";
+  // 4) Default : anglais (cas modern game content).
   return "en";
 }
