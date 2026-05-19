@@ -345,7 +345,12 @@ export default function PlayPage() {
   useEffect(() => {
     if (!showIntro || !gameState) return;
     if (gameState.currentStep !== 1 || gameState.completedSteps.length !== 0) return;
-    if (!videoWatched || !tutorialDone) return;
+    // Bug fix 2026-05-19 : si le jeu n'a pas d'intro_video, l'écran
+    // video est sauté direct → videoWatched reste FALSE → le guide
+    // modal ne s'ouvrait JAMAIS. On considère "video ok" si pas
+    // d'URL video à montrer (cas standard de la majorité des jeux).
+    const videoStepDone = videoWatched || !gameState.introVideoUrl;
+    if (!videoStepDone || !tutorialDone) return;
     if (guideOverlayAutoOpenedRef.current) return;
 
     const text = gameState.introSpeech || gameState.gameDescription;
