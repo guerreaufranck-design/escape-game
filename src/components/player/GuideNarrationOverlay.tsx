@@ -26,7 +26,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Pause, X } from "lucide-react";
+import { Pause, Play, X } from "lucide-react";
 import { getSpriteUrl, ALL_AR_CHARACTERS } from "@/lib/ar-sprites";
 
 interface GuideNarrationOverlayProps {
@@ -44,6 +44,11 @@ interface GuideNarrationOverlayProps {
   characterSprite?: string;
   /** Locale for the close button label. */
   locale?: string;
+  /** Called when the user taps the "Listen" / "Play" button. Re-triggers
+   *  audio playback. Useful when iOS Safari blocked the initial autoplay
+   *  (no user gesture yet) — the player needs an explicit tap to start
+   *  the audio. If omitted, the play button is hidden. */
+  onPlayAudio?: () => void;
 }
 
 const CLOSE_DELAY_MS = 1200; // let the last word breathe before auto-close
@@ -81,6 +86,7 @@ export function GuideNarrationOverlay({
   title,
   characterSprite,
   locale = "en",
+  onPlayAudio,
 }: GuideNarrationOverlayProps) {
   // Track if we've ever been speaking — used to detect the speaking →
   // not-speaking transition and trigger the auto-close. Without this
@@ -205,6 +211,55 @@ export function GuideNarrationOverlay({
           />
         ))}
       </div>
+
+      {/* Play / Replay audio button — visible UNDER the sprite, BEFORE
+          the text. Compense iOS Safari qui peut bloquer le play()
+          autoplay : le joueur tape ici pour lancer ou rejouer l'audio.
+          Bug fix 2026-05-19 (Montpellier) : auto-play du modal échouait
+          silencieusement sur iPhone → texte visible mais aucune voix
+          → joueur passait à l'énigme sans avoir entendu le guide.
+          Hide si pas de callback (mode "text only"). */}
+      {onPlayAudio && (
+        <div className="flex justify-center pt-4 px-6">
+          <button
+            type="button"
+            onClick={onPlayAudio}
+            className={`inline-flex items-center gap-2 px-5 py-2.5 rounded-full border-2 transition-all ${
+              speaking
+                ? "border-amber-400 bg-amber-500/15 text-amber-200 cursor-default"
+                : "border-amber-500/60 bg-amber-500/10 text-amber-300 hover:bg-amber-500/25 hover:border-amber-400 active:scale-95 shadow-lg shadow-amber-900/30"
+            }`}
+            disabled={speaking}
+            aria-label={speaking
+              ? (locale === "fr" ? "Lecture en cours" : "Playing")
+              : (locale === "fr" ? "Écouter le guide" : "Listen to the guide")}
+          >
+            {speaking ? (
+              <>
+                <Pause className="h-4 w-4" />
+                <span className="text-sm font-semibold">
+                  {locale === "fr" ? "En cours…" :
+                   locale === "es" ? "En curso…" :
+                   locale === "de" ? "Läuft…" :
+                   locale === "it" ? "In corso…" :
+                   "Playing…"}
+                </span>
+              </>
+            ) : (
+              <>
+                <Play className="h-4 w-4 fill-current" />
+                <span className="text-sm font-semibold">
+                  {locale === "fr" ? "Écouter le guide" :
+                   locale === "es" ? "Escuchar la guía" :
+                   locale === "de" ? "Anhören" :
+                   locale === "it" ? "Ascolta" :
+                   "Listen to the guide"}
+                </span>
+              </>
+            )}
+          </button>
+        </div>
+      )}
 
       {/* Narration text */}
       <div className="flex-1 px-6 pt-5 pb-4 overflow-y-auto">

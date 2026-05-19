@@ -134,6 +134,10 @@ export default function PlayPage() {
     /** Sprite AR à afficher dans l'overlay (guide_male/female/monk/…).
      *  Null = fallback emoji micro. */
     characterSprite?: string | null;
+    /** URL de l'audio MP3 ElevenLabs prégénéré (null = Web Speech).
+     *  Stocké pour permettre au bouton "Écouter" de re-déclencher la
+     *  lecture en cas d'autoplay bloqué (iOS). */
+    audioUrl?: string | null;
   } | null>(null);
   const [correctAnswer, setCorrectAnswer] = useState<string | null>(null);
   const [treasure, setTreasure] = useState<{
@@ -250,7 +254,7 @@ export default function PlayPage() {
       return;
     }
     const sprite = arCharacterSpriteUrl(characterType);
-    setGuideOverlay({ text, title, characterSprite: sprite });
+    setGuideOverlay({ text, title, characterSprite: sprite, audioUrl: audioUrl ?? null });
     setNarrationText(text);
     narration.speak(text, audioUrl ? { audioUrl } : undefined);
   };
@@ -1079,6 +1083,19 @@ export default function PlayPage() {
         speaking={narration.speaking}
         onClose={dismissGuideOverlay}
         locale={locale}
+        onPlayAudio={() => {
+          if (!guideOverlay?.text) return;
+          // Si déjà en train de jouer, on stoppe puis relance (replay).
+          // Sinon on lance la lecture. Le geste utilisateur autorise
+          // ElevenLabs/Web Speech à jouer sur iOS Safari (autoplay
+          // bypass via user-gesture).
+          narration.stop();
+          setNarrationText(guideOverlay.text);
+          narration.speak(
+            guideOverlay.text,
+            guideOverlay.audioUrl ? { audioUrl: guideOverlay.audioUrl } : undefined,
+          );
+        }}
       />
 
       {/* Step success overlay — S3 (2026-05-18) : 5 cards séparées
