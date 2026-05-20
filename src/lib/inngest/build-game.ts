@@ -32,9 +32,13 @@
 import { inngest, gameBuildRequested } from "@/lib/inngest-client";
 import {
   runPipelinePhase1Discovery,
-  runPipelinePhase2NarrativeAndInsert,
+  runPipelinePhase2aNarrationGen,
+  runPipelinePhase2bGameWide,
+  runPipelinePhase2cInsert,
   type GameTemplate,
   type Phase1Result,
+  type Phase2aResult,
+  type Phase2bResult,
 } from "@/lib/game-pipeline";
 
 export const buildGameDurable = inngest.createFunction(
@@ -87,25 +91,31 @@ export const buildGameDurable = inngest.createFunction(
     };
 
     // ════════════════════════════════════════════════════════════════
-    // 2-STEP SPLIT (2026-05-20) — passer le timeout Vercel 800s/step
+    // 4-STEP SPLIT (2026-05-20) — passer le timeout HTTP Inngest Cloud
     // ════════════════════════════════════════════════════════════════
-    // Avant : un seul step.run("build-from-template") avec budget 800s
-    // pour discovery (5-7 min) + narration Claude (2-5 min) + insert.
-    // Les roadtrips radius 30-60km dépassaient régulièrement le budget
-    // (FUNCTION_INVOCATION_TIMEOUT à 800030ms exactement, observé en
-    // prod sur escape-game-build-game-durable).
+    // V1 (avant) : un seul step.run("build-from-template") avec budget
+    // Vercel 800s. Les roadtrips radius 30-60km timeoutaient à 800030ms.
     //
-    // Après : Phase 1 (discovery) + Phase 2 (narrative + insert) sont
-    // deux step.run() distincts. Chaque step a son propre budget 800s,
-    // soit 1600s cumulés effectifs. Inngest persiste le Phase1Result
-    // sérialisé entre les deux étapes (idempotent en cas de retry du
-    // step 2 — Phase 1 ne re-tourne pas).
+    // V2 : split Phase 1 (discovery) + Phase 2 (narrative + insert) en
+    // 2 steps. Mais Phase 2 dure encore 2-3 min cumulés, ce qui dépasse
+    // le timeout HTTP Inngest Cloud → Vercel SDK endpoint (~2m43s).
+    // Erreur observée en prod : "Your server reset the connection while
+    // we were reading the reply: Unexpected ending response."
+    //
+    // V3 (ce code) : split Phase 2 en 3 sub-phases :
+    //   - 2a : narration Claude (adapt + generateSteps + Roman fix + QA)
+    //   - 2b : blocs game-wide (epilogue + intro + final riddle)
+    //   - 2c : insert DB + photos historiques + telemetry
+    // Chaque step a son propre budget 800s ET son propre HTTP roundtrip,
+    // soit 4×800s cumulés effectifs. Inngest persiste les payloads
+    // sérialisés entre les étapes (idempotent en cas de retry).
+    //
     // Inngest sérialise/désérialise le payload entre step.run() — son type
     // `JsonifyObject` rend les `| undefined` optionnels (clé absente vs
     // valeur `undefined`). Le runtime est identique, mais le compilateur
-    // refuse l'assignation directe vers `Phase1Result`. On cast pour
-    // rétablir la signature : Inngest garantit l'isomorphisme JSON
-    // round-trip pour les types simples qu'on emploie ici.
+    // refuse l'assignation directe vers les types canoniques. On cast
+    // chaque payload : Inngest garantit l'isomorphisme JSON round-trip
+    // pour les types simples qu'on emploie ici.
     const phase1Raw = await step.run("phase1-discovery", async () => {
       return await runPipelinePhase1Discovery(template);
     });
@@ -117,25 +127,40 @@ export const buildGameDurable = inngest.createFunction(
       );
     }
 
-    const result = (await step.run(
-      "phase2-narrative-insert",
-      async () => {
-        const pipelineResult = await runPipelinePhase2NarrativeAndInsert(
-          template,
-          phase1,
+    const phase2aRaw = await step.run("phase2a-narration", async () => {
+      return await runPipelinePhase2aNarrationGen(template, phase1);
+    });
+    const phase2a = phase2aRaw as Phase2aResult;
+
+    if (!phase2a.success) {
+      throw new Error(
+        `Pipeline Phase 2a (narration) failed: ${phase2a.error ?? "(no message)"}`,
+      );
+    }
+
+    const phase2bRaw = await step.run("phase2b-game-wide", async () => {
+      return await runPipelinePhase2bGameWide(template, phase1, phase2a);
+    });
+    const phase2b = phase2bRaw as Phase2bResult;
+
+    const result = (await step.run("phase2c-insert", async () => {
+      const pipelineResult = await runPipelinePhase2cInsert(
+        template,
+        phase1,
+        phase2a,
+        phase2b,
+      );
+      if (!pipelineResult.success || !pipelineResult.gameId) {
+        throw new Error(
+          `Pipeline Phase 2c (insert) failed: ${pipelineResult.error ?? "(no message)"}`,
         );
-        if (!pipelineResult.success || !pipelineResult.gameId) {
-          throw new Error(
-            `Pipeline Phase 2 (narrative + insert) failed: ${pipelineResult.error ?? "(no message)"}`,
-          );
-        }
-        return {
-          gameId: pipelineResult.gameId,
-          stepsCount: pipelineResult.steps ?? 0,
-          discoverySource: pipelineResult.discoverySource ?? "unknown",
-        };
-      },
-    )) as {
+      }
+      return {
+        gameId: pipelineResult.gameId,
+        stepsCount: pipelineResult.steps ?? 0,
+        discoverySource: pipelineResult.discoverySource ?? "unknown",
+      };
+    })) as {
       gameId: string;
       stepsCount: number;
       discoverySource: string;

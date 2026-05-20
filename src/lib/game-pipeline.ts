@@ -571,6 +571,60 @@ export type Phase1Result =
     };
 
 /**
+ * Phase 2a output — narration + stops finalisés (STEP 3 → 5.5).
+ *
+ * JSON-sérialisable (passé via Inngest step.run()). Re-propage les variables
+ * Phase 1 qui ont été MUTÉES en Phase 2a (verifiedLocations[i].name +
+ * .whatToObserve sont écrasés par adaptNarrativeForReplacedStops). Le flag
+ * needsReview/reviewReason peut aussi muter (Roman drift ambigu, etc.).
+ *
+ * Variant `success: false` propage l'erreur structurée vers Phase 2c (skip)
+ * et vers le wrapper sync.
+ */
+export type Phase2aResult =
+  | {
+      success: true;
+      steps: GeneratedStep[];
+      tourSteps: GeneratedTourStep[];
+      adaptedNarrative: AdaptedNarrativePayload | undefined;
+      effectiveNarrative: string;
+      effectiveThemeDescription: string;
+      /** verifiedLocations APRÈS mutation par STEP 3 (adaptNarrativeForReplacedStops).
+       *  Phase 2c utilise ces noms poétiques en DB. */
+      verifiedLocationsAfterAdapt: ResearchedLocation[];
+      needsReview: boolean;
+      reviewReason: string | undefined;
+      creationDurationMs: number;
+    }
+  | {
+      success: false;
+      error: string;
+      errorCode: PipelineErrorCode;
+      failedLandmarks?: FailedLandmark[];
+      durationMs: number;
+    };
+
+/**
+ * Phase 2b output — blocs game-wide (épilogue + intro + final riddle).
+ *
+ * Tous nullable : aucune génération n'est bloquante côté pipeline (le jeu
+ * publie même si Claude refuse l'épilogue ou l'énigme finale). Phase 2b
+ * peut donc safely "succeed" même si les 3 résultats sont null.
+ *
+ * Pas de variant `success: false` : les erreurs internes sont catchées
+ * et matérialisées comme valeurs `null`. Si la phase elle-même throw (cas
+ * extrême), c'est remonté au caller — non bloquant côté Inngest car
+ * le retry function va re-tenter.
+ */
+export interface Phase2bResult {
+  success: true;
+  epilogue: GeneratedEpilogue | null;
+  introSpeech: { text: string } | null;
+  finalRiddle: { riddle: string; answer: string; explanation: string } | null;
+  durationMs: number;
+}
+
+/**
  * Generate a complete game from a template
  * This is the main pipeline entry point
  */
@@ -1182,49 +1236,46 @@ export async function runPipelinePhase1Discovery(
 }
 
 /**
- * Phase 2 — NARRATIVE ADAPTATION + INSERT (STEP 3-8).
+ * Phase 2a — NARRATION GENERATION (STEP 3 → 5.5).
  *
  * Consomme le `Phase1Result` produit par `runPipelinePhase1Discovery` et :
  *   - STEP 3   : Adapt narrative (Claude réécrit themeDescription + narrative
- *                + noms poétiques pour coller aux landmarks réels).
+ *                + noms poétiques pour coller aux landmarks réels). MUTE
+ *                verifiedLocations[i].name + .whatToObserve — propagé au
+ *                Phase 2c via `verifiedLocationsAfterAdapt`.
  *   - STEP 4   : generateGameSteps (city_game) ou generateTourSteps (city_tour).
- *   - STEP 4.5 : Roman numeral auto-fix.
- *   - STEP 5   : QA Claude #2 + regen ciblé.
- *   - STEP 5.5 : Override narratif sub-POIs + roadtrip radius bump.
- *   - STEP 6   : Epilogue + intro speech + final riddle (parallèle).
- *   - STEP 7   : Insert DB.
- *   - STEP 8   : Build landmarks[] payload + return.
+ *   - STEP 4.5 : Roman numeral auto-fix (skip si city_tour). Peut muter
+ *                needsReview/reviewReason — propagé au Phase 2c.
+ *   - STEP 5   : QA Claude #2 + regen ciblé (skip si city_tour).
+ *   - STEP 5.5 : Override narratif sub-POIs (radius 80m + hint navigation) +
+ *                roadtrip radius bump 250m.
  *
- * Budget Vercel ~2-5 min en pratique (Claude générations + Supabase insert).
- * Combiné aux 5-7 min de Phase 1, total possible 7-12 min — bien sous les
- * 2× 800s = 1600s offerts par le split Inngest.
+ * Budget Vercel ~1-2 min (la majorité du temps = appels Claude pour adapter
+ * la narration + générer les énigmes/tour-steps).
+ *
+ * Le 2026-05-20 (split en 3 sub-phases) : on isole ce bloc pour passer le
+ * timeout HTTP Inngest Cloud → Vercel SDK endpoint (2m43s observé en prod).
  */
-export async function runPipelinePhase2NarrativeAndInsert(
+export async function runPipelinePhase2aNarrationGen(
   template: GameTemplate,
   phase1: Phase1Result,
-): Promise<PipelineResult> {
+): Promise<Phase2aResult> {
   const startTime = Date.now();
 
   if (!phase1.success) {
-    // Phase 1 a échoué — propager l'erreur à l'identique au wrapper.
-    // En pratique le wrapper ne devrait jamais appeler Phase 2 sur un
-    // Phase 1 KO ; ce garde-fou protège quand même les caller directs.
     return {
       success: false,
       error: phase1.error,
       errorCode: phase1.errorCode,
       failedLandmarks: phase1.failedLandmarks,
       durationMs: 0,
-      researchDurationMs: phase1.researchDurationMs,
     };
   }
 
-  // Ré-hydratation des variables Phase 1 dans le scope local. Mêmes
-  // noms qu'avant le split pour minimiser le diff sur la suite du code.
+  // Ré-hydratation des variables Phase 1. Même noms qu'avant le split pour
+  // minimiser le diff sur le corps de fonction.
   const verifiedLocations = phase1.verifiedLocations;
   const stopModes = phase1.stopModes;
-  // navigationHints repassent en undefined-friendly pour rester compat
-  // avec l'ancien code (`hint` checké `if (hint)`).
   const navigationHints: Array<string | undefined> = phase1.navigationHints.map(
     (h) => h ?? undefined,
   );
@@ -1234,13 +1285,7 @@ export async function runPipelinePhase2NarrativeAndInsert(
   const discovery = {
     landmarks: phase1.discoveryLandmarks,
     verifiedContext: phase1.discoveryVerifiedContext,
-    rejected: phase1.discoveryRejected,
-    discoverySource: phase1.discoverySource,
-    escalatedTransportMode: phase1.escalatedTransportMode,
   };
-  const researchDurationMs = phase1.researchDurationMs;
-  // stopCount résolu en Phase 1 (plancher 6 / plafond 9 ou 15 selon mode).
-  // Conserve l'ancien nom de variable pour minimiser le diff downstream.
   const stopCount = phase1.resolvedStopCount;
 
   try {
@@ -1636,99 +1681,251 @@ export async function runPipelinePhase2NarrativeAndInsert(
       );
     }
 
-    // ============================================
-    // STEP 6 : Epilogue + Intro Speech + Final Riddle (parallèle)
-    // ============================================
-    // Trois nouveaux blocs narratifs (vision client 2026-05-16) :
-    //   - intro_speech : monologue du guide avant stop 1 (durée, philosophie,
-    //     "tous les lieux ne sont pas thématiques mais tous valent la visite")
-    //   - final_riddle + final_answer + final_answer_explanation : énigme
-    //     finale combinant les indices, 2 essais, épilogue conditionnel
-    //   - epilogue (legacy) : conservé pour rétrocompat — joué après l'énigme
-    //
-    // Les trois tournent en parallèle pour ne pas séquentialiser 3 appels
-    // Claude (~30s gagnées). Tout est non-bloquant : si l'un échoue, le
-    // jeu publie quand même (mais l'UX du joueur dégrade gracieusement).
-    const [epilogue, introSpeech, finalRiddle] = await Promise.all([
-      generateEpilogue({
-        city: template.city,
-        country: template.country,
-        theme: template.theme,
-        narrative: effectiveNarrative,
-        difficulty: effectiveDifficulty,
-        steps,
-        genre,
-      }).catch((err) => {
-        console.warn(
-          `[Pipeline] Epilogue generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
-        );
+    return {
+      success: true,
+      steps,
+      tourSteps,
+      adaptedNarrative,
+      effectiveNarrative,
+      effectiveThemeDescription,
+      verifiedLocationsAfterAdapt: verifiedLocations,
+      needsReview,
+      reviewReason,
+      creationDurationMs,
+    };
+  } catch (error) {
+    const durationMs = Date.now() - startTime;
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error(
+      `[Pipeline] Phase 2a failed after ${Math.round(durationMs / 1000)}s: ${errorMessage}`,
+    );
+
+    const tagged = error as Error & {
+      code?: PipelineErrorCode;
+      failedLandmarks?: FailedLandmark[];
+    };
+    const errorCode: PipelineErrorCode = tagged?.code ?? "INTERNAL_ERROR";
+
+    return {
+      success: false,
+      error: errorMessage,
+      errorCode,
+      failedLandmarks: tagged?.failedLandmarks,
+      durationMs,
+    };
+  }
+}
+
+/**
+ * Phase 2b — GAME-WIDE NARRATIVE BLOCKS (STEP 6).
+ *
+ * Génère en parallèle epilogue + introSpeech + finalRiddle. Aucune des trois
+ * n'est bloquante : si l'une échoue, on publie sans (UX dégrade gracieusement
+ * côté joueur). Chacune est gardée par un .catch() qui retourne `null`.
+ *
+ * Note : peut potentiellement throw si `Promise.all` se réveille avec une
+ * erreur non interceptée (ne devrait jamais arriver dans la pratique car
+ * tous les branches retournent `null` en cas de fail). Si throw, le step
+ * Inngest retry — non bloquant côté pipeline.
+ *
+ * Budget Vercel ~30-60s (3 appels Claude en parallèle).
+ */
+export async function runPipelinePhase2bGameWide(
+  template: GameTemplate,
+  phase1: Phase1Result,
+  phase2a: Phase2aResult,
+): Promise<Phase2bResult> {
+  const startTime = Date.now();
+
+  // Si Phase 1 ou Phase 2a a échoué, Phase 2b est skip — return un
+  // résultat vide. Le caller (wrapper ou Inngest) checke d'abord les
+  // erreurs en amont avant d'appeler Phase 2c.
+  if (!phase1.success || !phase2a.success) {
+    return {
+      success: true,
+      epilogue: null,
+      introSpeech: null,
+      finalRiddle: null,
+      durationMs: 0,
+    };
+  }
+
+  const steps = phase2a.steps;
+  const effectiveNarrative = phase2a.effectiveNarrative;
+  const effectiveThemeDescription = phase2a.effectiveThemeDescription;
+  const effectiveDifficulty = phase1.effectiveDifficulty;
+  const genre: GameGenre = template.genre ?? DEFAULT_GENRE;
+
+  // ============================================
+  // STEP 6 : Epilogue + Intro Speech + Final Riddle (parallèle)
+  // ============================================
+  // Trois nouveaux blocs narratifs (vision client 2026-05-16) :
+  //   - intro_speech : monologue du guide avant stop 1 (durée, philosophie,
+  //     "tous les lieux ne sont pas thématiques mais tous valent la visite")
+  //   - final_riddle + final_answer + final_answer_explanation : énigme
+  //     finale combinant les indices, 2 essais, épilogue conditionnel
+  //   - epilogue (legacy) : conservé pour rétrocompat — joué après l'énigme
+  //
+  // Les trois tournent en parallèle pour ne pas séquentialiser 3 appels
+  // Claude (~30s gagnées). Tout est non-bloquant : si l'un échoue, le
+  // jeu publie quand même (mais l'UX du joueur dégrade gracieusement).
+  const [epilogue, introSpeech, finalRiddle] = await Promise.all([
+    generateEpilogue({
+      city: template.city,
+      country: template.country,
+      theme: template.theme,
+      narrative: effectiveNarrative,
+      difficulty: effectiveDifficulty,
+      steps,
+      genre,
+    }).catch((err) => {
+      console.warn(
+        `[Pipeline] Epilogue generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    }),
+    generateIntroSpeech({
+      title: template.theme,
+      city: template.city,
+      country: template.country,
+      theme: template.theme,
+      themeDescription: effectiveThemeDescription,
+      estimatedDurationMin: template.estimatedDurationMin,
+      stopCount: steps.length,
+    }).catch((err) => {
+      console.warn(
+        `[Pipeline] Intro speech generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    }),
+    (async () => {
+      // S9 (2026-05-19) : skip final riddle pour city_tour — pas
+      // d'énigme finale dans un audioguide, le tour se termine par
+      // l'épilogue narratif et basta.
+      if (template.mode === "city_tour") {
+        console.log(`[Pipeline] city_tour mode : skip finalRiddle generation`);
         return null;
-      }),
-      generateIntroSpeech({
+      }
+      // Retry-with-rejection-fallback for final riddle generation
+      // (2026-05-16). If the 1st attempt returns a weak/generic answer
+      // ("renaissance", "harmony", etc.) we reject it via the sanity
+      // check inside generateFinalRiddle, and retry ONCE here. If the
+      // 2nd attempt also fails we publish without final riddle (the
+      // player still gets all stops + epilogue, just no final puzzle).
+      const finalRiddleArgs = {
         title: template.theme,
         city: template.city,
         country: template.country,
         theme: template.theme,
         themeDescription: effectiveThemeDescription,
-        estimatedDurationMin: template.estimatedDurationMin,
-        stopCount: steps.length,
-      }).catch((err) => {
-        console.warn(
-          `[Pipeline] Intro speech generation failed (non-blocking): ${err instanceof Error ? err.message : err}`,
-        );
-        return null;
-      }),
-      (async () => {
-        // S9 (2026-05-19) : skip final riddle pour city_tour — pas
-        // d'énigme finale dans un audioguide, le tour se termine par
-        // l'épilogue narratif et basta.
-        if (template.mode === "city_tour") {
-          console.log(`[Pipeline] city_tour mode : skip finalRiddle generation`);
-          return null;
-        }
-        // Retry-with-rejection-fallback for final riddle generation
-        // (2026-05-16). If the 1st attempt returns a weak/generic answer
-        // ("renaissance", "harmony", etc.) we reject it via the sanity
-        // check inside generateFinalRiddle, and retry ONCE here. If the
-        // 2nd attempt also fails we publish without final riddle (the
-        // player still gets all stops + epilogue, just no final puzzle).
-        const finalRiddleArgs = {
-          title: template.theme,
-          city: template.city,
-          country: template.country,
-          theme: template.theme,
-          themeDescription: effectiveThemeDescription,
-          steps: steps.map((s, i) => ({
-            stepOrder: i + 1,
-            title: s.title,
-            answer: s.answer_text,
-            anecdote: s.anecdote,
-          })),
-        };
-        for (let attempt = 0; attempt < 2; attempt++) {
-          try {
-            return await generateFinalRiddle(finalRiddleArgs);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            if (attempt < 1) {
-              console.warn(
-                `[Pipeline] Final riddle attempt ${attempt + 1} rejected (${msg.slice(0, 120)}). Retrying once...`,
-              );
-            } else {
-              console.warn(
-                `[Pipeline] Final riddle generation failed after retries (${msg.slice(0, 120)}) — game will publish without final puzzle.`,
-              );
-            }
+        steps: steps.map((s, i) => ({
+          stepOrder: i + 1,
+          title: s.title,
+          answer: s.answer_text,
+          anecdote: s.anecdote,
+        })),
+      };
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          return await generateFinalRiddle(finalRiddleArgs);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (attempt < 1) {
+            console.warn(
+              `[Pipeline] Final riddle attempt ${attempt + 1} rejected (${msg.slice(0, 120)}). Retrying once...`,
+            );
+          } else {
+            console.warn(
+              `[Pipeline] Final riddle generation failed after retries (${msg.slice(0, 120)}) — game will publish without final puzzle.`,
+            );
           }
         }
-        return null;
-      })(),
-    ]);
+      }
+      return null;
+    })(),
+  ]);
 
-    console.log(
-      `[Pipeline] Narrative shell: epilogue=${epilogue ? "✓" : "✗"}, intro=${introSpeech ? "✓" : "✗"}, finalRiddle=${finalRiddle ? "✓ (" + finalRiddle.answer + ")" : "✗"}`,
-    );
+  console.log(
+    `[Pipeline] Narrative shell: epilogue=${epilogue ? "✓" : "✗"}, intro=${introSpeech ? "✓" : "✗"}, finalRiddle=${finalRiddle ? "✓ (" + finalRiddle.answer + ")" : "✗"}`,
+  );
 
+  return {
+    success: true,
+    epilogue,
+    introSpeech,
+    finalRiddle,
+    durationMs: Date.now() - startTime,
+  };
+}
+
+/**
+ * Phase 2c — DB INSERT + payload final (STEP 7 → 8).
+ *
+ * Consomme phase1 + phase2a + phase2b et :
+ *   - STEP 7 : insertGameIntoDatabase (gameId + game_steps + step_content si tour)
+ *   - Photos historiques Landmark (Place Details + Place Photo) — fire-and-forget,
+ *     non bloquant si quota Google saturé.
+ *   - Telemetry estimated cost (logEstimatedGenerationCost) — fire-and-forget.
+ *   - STEP 8 : Build payload `landmarks[]` + retour final.
+ *
+ * Budget Vercel ~15-30s (Supabase insert + Promise.allSettled photos sur 8 stops).
+ */
+export async function runPipelinePhase2cInsert(
+  template: GameTemplate,
+  phase1: Phase1Result,
+  phase2a: Phase2aResult,
+  phase2b: Phase2bResult,
+): Promise<PipelineResult> {
+  const startTime = Date.now();
+
+  // Garde-fou : si Phase 1 ou Phase 2a a échoué, Phase 2c ne peut rien faire.
+  // Propager l'erreur structurée vers le caller.
+  if (!phase1.success) {
+    return {
+      success: false,
+      error: phase1.error,
+      errorCode: phase1.errorCode,
+      failedLandmarks: phase1.failedLandmarks,
+      durationMs: 0,
+      researchDurationMs: phase1.researchDurationMs,
+    };
+  }
+  if (!phase2a.success) {
+    return {
+      success: false,
+      error: phase2a.error,
+      errorCode: phase2a.errorCode,
+      failedLandmarks: phase2a.failedLandmarks,
+      durationMs: phase2a.durationMs,
+      researchDurationMs: phase1.researchDurationMs,
+    };
+  }
+
+  // Ré-hydratation depuis phase1 + phase2a + phase2b. Mêmes noms qu'avant
+  // le split pour minimiser le diff sur le corps de fonction.
+  const verifiedLocations = phase2a.verifiedLocationsAfterAdapt;
+  const effectiveDifficulty = phase1.effectiveDifficulty;
+  const needsReview = phase2a.needsReview;
+  const reviewReason = phase2a.reviewReason;
+  const discovery = {
+    landmarks: phase1.discoveryLandmarks,
+    rejected: phase1.discoveryRejected,
+    discoverySource: phase1.discoverySource,
+    escalatedTransportMode: phase1.escalatedTransportMode,
+  };
+  const researchDurationMs = phase1.researchDurationMs;
+  const creationDurationMs = phase2a.creationDurationMs;
+  const steps = phase2a.steps;
+  const tourSteps = phase2a.tourSteps;
+  const effectiveNarrative = phase2a.effectiveNarrative;
+  const effectiveThemeDescription = phase2a.effectiveThemeDescription;
+  const adaptedNarrative = phase2a.adaptedNarrative;
+  const epilogue = phase2b.epilogue;
+  const introSpeech = phase2b.introSpeech;
+  const finalRiddle = phase2b.finalRiddle;
+
+  try {
     // ============================================
     // STEP 7 : Insert DB
     // ============================================
@@ -1917,15 +2114,14 @@ export async function runPipelinePhase2NarrativeAndInsert(
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     console.error(
-      `[Pipeline] Phase 2 failed after ${Math.round(durationMs / 1000)}s: ${errorMessage}`,
+      `[Pipeline] Phase 2c failed after ${Math.round(durationMs / 1000)}s: ${errorMessage}`,
     );
 
     const tagged = error as Error & {
       code?: PipelineErrorCode;
       failedLandmarks?: FailedLandmark[];
     };
-    const errorCode: PipelineErrorCode =
-      tagged?.code ?? "INTERNAL_ERROR";
+    const errorCode: PipelineErrorCode = tagged?.code ?? "INTERNAL_ERROR";
 
     return {
       success: false,
@@ -1939,17 +2135,59 @@ export async function runPipelinePhase2NarrativeAndInsert(
 }
 
 /**
+ * Phase 2 — LEGACY WRAPPER (STEP 3-8) — DELEGATE to 2a/2b/2c.
+ *
+ * Conservée pour rétrocompat avec les callers Inngest existants. Sous le capot,
+ * exécute les trois sub-phases en séquence inline — comportement strictement
+ * identique à l'ancienne fonction monolithique mais avec les 3 nouvelles
+ * sub-fonctions exposées séparément pour les callers qui veulent splitter
+ * Inngest en 3 step.run() (cf. build-game.ts).
+ *
+ * Budget Vercel ~2-5 min total (1-2 min 2a + 30-60s 2b + 15-30s 2c).
+ */
+export async function runPipelinePhase2NarrativeAndInsert(
+  template: GameTemplate,
+  phase1: Phase1Result,
+): Promise<PipelineResult> {
+  if (!phase1.success) {
+    return {
+      success: false,
+      error: phase1.error,
+      errorCode: phase1.errorCode,
+      failedLandmarks: phase1.failedLandmarks,
+      durationMs: 0,
+      researchDurationMs: phase1.researchDurationMs,
+    };
+  }
+  const phase2a = await runPipelinePhase2aNarrationGen(template, phase1);
+  if (!phase2a.success) {
+    return {
+      success: false,
+      error: phase2a.error,
+      errorCode: phase2a.errorCode,
+      failedLandmarks: phase2a.failedLandmarks,
+      durationMs: phase2a.durationMs,
+      researchDurationMs: phase1.researchDurationMs,
+    };
+  }
+  const phase2b = await runPipelinePhase2bGameWide(template, phase1, phase2a);
+  return runPipelinePhase2cInsert(template, phase1, phase2a, phase2b);
+}
+
+/**
  * Generate a complete game from a template — WRAPPER sync.
  *
  * Conserve la signature historique pour les callers qui n'utilisent pas
- * Inngest (typiquement `/api/external/generate-game` en mode sync). Sous
- * le capot : exécute Phase 1 puis Phase 2 séquentiellement, exactement
- * comme l'ancien comportement monolithique.
+ * Inngest (typiquement `/api/external/generate-game` en mode sync, et
+ * `/api/admin/regenerate-game`). Sous le capot : exécute Phase 1 → 2a → 2b → 2c
+ * séquentiellement, exactement comme l'ancien comportement monolithique.
  *
  * Pour les callers Inngest (cf. `src/lib/inngest/build-game.ts`), il est
- * préférable d'appeler `runPipelinePhase1Discovery` et
- * `runPipelinePhase2NarrativeAndInsert` dans deux `step.run()` distincts
- * afin de bénéficier du budget timeout doublé (2× 800s).
+ * préférable d'appeler `runPipelinePhase1Discovery`,
+ * `runPipelinePhase2aNarrationGen`, `runPipelinePhase2bGameWide` et
+ * `runPipelinePhase2cInsert` dans quatre `step.run()` distincts afin de
+ * bénéficier du budget timeout multiplié (4× 800s = 3200s effectifs) et
+ * surtout de passer le timeout HTTP Inngest Cloud → Vercel (~2m43s).
  */
 export async function generateGameFromTemplate(
   template: GameTemplate,
@@ -1966,13 +2204,29 @@ export async function generateGameFromTemplate(
       researchDurationMs: phase1.researchDurationMs,
     };
   }
-  const phase2 = await runPipelinePhase2NarrativeAndInsert(template, phase1);
-  // Le wrapper agrège la durée Phase 1 + Phase 2 dans `durationMs` pour
-  // préserver la sémantique historique : les callers (admin UI, callback
-  // OddballTrip) lisent `durationMs` comme le temps TOTAL de génération
-  // de bout en bout — pas seulement la Phase 2.
+  const phase2a = await runPipelinePhase2aNarrationGen(template, phase1);
+  if (!phase2a.success) {
+    return {
+      success: false,
+      error: phase2a.error,
+      errorCode: phase2a.errorCode,
+      failedLandmarks: phase2a.failedLandmarks,
+      durationMs: Date.now() - wrapperStart,
+      researchDurationMs: phase1.researchDurationMs,
+    };
+  }
+  const phase2b = await runPipelinePhase2bGameWide(template, phase1, phase2a);
+  const result = await runPipelinePhase2cInsert(
+    template,
+    phase1,
+    phase2a,
+    phase2b,
+  );
+  // Le wrapper agrège la durée totale dans `durationMs` pour préserver la
+  // sémantique historique : les callers (admin UI, callback OddballTrip)
+  // lisent `durationMs` comme le temps TOTAL de bout en bout.
   return {
-    ...phase2,
+    ...result,
     durationMs: Date.now() - wrapperStart,
   };
 }
