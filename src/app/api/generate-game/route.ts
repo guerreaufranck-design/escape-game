@@ -65,6 +65,11 @@ export async function POST(request: NextRequest) {
           ? `${body.recommendedDaysMin ?? "?"}-${body.recommendedDaysMax ?? "?"}d`
           : "(walking)",
       seedSitesCount: Array.isArray(body.roadtripSeedSites) ? body.roadtripSeedSites.length : 0,
+      // 2026-05-20 — log mode pour débug dual-SKU (audioguide vs escape).
+      // Quand OddballTrip envoie mode='city_tour' on doit le voir ici ;
+      // si "(MISSING from payload)" → leur conditional spread n'a pas
+      // fired et la pipeline tombe en default city_game.
+      mode: body.mode ?? "(MISSING from payload)",
     }));
 
     // Validate required fields
