@@ -1331,12 +1331,24 @@ Return ONLY a valid JSON array of EXACTLY ${stepCount} objects, no additional te
   // Tour outputs are longer than escape (encyclopedic_text 200-300 words
   // vs riddle 5-7 sentences). Budget 1000-1200 tokens per stop ×
   // ${stepCount} = up to ~20k tokens for 15 stops. Cap at 24k to be safe.
-  const message = await client.messages.create({
+  //
+  // STREAMING REQUIRED — bug rapporté Montpellier 2026-05-20 :
+  // L'Anthropic SDK refuse `client.messages.create()` non-streaming
+  // quand max_tokens est élevé, parce que la requête peut dépasser
+  // les 10 min de timeout HTTP. Erreur observée :
+  //   "Streaming is required for operations that may take longer
+  //    than 10 minutes."
+  // → On bascule sur `client.messages.stream(...)` + `finalMessage()`
+  // qui accumule tous les chunks et retourne le message complet une
+  // fois la stream fermée. Aucun changement côté output parsing.
+  // Cf. https://github.com/anthropics/anthropic-sdk-typescript#long-requests
+  const stream = client.messages.stream({
     model: "claude-sonnet-4-20250514",
     max_tokens: 24000,
     temperature: 0.7,
     messages: [{ role: "user", content: prompt }],
   });
+  const message = await stream.finalMessage();
 
   const stopReason = message.stop_reason;
   if (stopReason === "max_tokens") {
