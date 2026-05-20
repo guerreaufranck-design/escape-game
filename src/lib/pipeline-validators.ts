@@ -172,7 +172,7 @@ export async function validateFinalGame(
   const { data: game, error: gameErr } = await supabase
     .from("games")
     .select(
-      "id, slug, title, transport_mode, final_answer, final_answer_explanation, city",
+      "id, slug, title, mode, transport_mode, final_answer, final_answer_explanation, city",
     )
     .eq("id", gameId)
     .single();
@@ -542,7 +542,17 @@ export async function validateFinalGame(
   }
 
   // 5. Translation completeness (if language provided)
-  if (language && language !== "en") {
+  //
+  // S9 (2026-05-20) — Skip pour mode='city_tour' : le contenu tour est
+  // généré DIRECTEMENT dans la langue cible (mon prompt encyclopédique
+  // produit le contenu en français quand language=fr). Donc aucun cache
+  // de traduction n'est nécessaire — l'API joueur lit `game_steps`
+  // directement et obtient déjà du FR. Le check coverage est donc
+  // inadapté à ce mode et créait une boucle infernale auto-repair
+  // (validator dit 7/39 incomplete → auto-repair retrigger pre-package
+  // → no-op car déjà cached → validator re-flag → boucle).
+  const gameMode = (game as { mode?: string }).mode ?? "city_game";
+  if (language && language !== "en" && gameMode !== "city_tour") {
     const stepIds = steps.map((s) => s.id);
     const { count: gameTrCount } = await supabase
       .from("translations_cache")
