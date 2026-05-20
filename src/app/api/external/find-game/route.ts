@@ -48,15 +48,30 @@ export async function GET(request: NextRequest) {
     );
   }
 
+  // S9 (2026-05-20) — Filtre optionnel par mode. Sans ce filtre,
+  // quand un même slug a 2 versions publiées (e.g. les-ombres-de-
+  // montpellier en city_game ET city_tour), OddballTrip recevait
+  // un gameId aléatoire et remettait le mauvais code au client.
+  //
+  // Si ?mode= est passé, on filtre. Si absent, on garde le legacy
+  // (renvoie n'importe quelle version publiée). OddballTrip devrait
+  // toujours passer mode pour éviter l'ambiguïté.
+  const modeFilter = request.nextUrl.searchParams.get("mode");
+  const validModes = new Set(["city_game", "city_tour"]);
+  const filterByMode = modeFilter && validModes.has(modeFilter);
+
   const supabase = createAdminClient();
 
-  // EXACT slug match — la seule politique valide.
-  const { data: exactMatch } = await supabase
+  // EXACT slug match (+ optional mode filter) — la seule politique valide.
+  let query = supabase
     .from("games")
-    .select("id, title, city")
+    .select("id, title, city, mode")
     .eq("slug", slug)
-    .eq("is_published", true)
-    .maybeSingle();
+    .eq("is_published", true);
+  if (filterByMode) {
+    query = query.eq("mode", modeFilter);
+  }
+  const { data: exactMatch } = await query.maybeSingle();
 
   if (exactMatch) {
     console.log(
