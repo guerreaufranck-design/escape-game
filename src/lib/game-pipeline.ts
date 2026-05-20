@@ -2002,9 +2002,18 @@ async function insertGameIntoDatabase(
       anecdote: step.anecdote,
       // Patrimoine-first (migration 027). landmark_history is the FULL
       // story of the place independent of the theme — played as the
-      // first card after the AR find. JSONB {en} for now.
+      // first card after the AR find.
+      //
+      // JSONB wrapping : utilise la langue du CONTENU généré.
+      //   - city_game : contenu généré en EN → {en: "..."}
+      //   - city_tour : contenu généré directement dans la langue cible
+      //     (FR si language=fr, etc.) → {<contentLanguage>: "..."}
+      // Bug rapporté Montpellier 2026-05-20 : avant ce fix, le tour
+      // stockait du texte FR sous la clé `en` — visuellement OK grâce
+      // au fallback de t(), mais métadonnée incorrecte qui pouvait
+      // induire des bugs subtils côté lecture API.
       landmark_history: step.landmark_history
-        ? { en: step.landmark_history }
+        ? { [template.mode === "city_tour" ? contentLanguage : "en"]: step.landmark_history }
         : null,
       // Catégorie + citation propagées depuis la discovery Gemini
       // (vide pour les jeux en fallback Google Places legacy).
