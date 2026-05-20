@@ -880,6 +880,50 @@ export async function discoverParcours(
   console.log(
     `[discoverParcours] Candidate pool ready: ${googleCandidates.length} POIs from "${discoverySource}" source (within ${radiusM}m)`,
   );
+
+  // S9 (2026-05-20) — RENDEZ-VOUS GAP : on filtre les POIs trop proches
+  // du startPoint pour que le Stop 1 soit toujours à distance de marche
+  // significative depuis le point de rendez-vous.
+  //
+  // Avant ce fix : le 1er stop était souvent le POI le plus proche du
+  // startPoint (à 7-50m). Le joueur arrivait au RDV, validait Stop 1
+  // en 13 secondes (cf. cas observé Zadar 2026-05-17), et ressentait
+  // que le jeu n'avait "pas vraiment commencé". Le briefing perdait
+  // sa fonction psychologique de "RDV → ensuite ça commence".
+  //
+  // Politique : tous les stops doivent être ≥ MIN_GAP_FROM_START_M du
+  // startPoint. Walking : 150m (≈ 2 min de marche). Roadtrip : 500m
+  // (en voiture le concept "trop proche" est différent).
+  //
+  // Garde-fou : si le filtre retire trop de candidats (< minN restants),
+  // on relâche à 100m puis on annule le filtre. Pas question de planter
+  // un jeu pour cette UX optim.
+  const MIN_GAP_FROM_START_M = isRoadtrip ? 500 : 150;
+  const RELAX_GAP_M = isRoadtrip ? 250 : 100;
+  const beforeFilter = googleCandidates.length;
+  const filteredStrict = googleCandidates.filter(
+    (c) => c.distanceM >= MIN_GAP_FROM_START_M,
+  );
+  if (filteredStrict.length >= minStops) {
+    googleCandidates = filteredStrict;
+    console.log(
+      `[discoverParcours] Rendez-vous gap applied: ${beforeFilter} → ${googleCandidates.length} candidates (excluded POIs < ${MIN_GAP_FROM_START_M}m from startPoint, kept ${googleCandidates.length} ≥ minN=${minStops})`,
+    );
+  } else {
+    const filteredRelaxed = googleCandidates.filter(
+      (c) => c.distanceM >= RELAX_GAP_M,
+    );
+    if (filteredRelaxed.length >= minStops) {
+      googleCandidates = filteredRelaxed;
+      console.warn(
+        `[discoverParcours] Rendez-vous gap RELAXED to ${RELAX_GAP_M}m (strict ${MIN_GAP_FROM_START_M}m would have left only ${filteredStrict.length} < minN=${minStops}). Kept ${googleCandidates.length} candidates.`,
+      );
+    } else {
+      console.warn(
+        `[discoverParcours] Rendez-vous gap SKIPPED entirely — even at ${RELAX_GAP_M}m only ${filteredRelaxed.length} candidates remain < minN=${minStops}. Stop 1 may be very close to startPoint. Consider widening discovery radius if this happens often.`,
+      );
+    }
+  }
   if (verifiedContext) {
     console.log(
       `[discoverParcours] Perplexity Deep Research: ${verifiedContext.iconicSites.length} iconic sites, ${verifiedContext.realFigures.length} figures, ${verifiedContext.events.length} events, ${verifiedContext.localTraditions.length} traditions`,

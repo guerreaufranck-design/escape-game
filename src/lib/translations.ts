@@ -314,17 +314,17 @@ export const ui: Translations = {
     fr: 'Scenario', en: 'Scenario', de: 'Szenario', es: 'Escenario', it: 'Scenario',
   },
   'play.startingPoint': {
-    fr: 'Point de depart', en: 'Starting point', de: 'Startpunkt', es: 'Punto de partida', it: 'Punto di partenza',
+    fr: 'Point de rendez-vous', en: 'Rendez-vous point', de: 'Treffpunkt', es: 'Punto de encuentro', it: 'Punto d\'incontro',
   },
   'play.startingPointDesc': {
-    fr: 'Rendez-vous a ce point pour commencer l\'aventure. La premiere enigme vous y attend !',
-    en: 'Meet at this point to start the adventure. The first riddle awaits you!',
-    de: 'Treffpunkt, um das Abenteuer zu beginnen. Das erste Ratsel erwartet Sie!',
-    es: 'Encuentrate en este punto para comenzar la aventura. El primer enigma te espera!',
-    it: 'Raggiungi questo punto per iniziare l\'avventura. Il primo enigma ti aspetta!',
+    fr: 'Retrouvez-nous a ce point pour debuter. De la, votre premiere etape se trouvera a quelques minutes de marche — votre boussole AR vous guidera des le depart.',
+    en: 'Meet us at this point to begin. From there, your first stop will be a few minutes\' walk away — your AR compass will guide you from the start.',
+    de: 'Treffen Sie uns an diesem Punkt. Von dort aus ist Ihr erster Stopp ein paar Gehminuten entfernt — Ihr AR-Kompass leitet Sie von Anfang an.',
+    es: 'Encuentrate con nosotros en este punto. Desde ahi, tu primera parada estara a unos minutos a pie — tu brujula AR te guiara desde el inicio.',
+    it: 'Raggiungici a questo punto. Da li, la tua prima tappa sara a qualche minuto a piedi — la tua bussola AR ti guidera fin dall\'inizio.',
   },
   'play.startingPointDirection': {
-    fr: 'Direction du point de depart', en: 'Direction to starting point', de: 'Richtung zum Startpunkt', es: 'Direccion al punto de partida', it: 'Direzione al punto di partenza',
+    fr: 'Direction du point de rendez-vous', en: 'Direction to rendez-vous', de: 'Richtung zum Treffpunkt', es: 'Direccion al punto de encuentro', it: 'Direzione al punto d\'incontro',
   },
   'play.letsGo': {
     fr: 'C\'est parti !', en: 'Let\'s go!', de: 'Los geht\'s!', es: 'Vamos!', it: 'Andiamo!',
