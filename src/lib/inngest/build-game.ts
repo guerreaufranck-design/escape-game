@@ -30,7 +30,12 @@
  * en pratique pas de risque de duplicate.
  */
 import { inngest, gameBuildRequested } from "@/lib/inngest-client";
-import { generateGameFromTemplate, type GameTemplate } from "@/lib/game-pipeline";
+import {
+  runPipelinePhase1Discovery,
+  runPipelinePhase2NarrativeAndInsert,
+  type GameTemplate,
+  type Phase1Result,
+} from "@/lib/game-pipeline";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -51,43 +56,77 @@ export const buildGameDurable = inngest.createFunction(
       `[build-game] Start for slug=${data.slug} city=${data.city} mode=${data.transportMode ?? "walking"}`,
     );
 
-    const result = (await step.run(
-      "build-from-template",
-      async () => {
-        const template: GameTemplate = {
-          slug: data.slug,
-          city: data.city,
-          country: data.country ?? "",
-          theme: data.title,
-          themeDescription: data.themeDescription,
-          narrative:
-            data.narrative ??
-            `An outdoor adventure called "${data.title}", set in ${data.city}. ${data.themeDescription}`,
-          difficulty: data.difficulty ?? 3,
-          estimatedDurationMin: data.estimatedDurationMin ?? 135,
-          stopCount: data.stopCount ?? 8,
-          transportMode: data.transportMode,
-          radiusKm: data.radiusKm,
-          recommendedDaysMin: data.recommendedDaysMin,
-          recommendedDaysMax: data.recommendedDaysMax,
-          language: data.language,
-          startPointText: data.startPointText,
-          startPoint:
-            typeof data.startPointLat === "number" &&
-            typeof data.startPointLon === "number"
-              ? { lat: data.startPointLat, lon: data.startPointLon }
-              : undefined,
-          accessibility: data.accessibility,
-          // S9 (2026-05-18) — propagate game mode through pipeline.
-          // OddballTrip peut maintenant envoyer mode="city_tour" pour
-          // déclencher la variante audioguide.
-          mode: data.mode,
-        };
+    const template: GameTemplate = {
+      slug: data.slug,
+      city: data.city,
+      country: data.country ?? "",
+      theme: data.title,
+      themeDescription: data.themeDescription,
+      narrative:
+        data.narrative ??
+        `An outdoor adventure called "${data.title}", set in ${data.city}. ${data.themeDescription}`,
+      difficulty: data.difficulty ?? 3,
+      estimatedDurationMin: data.estimatedDurationMin ?? 135,
+      stopCount: data.stopCount ?? 8,
+      transportMode: data.transportMode,
+      radiusKm: data.radiusKm,
+      recommendedDaysMin: data.recommendedDaysMin,
+      recommendedDaysMax: data.recommendedDaysMax,
+      language: data.language,
+      startPointText: data.startPointText,
+      startPoint:
+        typeof data.startPointLat === "number" &&
+        typeof data.startPointLon === "number"
+          ? { lat: data.startPointLat, lon: data.startPointLon }
+          : undefined,
+      accessibility: data.accessibility,
+      // S9 (2026-05-18) — propagate game mode through pipeline.
+      // OddballTrip peut maintenant envoyer mode="city_tour" pour
+      // déclencher la variante audioguide.
+      mode: data.mode,
+    };
 
-        const pipelineResult = await generateGameFromTemplate(template);
+    // ════════════════════════════════════════════════════════════════
+    // 2-STEP SPLIT (2026-05-20) — passer le timeout Vercel 800s/step
+    // ════════════════════════════════════════════════════════════════
+    // Avant : un seul step.run("build-from-template") avec budget 800s
+    // pour discovery (5-7 min) + narration Claude (2-5 min) + insert.
+    // Les roadtrips radius 30-60km dépassaient régulièrement le budget
+    // (FUNCTION_INVOCATION_TIMEOUT à 800030ms exactement, observé en
+    // prod sur escape-game-build-game-durable).
+    //
+    // Après : Phase 1 (discovery) + Phase 2 (narrative + insert) sont
+    // deux step.run() distincts. Chaque step a son propre budget 800s,
+    // soit 1600s cumulés effectifs. Inngest persiste le Phase1Result
+    // sérialisé entre les deux étapes (idempotent en cas de retry du
+    // step 2 — Phase 1 ne re-tourne pas).
+    // Inngest sérialise/désérialise le payload entre step.run() — son type
+    // `JsonifyObject` rend les `| undefined` optionnels (clé absente vs
+    // valeur `undefined`). Le runtime est identique, mais le compilateur
+    // refuse l'assignation directe vers `Phase1Result`. On cast pour
+    // rétablir la signature : Inngest garantit l'isomorphisme JSON
+    // round-trip pour les types simples qu'on emploie ici.
+    const phase1Raw = await step.run("phase1-discovery", async () => {
+      return await runPipelinePhase1Discovery(template);
+    });
+    const phase1 = phase1Raw as Phase1Result;
+
+    if (!phase1.success) {
+      throw new Error(
+        `Pipeline Phase 1 (discovery) failed: ${phase1.error ?? "(no message)"}`,
+      );
+    }
+
+    const result = (await step.run(
+      "phase2-narrative-insert",
+      async () => {
+        const pipelineResult = await runPipelinePhase2NarrativeAndInsert(
+          template,
+          phase1,
+        );
         if (!pipelineResult.success || !pipelineResult.gameId) {
           throw new Error(
-            `Pipeline failed: ${pipelineResult.error ?? "(no message)"}`,
+            `Pipeline Phase 2 (narrative + insert) failed: ${pipelineResult.error ?? "(no message)"}`,
           );
         }
         return {

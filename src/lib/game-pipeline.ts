@@ -80,7 +80,11 @@ function pickTopLandmarkForStartPoint(
   scored.sort((a, b) => b.score - a.score);
   return scored[0].candidate;
 }
-import { discoverParcours } from "./parcours-discovery";
+import {
+  discoverParcours,
+  type DiscoveredStop,
+} from "./parcours-discovery";
+import { type VerifiedThemeContext } from "./perplexity";
 // prepareGamePackage + validateFinalGame + attemptAutoRepair moved to
 // Lambda 2 (pipeline-finalize.ts + /api/internal/finalize-game route)
 // for proper Vercel maxDuration handling. Cf. CHAINED PIPELINE block below.
@@ -504,6 +508,69 @@ function encodeRoman(n: number): string {
 const MAX_INTER_STOP_M = 1_000;
 
 /**
+ * Phase 1 output — JSON-sérialisable bundle passé du step Inngest 1 au step 2.
+ *
+ * Pourquoi un type explicite : la fonction `generateGameFromTemplate` est
+ * splittée en 2 phases (discovery + narrative/insert) pour passer le timeout
+ * Vercel 800s par step Inngest (vision 2026-05-20, post-incident roadtrips
+ * radius 60km qui timeoutaient à 800030ms exactement).
+ *
+ * Cette structure DOIT être 100% JSON-sérialisable (pas de Map, Set, Date
+ * object, ni de classes). Inngest sérialise/désérialise le payload entre
+ * step.run() calls.
+ *
+ * Variant `success: false` propage les codes d'erreur structurés vers le
+ * wrapper, qui peut alors retourner un `PipelineResult` cohérent.
+ */
+export type Phase1Result =
+  | {
+      success: true;
+      /** ResearchedLocation[] adapté pour Claude downstream (Phase 2). */
+      verifiedLocations: ResearchedLocation[];
+      /** Landmarks bruts issus de la discovery — utilisés en Phase 2 pour :
+       *  (a) adapter la narration via `adaptNarrativeForReplacedStops`,
+       *  (b) construire le payload `landmarks[]` final retourné à OddballTrip. */
+      discoveryLandmarks: DiscoveredStop[];
+      /** Contexte Perplexity passé à generateGameSteps / generateTourSteps
+       *  comme anchors factuels. Optionnel — vide si Perplexity HS. */
+      discoveryVerifiedContext: VerifiedThemeContext | undefined;
+      /** Candidats Perplexity rejetés (audit, exposé dans droppedStops). */
+      discoveryRejected: Array<{ name: string; reason: string }>;
+      /** Source du pool de candidats : Gemini thématique ou Google Places fallback. */
+      discoverySource: "gemini_thematic" | "google_places" | undefined;
+      /** Si la discovery a auto-escaladé walking → mixed/driving (densité POI
+       *  insuffisante), on porte la nouvelle valeur ici pour l'INSERT DB. */
+      escalatedTransportMode: "walking" | "mixed" | "driving" | undefined;
+      /** Difficulté effective après auto-bump widening (peut différer de
+       *  template.difficulty si widening 2.5x triggered). */
+      effectiveDifficulty: number;
+      /** Flag sanity-check (cluster centroid drift, free access ratio,
+       *  widening 2.5x). Non-bloquant : le jeu publie quand même mais
+       *  OddballTrip retient le code activation jusqu'à inspection. */
+      needsReview: boolean;
+      reviewReason: string | undefined;
+      /** Mode du stop indexé par step_order-1 : "radar" (POI Google indexé,
+       *  validation 30m) ou "narrative" (sub-monument non-indexé, validation
+       *  80m, hint navigation prepended au riddle). */
+      stopModes: Array<"radar" | "narrative">;
+      /** Hints de navigation pour les stops "narrative". `null` au lieu
+       *  d'`undefined` pour rester JSON-safe. */
+      navigationHints: Array<string | null>;
+      /** Durée de la phase recherche en ms — propagée au PipelineResult final. */
+      researchDurationMs: number;
+      /** Plancher/plafond commercial appliqué (6 ≤ stopCount ≤ 9 ou 15
+       *  selon mode). Utile pour les logs en Phase 2. */
+      resolvedStopCount: number;
+    }
+  | {
+      success: false;
+      error: string;
+      errorCode: PipelineErrorCode;
+      failedLandmarks?: FailedLandmark[];
+      researchDurationMs: number;
+    };
+
+/**
  * Generate a complete game from a template
  * This is the main pipeline entry point
  */
@@ -524,10 +591,31 @@ const MAX_INTER_STOP_M = 1_000;
  * découverte est intégralement déléguée à Perplexity. C'est le seul
  * levier de qualité, donc le seul à monitorer / tuner.
  */
-export async function generateGameFromTemplate(
-  template: GameTemplate
-): Promise<PipelineResult> {
-  const startTime = Date.now();
+/**
+ * Phase 1 — DISCOVERY (STEP 0-2).
+ *
+ * Extrait de `generateGameFromTemplate` (2026-05-20) pour passer le timeout
+ * Vercel 800s par step Inngest : roadtrips radius 30-60km mettaient 5-7 min
+ * en discovery + 2-5 min en narration → total > 800s → 504, rien persisté.
+ *
+ * Split Phase 1 (cette fonction, ~5-7 min budget) + Phase 2 (narrative +
+ * insert, ~2-5 min budget) → chaque step a son propre budget 800s.
+ *
+ * Contient :
+ *   - STEP 0  : Résolution + auto-correction du startPoint
+ *   - STEP 1  : Discovery widening progressif (1× → 1.5× → 2.5×)
+ *   - STEP 1.5: Sanity-check cluster centroid drift
+ *   - STEP 1.6: Free access ratio (roadtrip uniquement) + widening 2.5x flag
+ *   - STEP 2  : Convert DiscoveredStop → ResearchedLocation[]
+ *
+ * Retourne un bundle 100% JSON-sérialisable (`Phase1Result`) passé tel quel
+ * à `runPipelinePhase2NarrativeAndInsert`. Erreurs taggées avec
+ * `PipelineErrorCode` pour cohérence avec `PipelineResult`.
+ */
+export async function runPipelinePhase1Discovery(
+  template: GameTemplate,
+): Promise<Phase1Result> {
+  const phase1Start = Date.now();
 
   if (template.stops?.length) {
     console.warn(
@@ -1052,6 +1140,110 @@ export async function generateGameFromTemplate(
       (s) => s.navigationHint,
     );
 
+    console.log(
+      `[Pipeline] Phase 1 (discovery) complete in ${Math.round((Date.now() - phase1Start) / 1000)}s — handing off to Phase 2 (narrative + insert)`,
+    );
+
+    return {
+      success: true,
+      verifiedLocations,
+      discoveryLandmarks: discovery.landmarks,
+      discoveryVerifiedContext: discovery.verifiedContext,
+      discoveryRejected: discovery.rejected,
+      discoverySource: discovery.discoverySource,
+      escalatedTransportMode: discovery.escalatedTransportMode,
+      effectiveDifficulty,
+      needsReview,
+      reviewReason,
+      stopModes,
+      // Map undefined → null pour rester JSON-sérialisable strict.
+      navigationHints: navigationHints.map((h) => h ?? null),
+      researchDurationMs,
+      resolvedStopCount: stopCount,
+    };
+  } catch (error) {
+    const errorMessage =
+      error instanceof Error ? error.message : "Unknown error";
+    console.error(
+      `[Pipeline] Phase 1 failed after ${Math.round((Date.now() - phase1Start) / 1000)}s: ${errorMessage}`,
+    );
+    const tagged = error as Error & {
+      code?: PipelineErrorCode;
+      failedLandmarks?: FailedLandmark[];
+    };
+    return {
+      success: false,
+      error: errorMessage,
+      errorCode: tagged?.code ?? "INTERNAL_ERROR",
+      failedLandmarks: tagged?.failedLandmarks,
+      researchDurationMs: Date.now() - phase1Start,
+    };
+  }
+}
+
+/**
+ * Phase 2 — NARRATIVE ADAPTATION + INSERT (STEP 3-8).
+ *
+ * Consomme le `Phase1Result` produit par `runPipelinePhase1Discovery` et :
+ *   - STEP 3   : Adapt narrative (Claude réécrit themeDescription + narrative
+ *                + noms poétiques pour coller aux landmarks réels).
+ *   - STEP 4   : generateGameSteps (city_game) ou generateTourSteps (city_tour).
+ *   - STEP 4.5 : Roman numeral auto-fix.
+ *   - STEP 5   : QA Claude #2 + regen ciblé.
+ *   - STEP 5.5 : Override narratif sub-POIs + roadtrip radius bump.
+ *   - STEP 6   : Epilogue + intro speech + final riddle (parallèle).
+ *   - STEP 7   : Insert DB.
+ *   - STEP 8   : Build landmarks[] payload + return.
+ *
+ * Budget Vercel ~2-5 min en pratique (Claude générations + Supabase insert).
+ * Combiné aux 5-7 min de Phase 1, total possible 7-12 min — bien sous les
+ * 2× 800s = 1600s offerts par le split Inngest.
+ */
+export async function runPipelinePhase2NarrativeAndInsert(
+  template: GameTemplate,
+  phase1: Phase1Result,
+): Promise<PipelineResult> {
+  const startTime = Date.now();
+
+  if (!phase1.success) {
+    // Phase 1 a échoué — propager l'erreur à l'identique au wrapper.
+    // En pratique le wrapper ne devrait jamais appeler Phase 2 sur un
+    // Phase 1 KO ; ce garde-fou protège quand même les caller directs.
+    return {
+      success: false,
+      error: phase1.error,
+      errorCode: phase1.errorCode,
+      failedLandmarks: phase1.failedLandmarks,
+      durationMs: 0,
+      researchDurationMs: phase1.researchDurationMs,
+    };
+  }
+
+  // Ré-hydratation des variables Phase 1 dans le scope local. Mêmes
+  // noms qu'avant le split pour minimiser le diff sur la suite du code.
+  const verifiedLocations = phase1.verifiedLocations;
+  const stopModes = phase1.stopModes;
+  // navigationHints repassent en undefined-friendly pour rester compat
+  // avec l'ancien code (`hint` checké `if (hint)`).
+  const navigationHints: Array<string | undefined> = phase1.navigationHints.map(
+    (h) => h ?? undefined,
+  );
+  const effectiveDifficulty = phase1.effectiveDifficulty;
+  let needsReview = phase1.needsReview;
+  let reviewReason = phase1.reviewReason;
+  const discovery = {
+    landmarks: phase1.discoveryLandmarks,
+    verifiedContext: phase1.discoveryVerifiedContext,
+    rejected: phase1.discoveryRejected,
+    discoverySource: phase1.discoverySource,
+    escalatedTransportMode: phase1.escalatedTransportMode,
+  };
+  const researchDurationMs = phase1.researchDurationMs;
+  // stopCount résolu en Phase 1 (plancher 6 / plafond 9 ou 15 selon mode).
+  // Conserve l'ancien nom de variable pour minimiser le diff downstream.
+  const stopCount = phase1.resolvedStopCount;
+
+  try {
     // ============================================
     // STEP 3 : Adapter la narration aux landmarks découverts
     // ============================================
@@ -1725,7 +1917,7 @@ export async function generateGameFromTemplate(
     const errorMessage =
       error instanceof Error ? error.message : "Unknown error";
     console.error(
-      `[Pipeline] Failed after ${Math.round(durationMs / 1000)}s: ${errorMessage}`,
+      `[Pipeline] Phase 2 failed after ${Math.round(durationMs / 1000)}s: ${errorMessage}`,
     );
 
     const tagged = error as Error & {
@@ -1741,8 +1933,48 @@ export async function generateGameFromTemplate(
       errorCode,
       failedLandmarks: tagged?.failedLandmarks,
       durationMs,
+      researchDurationMs,
     };
   }
+}
+
+/**
+ * Generate a complete game from a template — WRAPPER sync.
+ *
+ * Conserve la signature historique pour les callers qui n'utilisent pas
+ * Inngest (typiquement `/api/external/generate-game` en mode sync). Sous
+ * le capot : exécute Phase 1 puis Phase 2 séquentiellement, exactement
+ * comme l'ancien comportement monolithique.
+ *
+ * Pour les callers Inngest (cf. `src/lib/inngest/build-game.ts`), il est
+ * préférable d'appeler `runPipelinePhase1Discovery` et
+ * `runPipelinePhase2NarrativeAndInsert` dans deux `step.run()` distincts
+ * afin de bénéficier du budget timeout doublé (2× 800s).
+ */
+export async function generateGameFromTemplate(
+  template: GameTemplate,
+): Promise<PipelineResult> {
+  const wrapperStart = Date.now();
+  const phase1 = await runPipelinePhase1Discovery(template);
+  if (!phase1.success) {
+    return {
+      success: false,
+      error: phase1.error,
+      errorCode: phase1.errorCode,
+      failedLandmarks: phase1.failedLandmarks,
+      durationMs: Date.now() - wrapperStart,
+      researchDurationMs: phase1.researchDurationMs,
+    };
+  }
+  const phase2 = await runPipelinePhase2NarrativeAndInsert(template, phase1);
+  // Le wrapper agrège la durée Phase 1 + Phase 2 dans `durationMs` pour
+  // préserver la sémantique historique : les callers (admin UI, callback
+  // OddballTrip) lisent `durationMs` comme le temps TOTAL de génération
+  // de bout en bout — pas seulement la Phase 2.
+  return {
+    ...phase2,
+    durationMs: Date.now() - wrapperStart,
+  };
 }
 
 /**
