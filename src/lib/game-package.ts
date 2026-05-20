@@ -25,6 +25,7 @@ import { voiceFor } from "@/lib/voice-map";
 import { t, isStaticLocale } from "@/lib/i18n";
 import { logTelemetry } from "@/lib/pipeline-telemetry";
 import { ui } from "@/lib/translations";
+import { detectSourceLanguage } from "@/lib/lang-detect";
 
 export interface PackageResult {
   success: boolean;
@@ -88,7 +89,28 @@ function isTranslationFallback(
   if (language === "en") return false;
   if (!translated || !english) return false;
   if (english.trim().length < 30) return false;
-  return translated.trim().toLowerCase() === english.trim().toLowerCase();
+  if (translated.trim().toLowerCase() !== english.trim().toLowerCase()) {
+    return false;
+  }
+  // Texte identique entre "english" et "translated" : ça PEUT être un
+  // vrai fallback Gemini (échec silencieux), OU ça PEUT être que le
+  // texte source était DÉJÀ dans la langue cible (cas du mode city_tour
+  // 2026-05-20 : mon prompt encyclopédique produit le contenu directement
+  // en français quand language=fr, donc la "traduction FR→FR" est triviale,
+  // pas un fallback).
+  //
+  // Bug rapporté Montpellier 2026-05-20 : sans cette détection, les
+  // pipelines tour FR skippaient l'audio des 7 steps × 4 slots = 28 audios
+  // parce que isTranslationFallback retournait true → audio absent → joueur
+  // n'entend rien sur les énigmes.
+  //
+  // Détection : si la langue détectée du texte source matche déjà la
+  // cible, c'est pas un fallback — c'est juste "no-op needed".
+  const detectedSource = detectSourceLanguage(english);
+  if (detectedSource === language) {
+    return false; // source déjà en target language, pas de fallback
+  }
+  return true; // vraie fallback (EN inchangé alors qu'on voulait FR)
 }
 
 /**
