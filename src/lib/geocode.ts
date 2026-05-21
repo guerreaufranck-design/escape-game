@@ -1031,3 +1031,153 @@ export function haversineMeters(
     Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(h));
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Multi-strategy robust geocoder (2026-05-21)
+// ════════════════════════════════════════════════════════════════════
+/**
+ * `geocodeLocationRobust` — exhaust N progressive fallback strategies
+ * before declaring a landmark "ungeocodable".
+ *
+ * MOTIVATION (root cause observed 2026-05-21 on roadtrip
+ * `l-itineraire-code-de-vinci`, Loire Valley) :
+ *
+ *   Perplexity proposed "Maison de la Magie Robert-Houdin, Blois"
+ *   (a real landmark with sub-10m Google geocode). Pipeline called
+ *   `geocodeLocation(name, city="Loire Valley, France", country, ...)`.
+ *   But "Loire Valley, France" is a SEO tourist label, not a Google-
+ *   indexed administrative entity. Google biased the search around an
+ *   ambiguous area, returned a low-confidence result that got rejected
+ *   internally → `geocodeLocation` returned null → pipeline fell back
+ *   to NARRATIVE_OFFSET mode (startPoint + 350m) → landmark stored
+ *   at (47.619, 1.517) — 14 km from the real location.
+ *
+ * THE FIX is not to weaken `geocodeLocation`'s strictness. It's to
+ * RETRY with PROGRESSIVELY MORE PERMISSIVE inputs before giving up.
+ * Each strategy peels one layer of input ambiguity:
+ *
+ *   Strategy 1 (primary)   : (name, city, country, refPoint, maxDist)
+ *                            — exact contract from caller, full bias.
+ *   Strategy 2             : (name, "", country, refPoint, maxDist)
+ *                            — drop the ambiguous city bias. Useful
+ *                              when city is a SEO label ("Loire Valley")
+ *                              or a multi-commune ("Greater London").
+ *   Strategy 3             : (firstTokenOfName, "", country, refPoint,
+ *                              maxDist)
+ *                            — drop ", city" suffix in the name itself
+ *                              ("Maison de la Magie Robert-Houdin, Blois"
+ *                              → "Maison de la Magie Robert-Houdin").
+ *                              Google handles bare landmark names better
+ *                              with a refPoint bias than with a "name +
+ *                              wrong-city" hybrid.
+ *   Strategy 4             : same name + country, NO refPoint bias,
+ *                            but post-filter haversine < maxDist*1.2.
+ *                            — last-resort wide search to catch landmarks
+ *                              that exist worldwide but happen to be in
+ *                              the play zone (e.g. "Pont des Arts" exists
+ *                              in many cities, but if there's one in our
+ *                              maxDist window it wins).
+ *
+ * If all 4 fail → return null → caller's existing narrative-fallback
+ * behavior kicks in. We don't change the behavioral contract — only the
+ * recall.
+ *
+ * COST : each call to `geocodeLocation` triggers 1 Google Places +
+ * potentially 1 Google Geocoding API call (~$0.005 each). Worst case
+ * 4 strategies × 2 APIs = $0.04 per UNREACHABLE landmark (and most
+ * landmarks resolve on strategy 1 = $0.01). For an 8-stop game with
+ * 3 ambiguous candidates : ~$0.12 worst case. Acceptable to avoid
+ * silent quality drift.
+ *
+ * INSTRUMENTATION : each strategy logs which one succeeded. Operators
+ * can grep `[geocodeRobust] strategy N succeeded` to spot bias issues
+ * (lots of "strategy 2" success = OddballTrip city transform is lossy).
+ */
+export async function geocodeLocationRobust(
+  landmarkName: string,
+  city: string,
+  country: string,
+  options?: GeocodeOptions,
+): Promise<{ result: GeocodeResult; strategy: 1 | 2 | 3 | 4 } | null> {
+  if (!landmarkName?.trim()) return null;
+  const refPoint = options?.referencePoint;
+  const maxDist = options?.maxDistanceM ?? DEFAULT_MAX_DISTANCE_M;
+
+  // ── Strategy 1: full bias (exact caller contract) ──────────────────
+  {
+    const r = await geocodeLocation(landmarkName, city, country, options);
+    if (r) {
+      console.info(
+        `[geocodeRobust] strategy 1 (full bias) succeeded for "${landmarkName}"`,
+      );
+      return { result: r, strategy: 1 };
+    }
+  }
+
+  // ── Strategy 2: drop city bias ─────────────────────────────────────
+  // Most common save when `city` is a SEO label (e.g. "Loire Valley",
+  // "Provence", "Costa Brava"). Google handles `name + country` with a
+  // refPoint bias better than a name + invented-city hybrid.
+  {
+    const r = await geocodeLocation(landmarkName, "", country, options);
+    if (r) {
+      console.info(
+        `[geocodeRobust] strategy 2 (no city bias) succeeded for "${landmarkName}" — likely city="${city}" was an ambiguous label`,
+      );
+      return { result: r, strategy: 2 };
+    }
+  }
+
+  // ── Strategy 3: drop ", city" suffix from the name ─────────────────
+  // Perplexity often appends ", {city}" to landmark names. When the
+  // city we're carrying is wrong/ambiguous, the trailing ", city" in
+  // the name itself can mislead Google (it treats it as a location
+  // constraint, not a disambiguator).
+  const nameWithoutCitySuffix = landmarkName.split(",")[0].trim();
+  if (nameWithoutCitySuffix && nameWithoutCitySuffix !== landmarkName) {
+    const r = await geocodeLocation(
+      nameWithoutCitySuffix,
+      "",
+      country,
+      options,
+    );
+    if (r) {
+      console.info(
+        `[geocodeRobust] strategy 3 (name truncated to "${nameWithoutCitySuffix}") succeeded`,
+      );
+      return { result: r, strategy: 3 };
+    }
+  }
+
+  // ── Strategy 4: last-resort wide search, no refPoint bias ──────────
+  // Some Perplexity proposals are real but unindexed near our refPoint
+  // (small museums, archaeological sub-sites). Drop the bias entirely
+  // and accept any result that haversine-falls within maxDist*1.2.
+  if (refPoint) {
+    const r = await geocodeLocation(nameWithoutCitySuffix || landmarkName, "", country, {
+      maxDistanceM: maxDist * 1.2,
+      // no referencePoint — Google can search worldwide
+    });
+    if (r) {
+      const dist = haversineMeters(
+        { lat: r.lat, lon: r.lon },
+        refPoint,
+      );
+      if (dist <= maxDist * 1.2) {
+        console.info(
+          `[geocodeRobust] strategy 4 (no refPoint, post-filter) succeeded at ${Math.round(dist)}m from refPoint`,
+        );
+        return { result: r, strategy: 4 };
+      } else {
+        console.warn(
+          `[geocodeRobust] strategy 4 returned a result but it's ${Math.round(dist / 1000)} km from refPoint (> ${(maxDist * 1.2) / 1000} km tolerance) — rejected`,
+        );
+      }
+    }
+  }
+
+  console.warn(
+    `[geocodeRobust] ALL 4 strategies failed for "${landmarkName}" (city="${city}", country="${country}") — caller will fall back to narrative mode if applicable`,
+  );
+  return null;
+}

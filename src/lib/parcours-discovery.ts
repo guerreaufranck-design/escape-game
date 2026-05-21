@@ -45,6 +45,7 @@ import { pickThematicLandmarksFromList } from "./anthropic";
 import {
   discoverNearbyLandmarks,
   geocodeLocation,
+  geocodeLocationRobust,
   haversineMeters,
   FREE_PLACE_TYPES,
   type NearbyCandidate,
@@ -1088,9 +1089,17 @@ export async function discoverParcours(
         if (claudePicks.length >= params.stopCount) break;
         if (usedNames.has(cand.name.toLowerCase())) continue;
 
-        // Tentative de géocodage Google : si trouvé, mode radar normal.
-        // Sinon, mode narrative ancré sur le startPoint.
-        const geo = await geocodeLocation(
+        // Tentative de géocodage Google MULTI-STRATEGY (2026-05-21) :
+        // si la stratégie 1 (caller contract) échoue, on retry avec city
+        // vide / nom tronqué / pas de refPoint avant de tomber en
+        // narrative. Cf. `geocodeLocationRobust` pour le détail des 4
+        // stratégies. Le cas qui motive ce code : Perplexity propose un
+        // landmark réel ("Maison de la Magie Robert-Houdin, Blois") mais
+        // OddballTrip a transformé la city en label SEO ambigu ("Loire
+        // Valley") → strategy 1 échoue, strategy 2 (sans bias city)
+        // récupère la vraie coord. Sans ce code, on tombait en narrative
+        // mode à 350m du startPoint, à 14 km du vrai endroit.
+        const robust = await geocodeLocationRobust(
           cand.name,
           params.city,
           params.country,
@@ -1099,6 +1108,12 @@ export async function discoverParcours(
             maxDistanceM: radiusM,
           },
         );
+        const geo = robust ? robust.result : null;
+        if (robust && robust.strategy > 1) {
+          console.warn(
+            `[discoverParcours] Geocode RECOVERY via strategy ${robust.strategy} for "${cand.name}" — input city="${params.city}" was likely ambiguous`,
+          );
+        }
 
         if (geo) {
           // Trouvé : mode radar standard

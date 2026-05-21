@@ -30,6 +30,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { sendPipelineFailureAlert, sendNeedsReviewAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
 import { inngest } from "@/lib/inngest-client";
+import { validateOddballtripContract } from "@/lib/oddballtrip-contract";
 
 // Pipeline can take 5-13 minutes (Perplexity deep research + Gemini Pro
 // grounded research + patrimonial fill + multiple Claude calls + audio).
@@ -72,7 +73,36 @@ export async function POST(request: NextRequest) {
       mode: body.mode ?? "(MISSING from payload)",
     }));
 
-    // Validate required fields
+    // ──────────────────────────────────────────────────────────────
+    // Contract validation (2026-05-21) — Zod schema + soft warnings.
+    // Hard errors return 400 with structured details. Soft warnings
+    // are LOGGED + returned in the 202 response so OddballTrip dev
+    // can see drift over time without their pipeline being blocked.
+    // ──────────────────────────────────────────────────────────────
+    const contractCheck = validateOddballtripContract(body);
+    if (!contractCheck.ok) {
+      console.error(
+        `[GenerateGame] CONTRACT VIOLATION: ${contractCheck.errors?.length ?? 0} errors`,
+        contractCheck.errors,
+      );
+      return NextResponse.json(
+        {
+          error:
+            "Contract validation failed. Inspect `errors` for the specific fields.",
+          errors: contractCheck.errors,
+        },
+        { status: 400 },
+      );
+    }
+    if (contractCheck.warnings.length > 0) {
+      console.warn(
+        `[GenerateGame] ⚠ CONTRACT WARNINGS (${contractCheck.warnings.length}) — pipeline tolerates but OddballTrip should fix:`,
+        contractCheck.warnings,
+      );
+    }
+
+    // Validate required fields (legacy explicit check, kept as defensive
+    // belt-and-suspenders after Zod already enforced presence).
     const { city, country, theme, themeDescription, narrative } = body;
 
     if (!city || !country || !theme || !themeDescription || !narrative) {
@@ -459,6 +489,10 @@ export async function POST(request: NextRequest) {
             slug: template.slug,
             message:
               "Generation queued — game will appear when ready. Poll /api/external/find-game by slug.",
+            // (2026-05-21) Soft contract warnings — OddballTrip dev
+            // should monitor this array and fix drift on their side.
+            // The pipeline tolerates these for backward compat.
+            contract_warnings: contractCheck.warnings,
           },
           { status: 202 },
         );

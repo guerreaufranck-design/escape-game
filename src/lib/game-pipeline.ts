@@ -564,6 +564,16 @@ export type Phase1Result =
       /** Plancher/plafond commercial appliqué (6 ≤ stopCount ≤ 9 ou 15
        *  selon mode). Utile pour les logs en Phase 2. */
       resolvedStopCount: number;
+      /** (2026-05-21) StartPoint résolu par STEP 0 (geocodage du
+       *  startPointText OddballTrip, ou top-landmark Google, ou
+       *  city-center fallback). Persisté en DB pour debug post-facto
+       *  + affichage admin/player. */
+      resolvedStartPoint: { lat: number; lon: number };
+      resolvedStartPointText: string;
+      resolvedStartPointSource:
+        | "startPointText-geocoded"
+        | "top-landmark-google-places"
+        | "city-center-fallback";
     }
   | {
       success: false;
@@ -788,6 +798,7 @@ export async function runPipelinePhase1Discovery(
 
     // 1. ESSAI PRINCIPAL — géocode startPointText si fourni
     let resolvedStartPoint: { lat: number; lon: number } | null = null;
+    let resolvedStartPointLabel: string = ""; // (2026-05-21) tracked for DB persistence
     let startPointSource:
       | "startPointText-geocoded"
       | "top-landmark-google-places"
@@ -802,6 +813,7 @@ export async function runPipelinePhase1Discovery(
         );
         if (geo) {
           resolvedStartPoint = { lat: geo.lat, lon: geo.lon };
+          resolvedStartPointLabel = template.startPointText.trim();
           startPointSource = "startPointText-geocoded";
           console.log(
             `[Pipeline] startPoint resolved via Google geocoding of "${template.startPointText}" → ${resolvedStartPoint.lat.toFixed(6)},${resolvedStartPoint.lon.toFixed(6)} (precision sub-10m)`,
@@ -856,6 +868,7 @@ export async function runPipelinePhase1Discovery(
               lat: topLandmark.lat,
               lon: topLandmark.lon,
             };
+            resolvedStartPointLabel = topLandmark.name;
             startPointSource = "top-landmark-google-places";
             console.log(
               `[Pipeline] startPoint resolved via Google Places top landmark: "${topLandmark.name}" (rating ${topLandmark.rating ?? "?"}/5, ${topLandmark.userRatingsTotal ?? "?"} reviews) → ${resolvedStartPoint.lat.toFixed(6)},${resolvedStartPoint.lon.toFixed(6)} (precision sub-10m)`,
@@ -865,6 +878,7 @@ export async function runPipelinePhase1Discovery(
               `[Pipeline] No landmark found in Google Places for ${cityToGeocode} — falling back to city center`,
             );
             resolvedStartPoint = { lat: cityGeo.lat, lon: cityGeo.lon };
+            resolvedStartPointLabel = cityToGeocode;
             startPointSource = "city-center-fallback";
             console.log(
               `[Pipeline] startPoint = city center ${resolvedStartPoint.lat.toFixed(6)},${resolvedStartPoint.lon.toFixed(6)} (precision ~500m)`,
@@ -1292,6 +1306,10 @@ export async function runPipelinePhase1Discovery(
       navigationHints: navigationHints.map((h) => h ?? null),
       researchDurationMs,
       resolvedStopCount: stopCount,
+      // (2026-05-21) Propagation à Phase 2c pour persistence en DB.
+      resolvedStartPoint: startPoint,
+      resolvedStartPointText: resolvedStartPointLabel,
+      resolvedStartPointSource: startPointSource,
     };
   } catch (error) {
     const errorMessage =
@@ -2045,6 +2063,15 @@ export async function runPipelinePhase2cInsert(
       // l'encyclopedic_text (utilisé en fallback).
       tourSteps,
       template.language ?? "en",
+      // (2026-05-21) Persistence du startPoint résolu en DB
+      // (migration 034). Phase 1 calcule la triple (lat, lon, text,
+      // source) — on la propage telle quelle ici.
+      {
+        lat: phase1.resolvedStartPoint.lat,
+        lon: phase1.resolvedStartPoint.lon,
+        text: phase1.resolvedStartPointText,
+        source: phase1.resolvedStartPointSource,
+      },
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
@@ -2339,6 +2366,18 @@ async function insertGameIntoDatabase(
   // on écrit le contenu riche dans step_content après l'insert game_steps.
   tourSteps: GeneratedTourStep[] = [],
   contentLanguage: string = "en",
+  // (2026-05-21) StartPoint résolu par Phase 1 STEP 0 — persisté en
+  // games.start_point_* pour debug post-facto + affichage admin/player.
+  // Optionnel pour ne pas casser les callers legacy.
+  resolvedStartPoint?: {
+    lat: number;
+    lon: number;
+    text: string;
+    source:
+      | "startPointText-geocoded"
+      | "top-landmark-google-places"
+      | "city-center-fallback";
+  },
 ): Promise<string> {
   const supabase = createAdminClient();
   const gameId = uuidv4();
@@ -2421,6 +2460,16 @@ async function insertGameIntoDatabase(
       }
       return 168; // 7 jours par défaut pour roadtrip sans days
     })(),
+    // (2026-05-21, migration 034) Persistence du startPoint résolu.
+    // Permet le debug post-facto ("où ce jeu démarre vraiment ?") et
+    // l'affichage du point de RDV à l'admin/player sans avoir à re-
+    // géocoder. Nullable car les callers legacy peuvent ne pas le
+    // fournir (compat retro). Les nouveaux runs Phase 2c remplissent
+    // toujours ces 4 colonnes.
+    start_point_text: resolvedStartPoint?.text ?? null,
+    start_point_lat: resolvedStartPoint?.lat ?? null,
+    start_point_lon: resolvedStartPoint?.lon ?? null,
+    start_point_source: resolvedStartPoint?.source ?? null,
   });
 
   if (gameError) {
