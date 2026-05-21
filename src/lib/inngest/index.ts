@@ -11,6 +11,7 @@ import { generateGame } from "./generate-game";
 import { handleGenerateGameFailure } from "./dead-letter";
 import { recoverStuckGames } from "./heartbeat";
 import { buildGameDurable } from "./build-game";
+import { classifyAndRectifyErrorReport } from "./classify-and-rectify";
 import { allTestFunctions } from "./functions-test";
 
 export {
@@ -18,6 +19,7 @@ export {
   handleGenerateGameFailure,
   recoverStuckGames,
   buildGameDurable,
+  classifyAndRectifyErrorReport,
 };
 
 /** Toutes les fonctions Inngest actives en production. */
@@ -32,6 +34,10 @@ export const allInngestFunctions = [
   generateGame,
   handleGenerateGameFailure,
   recoverStuckGames,
+  // Sprint 6.1 (2026-05-21) — player error reports → LLM classifier
+  // → auto-rectify audio OR admin queue.
+  // Consume "player/error-report.submitted"
+  classifyAndRectifyErrorReport,
   // Sanity check end-to-end (à supprimer après stabilisation J+14)
   ...allTestFunctions,
 ];

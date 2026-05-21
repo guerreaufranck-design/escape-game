@@ -1777,6 +1777,79 @@ export async function runPipelinePhase2aNarrationGen(
       );
     }
 
+    // ────────────────────────────────────────────────────────────────
+    // PAID-ENTRY EXTERIOR-SCAN ALLOWANCE (Sprint 6 hotfix, 2026-05-21)
+    // ────────────────────────────────────────────────────────────────
+    // Observed on Malta `le-secret-du-caravage` (Valletta, real client) :
+    // Step 1 was St. John's Co-Cathedral with paid entry (~€15) and a
+    // 30m radar radius — players who didn't want to pay couldn't scan
+    // the magic word LUMEN from outside. UX-wise this is a wall : we
+    // ship a walking tour, the player arrives, and the gating monument
+    // requires a ticket they may not want to buy.
+    //
+    // FIX : for stops whose landmark_name matches the paid-entry
+    // pattern set (cathedral, palace, castle, museum, abbey, opera,
+    // monastery, basilique, …), bump validation_radius_meters to 60m
+    // unless it's already wider (narrative 80m, roadtrip 250m). 60m
+    // covers the front square / esplanade of most iconic monuments so
+    // players can scan from outside.
+    //
+    // Players who DO want to enter still get the immersive experience —
+    // the radius is permissive, not restrictive. Paying customers
+    // aren't penalized.
+    //
+    // QUALITATIVE : zero regression. Only ADDS reach.
+    //
+    // INSTRUMENTATION : every bump logs `[paid-entry-bump]` so we can
+    // grep prod logs to confirm the heuristic is firing where expected.
+    const PAID_ENTRY_PATTERNS = [
+      // English
+      /\bcathedral\b/i,
+      /\bpalace\b/i,
+      /\bcastle\b/i,
+      /\bmuseum\b/i,
+      /\babbey\b/i,
+      /\bmonastery\b/i,
+      /\bopera (house|of)\b/i,
+      /\b(royal|imperial|grand) opera\b/i,
+      /\bmausoleum\b/i,
+      /\btomb of\b/i,
+      // French
+      /\bcath[ée]drale\b/i,
+      /\bpalais\b/i,
+      /\bch[âa]teau\b/i,
+      /\bmus[ée]e\b/i,
+      /\babbaye\b/i,
+      /\bmonast[èe]re\b/i,
+      /\bbasilique\b/i,
+      // Italian/Spanish
+      /\bbasilica\b/i,
+      /\bduomo\b/i,
+      /\bpalazzo\b/i,
+      /\balc[áa]zar\b/i,
+      // German
+      /\bschloss\b/i,
+      /\bdom\b/i,
+      /\bkloster\b/i,
+    ];
+    const isPaidEntryLandmark = (name: string): boolean =>
+      PAID_ENTRY_PATTERNS.some((p) => p.test(name));
+
+    const PAID_ENTRY_MIN_RADIUS = 60;
+    for (let i = 0; i < steps.length; i++) {
+      // Skip if already wider (narrative 80, roadtrip 250)
+      if ((steps[i].validation_radius_meters ?? 30) >= PAID_ENTRY_MIN_RADIUS) continue;
+      // Use landmark_name from verifiedLocations (Phase 1) — the actual
+      // POI name resolved by geocoding, NOT Claude's title rewrite.
+      const landmarkName = phase1.verifiedLocations[i]?.name ?? steps[i].title ?? "";
+      if (!isPaidEntryLandmark(landmarkName)) continue;
+      const old = steps[i].validation_radius_meters ?? 30;
+      steps[i].validation_radius_meters = PAID_ENTRY_MIN_RADIUS;
+      console.log(
+        `[Pipeline] [paid-entry-bump] Step ${i + 1} "${landmarkName}" — radius ${old}m → ${PAID_ENTRY_MIN_RADIUS}m (paid-entry pattern detected — allows exterior AR scan)`,
+      );
+    }
+
     return {
       success: true,
       steps,

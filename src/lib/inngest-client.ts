@@ -161,6 +161,28 @@ export const pipelineHeartbeatCheck = eventType(
   },
 );
 
+/**
+ * Player error report submitted via in-game button.
+ *
+ * Sprint 6.1 (2026-05-21) — emitted by /api/report-error after INSERT
+ * into error_reports. Consumed by the Inngest function
+ * `classifyAndRectifyErrorReport` which :
+ *   1. Calls Claude classifier to assign a typed category
+ *   2. Creates a pipeline_incidents row
+ *   3. Routes to auto-rectifier OR admin queue based on confidence,
+ *      quorum, and category disposition (see CATEGORY_AUTORECTIFIABLE).
+ */
+export const errorReportSubmitted = eventType("player/error-report.submitted", {
+  schema: staticSchema<{
+    /** UUID of the error_reports row just inserted. */
+    reportId: string;
+    /** Optional context — Inngest function will fetch the full report row anyway. */
+    gameId?: string;
+    stepId?: string;
+    stepOrder?: number;
+  }>(),
+});
+
 export const inngest = new Inngest({
   id: "escape-game",
 });
