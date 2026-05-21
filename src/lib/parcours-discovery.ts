@@ -1187,6 +1187,110 @@ export async function discoverParcours(
     }
   }
 
+  // ════════════════════════════════════════════════════════════════════
+  // PHASE 3.7 — NARRATIVE OFFSET RESCUE (Sprint 5, 2026-05-21)
+  // ════════════════════════════════════════════════════════════════════
+  // CONTEXT : even after `geocodeLocationRobust` chains 4 progressive
+  // strategies, some legitimate iconic landmarks can still fall to
+  // narrative mode because Google's strict-validation rejects results
+  // it considers "homonym-suspicious" (e.g. when the displayName lacks
+  // the expected city token). This caught us 2026-05-21 on Versailles :
+  // "Palace of Versailles" landed at narrative offset (350m from Place
+  // d'Armes startPoint), even though Google AND Nominatim BOTH know the
+  // exact coords (48.8044, 2.1203).
+  //
+  // The signature of this bug is unmistakable : a stop whose
+  // `distanceFromStartM` matches NARRATIVE_OFFSET_M (350m) ±50m. We use
+  // this signature to detect "suspect narrative picks" and run ONE more
+  // rescue geocode with a much wider tolerance (5× the original radiusM,
+  // bypassing the homonym-suspicious veto).
+  //
+  // POLICY :
+  //   - Only attempt rescue for stops at NARRATIVE_OFFSET_M ±50m (= the
+  //     fallback's signature). Stops at other narrative offsets (e.g.
+  //     archaeological sub-monuments correctly placed via siteId) are
+  //     left alone.
+  //   - Accept the rescue result only if it lands within 1.5× radiusM
+  //     of startPoint (sanity check, avoids accepting a homonym from
+  //     across the planet).
+  //   - On success : convert to "radar" mode, drop the "Walk through..."
+  //     nav hint, validation rayon falls back to 30m via the downstream
+  //     mode→radius mapping.
+  //
+  // QUALITATIVE : zero degradation. We only ADD a rescue path. If
+  // rescue fails, we keep the existing narrative-mode pick (no
+  // regression). The narrative-mode UX is preserved for genuine
+  // archaeological sub-monuments where it's the right behavior.
+  //
+  // INSTRUMENTATION : every rescue logs `[narrativeRescue] OK` or
+  // `[narrativeRescue] SKIP`. Operators can grep these to track the
+  // rate of upstream geocode-validation false negatives.
+  const NARRATIVE_RESCUE_TOLERANCE_M = 50;
+  const NARRATIVE_RESCUE_WIDE_RADIUS_MULT = 5;
+  const NARRATIVE_RESCUE_ACCEPT_RADIUS_MULT = 1.5;
+  for (let i = 0; i < claudePicks.length; i++) {
+    const pick = claudePicks[i];
+    if (pick.stopMode !== "narrative") continue;
+    // Heuristic : is this pick at the exact NARRATIVE_OFFSET signature?
+    // We use the 350m constant from the narrative-fallback block above.
+    const offsetGuess = haversineMeters(
+      { lat: pick.lat, lon: pick.lon },
+      params.startPoint,
+    );
+    // The narrative-fallback above sets distanceFromStartM = 350m exactly.
+    // Match against 350 ±tolerance.
+    if (Math.abs(offsetGuess - 350) > NARRATIVE_RESCUE_TOLERANCE_M) {
+      continue; // not a fallback signature, leave it alone
+    }
+
+    console.log(
+      `[narrativeRescue] Attempting rescue for "${pick.name}" (current GPS ${pick.lat.toFixed(5)},${pick.lon.toFixed(5)} = exact NARRATIVE_OFFSET signature)`,
+    );
+
+    try {
+      const wide = await geocodeLocationRobust(
+        pick.name,
+        params.city,
+        params.country,
+        {
+          referencePoint: params.startPoint,
+          maxDistanceM: radiusM * NARRATIVE_RESCUE_WIDE_RADIUS_MULT,
+        },
+      );
+      if (!wide) {
+        console.log(
+          `[narrativeRescue] SKIP "${pick.name}" — even wide-radius geocode failed`,
+        );
+        continue;
+      }
+      const realDist = haversineMeters(
+        { lat: wide.result.lat, lon: wide.result.lon },
+        params.startPoint,
+      );
+      if (realDist > radiusM * NARRATIVE_RESCUE_ACCEPT_RADIUS_MULT) {
+        console.warn(
+          `[narrativeRescue] SKIP "${pick.name}" — wide geocode returned a result ${Math.round(realDist / 1000)}km from startPoint (> ${(radiusM * NARRATIVE_RESCUE_ACCEPT_RADIUS_MULT) / 1000}km accept threshold), likely a homonym`,
+        );
+        continue;
+      }
+      // Rescue successful : convert to radar mode.
+      const oldGps = `${pick.lat.toFixed(5)},${pick.lon.toFixed(5)}`;
+      pick.lat = wide.result.lat;
+      pick.lon = wide.result.lon;
+      pick.placeId = wide.result.externalId ?? `geocoded:${pick.name}`;
+      pick.distanceFromStartM = realDist;
+      pick.stopMode = "radar";
+      pick.navigationHint = undefined;
+      console.log(
+        `[narrativeRescue] ✅ OK "${pick.name}" — was at ${oldGps} (narrative offset), now ${pick.lat.toFixed(5)},${pick.lon.toFixed(5)} (radar, ${Math.round(realDist)}m from startPoint, strategy ${wide.strategy})`,
+      );
+    } catch (err) {
+      console.warn(
+        `[narrativeRescue] SKIP "${pick.name}" — rescue threw: ${err instanceof Error ? err.message : err}`,
+      );
+    }
+  }
+
   if (claudePicks.length < minStops) {
     return {
       success: false,
