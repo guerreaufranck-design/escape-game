@@ -115,7 +115,6 @@ export async function GET(
 
     // Fetch current step data if game is active
     let currentRiddle: GameState["currentRiddle"] = null;
-    let arHistoricalPhoto: GameState["arHistoricalPhoto"] = null;
     let arFacadeText: GameState["arFacadeText"] = null;
     let arTreasureReward: GameState["arTreasureReward"] = null;
     let arCharacter: GameState["arCharacter"] = null;
@@ -181,12 +180,9 @@ export async function GET(
         approximateTarget = obfuscateCoordinates(step.latitude, step.longitude);
         validationRadius = step.validation_radius_meters;
 
-        if (step.ar_historical_photo_url) {
-          arHistoricalPhoto = {
-            url: step.ar_historical_photo_url,
-            credit: step.ar_historical_photo_credit || null,
-          };
-        }
+        // Photo historique AR — retirée du produit (Wikipedia/archives) :
+        // elle entrait en conflit visuel avec le personnage AR et ajoutait
+        // de la friction. Plus de fetch ni d'overlay côté joueur.
 
         // S9 (2026-05-19) — Tour content : pour mode city_tour on
         // charge step_content avec les 3 champs riches (encyclopedic_text,
@@ -506,7 +502,6 @@ export async function GET(
       startedAt: session.started_at,
       currentRiddle,
       tourContent,
-      arHistoricalPhoto,
       arFacadeText,
       arTreasureReward,
       arCharacter,

@@ -2507,8 +2507,9 @@ async function insertGameIntoDatabase(
       landmark_citation: sourceLocation?.citation ?? null,
       bonus_time_seconds: step.bonus_time_seconds,
       has_photo_challenge: false,
-      ar_historical_photo_url: null,
-      ar_historical_photo_credit: null,
+      // Photo historique AR (Wikipedia/archives) retirée du produit :
+      // friction visuelle vs personnage AR + maintenance d'attribution
+      // crédits. Colonnes droppées dans migration 0036.
       // AR-first flow: every step is virtual_ar regardless of what the
       // model returned. The "physical" mode is fully retired.
       answer_source: "virtual_ar" as const,

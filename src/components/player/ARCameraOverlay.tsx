@@ -65,13 +65,7 @@ interface ARCameraOverlayProps {
   onAutoValidate?: () => void;
   // Legacy props — kept for backwards compatibility with the play page,
   // but these layers were removed from the AR scene to reduce clutter.
-  // The treasure reward is now shown in the post-validation success modal,
-  // and historical Wikipedia photos were dropped because they overlapped
-  // and competed visually with the character sprite.
-  /** @deprecated no longer rendered — kept for prop-shape backwards compat */
-  historicalPhotoUrl?: string | null;
-  /** @deprecated no longer rendered — kept for prop-shape backwards compat */
-  historicalPhotoCredit?: string | null;
+  // The treasure reward is now shown in the post-validation success modal.
   /** @deprecated no longer rendered in AR; shown in success modal instead */
   treasureReward?: string | null;
   /** @deprecated no longer rendered in AR; chest is gone */

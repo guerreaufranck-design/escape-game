@@ -2027,8 +2027,6 @@ export default function PlayPage() {
           distance={distance}
           locale={locale}
           onClose={() => setArOpen(false)}
-          historicalPhotoUrl={gameState.arHistoricalPhoto?.url ?? null}
-          historicalPhotoCredit={gameState.arHistoricalPhoto?.credit ?? null}
           facadeText={gameState.arFacadeText ?? null}
           facadeTextIsAnswer={gameState.currentRiddle?.answerSource === "virtual_ar"}
           treasureReward={gameState.arTreasureReward ?? null}

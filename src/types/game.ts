@@ -46,11 +46,6 @@ export interface GameState {
      */
     answerSource: "physical" | "virtual_ar";
   } | null;
-  /** Historical photo of the current location, shown as an AR overlay */
-  arHistoricalPhoto: {
-    url: string;
-    credit: string | null;
-  } | null;
   /** Optional short phrase "painted" on the facade when locked on in AR */
   arFacadeText: string | null;
   /** Optional custom reward message revealed by tapping the AR chest */

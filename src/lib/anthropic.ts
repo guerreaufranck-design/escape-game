@@ -993,11 +993,6 @@ export interface GeneratedTourStep {
   ar_character_type: string;
   ar_character_dialogue: string;
   /**
-   * Optionnel — photo historique du lieu pour overlay AR. Identique
-   * à l'escape, le mécanisme AR de superposition fonctionne pareil.
-   */
-  ar_historical_photo_url?: string;
-  /**
    * Route attractions inchangées — même UX que l'escape : "sur le
    * chemin, ne manque pas...".
    */
