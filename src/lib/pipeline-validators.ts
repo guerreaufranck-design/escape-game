@@ -172,7 +172,7 @@ export async function validateFinalGame(
   const { data: game, error: gameErr } = await supabase
     .from("games")
     .select(
-      "id, slug, title, mode, transport_mode, final_answer, final_answer_explanation, city",
+      "id, slug, title, mode, transport_mode, radius_km, final_answer, final_answer_explanation, city",
     )
     .eq("id", gameId)
     .single();
@@ -406,13 +406,30 @@ export async function validateFinalGame(
   }
 
   // ─────────────────────────────────────────────────────────────────
-  // 4.4 — GPS cluster sanity : aucun stop ne doit être à > 15 km de
+  // 4.4 — GPS cluster sanity : aucun stop ne doit être à > THRESHOLD de
   // la médiane (signal d'un stop teleporté ailleurs sur la carte par
-  // hallucination Gemini). 15 km est généreux pour absorber les jeux
-  // mixed-mode (Aegina = 35 km de diamètre légitime, mais les stops
-  // forment des clusters denses, pas des outliers solitaires).
+  // hallucination Gemini).
+  //
+  // THRESHOLD (2026-05-21) : scalé par transport_mode + radius_km.
+  //   - walking         : 15 km (le 1.5 km radius nominal, +marge ×10
+  //                       pour absorber widening 2.5× + mixed-mode Aegina-
+  //                       style 35 km de diamètre légitime).
+  //   - mixed / driving : max(15 km, radius_km × 1000) — un roadtrip
+  //                       60 km est CONÇU pour avoir des stops espacés
+  //                       jusqu'à 60 km du startPoint (Loire châteaux :
+  //                       Chenonceau légitimement à 34 km de Blois).
+  //                       Hardcoder 15 km flag-erait toujours en faux
+  //                       positif.
+  //
+  // Si transport_mode = walking : comportement legacy 15 km.
   // ─────────────────────────────────────────────────────────────────
   if (steps.length >= 3) {
+    const isRoadtrip =
+      game.transport_mode === "mixed" || game.transport_mode === "driving";
+    const radiusKm = (game.radius_km as number | null | undefined) ?? 0;
+    const clusterThresholdM = isRoadtrip
+      ? Math.max(15_000, radiusKm * 1000)
+      : 15_000;
     const lats = steps.map((s) => s.latitude).sort((a, b) => a - b);
     const lons = steps.map((s) => s.longitude).sort((a, b) => a - b);
     const medianLat = lats[Math.floor(lats.length / 2)];
@@ -426,16 +443,16 @@ export async function validateFinalGame(
           { lat: medianLat, lon: medianLon },
         ),
       }))
-      .filter((o) => o.distance > 15_000);
+      .filter((o) => o.distance > clusterThresholdM);
     if (outliers.length > 0) {
       issues.push({
         code: "gps_out_of_cluster",
         message:
-          `${outliers.length} stop(s) more than 15 km from the median GPS — probable hallucination teleporting them out of the game zone : ` +
+          `${outliers.length} stop(s) more than ${Math.round(clusterThresholdM / 1000)} km from the median GPS — probable hallucination teleporting them out of the game zone : ` +
           outliers
             .map((o) => `Step ${o.step} "${o.name}" = ${Math.round(o.distance / 1000)} km`)
             .join(" ; "),
-        details: { medianLat, medianLon, outliers },
+        details: { medianLat, medianLon, outliers, thresholdM: clusterThresholdM, transportMode: game.transport_mode, radiusKm },
       });
     }
   }

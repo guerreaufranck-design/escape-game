@@ -1049,7 +1049,24 @@ export async function runPipelinePhase1Discovery(
     //
     // Non-bloquant : le jeu publie quand même (mieux qu'un rejet hard),
     // mais needs_review=true invite l'opérateur à inspecter.
-    const CENTROID_DRIFT_M = 5_000;
+    //
+    // THRESHOLD (2026-05-21) : scalé par transportMode + radiusKm.
+    //   - walking         : 5 km (le sens original — détecte un Brest
+    //                       SEO drift de >5 km).
+    //   - mixed / driving : max(5 km, radiusKm × 0.5) — un roadtrip
+    //                       60 km est CONÇU pour que le startPoint
+    //                       (Blois) soit à un coin de la play zone et
+    //                       que le centroïde tombe plus loin (Loire
+    //                       châteaux : centroïde à 25 km de Blois car
+    //                       les châteaux sont à 0-35 km).
+    //                       Hardcoder 5 km flag-erait toujours en faux
+    //                       positif sur roadtrip.
+    const isRoadtripPhase1 =
+      template.transportMode === "mixed" || template.transportMode === "driving";
+    const radiusKmPhase1 = template.radiusKm ?? 0;
+    const CENTROID_DRIFT_M = isRoadtripPhase1
+      ? Math.max(5_000, Math.round(radiusKmPhase1 * 500))
+      : 5_000;
     let needsReview = false;
     let reviewReason: string | undefined;
     {
@@ -1062,11 +1079,11 @@ export async function runPipelinePhase1Discovery(
       );
       if (drift > CENTROID_DRIFT_M) {
         needsReview = true;
-        reviewReason = `Cluster centroid is ${Math.round(drift / 100) / 10} km from body.startPoint (threshold ${CENTROID_DRIFT_M / 1000} km) — likely the body.startPoint targets a SEO label rather than the actual play zone. Inspect via dump-game before releasing the activation code.`;
+        reviewReason = `Cluster centroid is ${Math.round(drift / 100) / 10} km from body.startPoint (threshold ${CENTROID_DRIFT_M / 1000} km for transportMode=${template.transportMode ?? "walking"}, radiusKm=${radiusKmPhase1}) — likely the body.startPoint targets a SEO label rather than the actual play zone. Inspect via dump-game before releasing the activation code.`;
         console.warn(`[Pipeline] ⚠ needs_review=true — ${reviewReason}`);
       } else {
         console.log(
-          `[Pipeline] Cluster sanity-check OK — centroid drift ${Math.round(drift)}m < ${CENTROID_DRIFT_M}m`,
+          `[Pipeline] Cluster sanity-check OK — centroid drift ${Math.round(drift)}m < ${CENTROID_DRIFT_M}m (threshold for transportMode=${template.transportMode ?? "walking"}, radiusKm=${radiusKmPhase1})`,
         );
       }
     }
