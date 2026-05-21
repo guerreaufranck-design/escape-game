@@ -13,6 +13,7 @@ import {
   Trophy,
   AlertTriangle,
   Sparkles,
+  Activity,
   LogOut,
   Menu,
   X,
@@ -26,6 +27,10 @@ const navItems = [
   { href: "/admin/sessions", label: "Sessions", icon: Users },
   { href: "/leaderboard", label: "Classement", icon: Trophy },
   { href: "/admin/reports", label: "Signalements", icon: AlertTriangle },
+  // (2026-05-21, Sprint 4.3) Pipeline self-managing observability.
+  // SLO success rate, per-phase quality scores, auto-tuned thresholds,
+  // recent quality-gate failures. Updated on every pipeline run.
+  { href: "/admin/observability", label: "Pipeline SLO", icon: Activity },
 ];
 
 export function AdminSidebar() {
