@@ -408,6 +408,22 @@ export interface DiscoverParcoursParams {
    * pour l'upsell GYG cross-sell post-jeu (chantier 3).
    */
   accessibility?: "free" | "any";
+  /**
+   * (2026-05-21) Permet d'injecter le contexte Perplexity Deep Research
+   * obtenu DEHORS (typiquement précalculé dans un step Inngest dédié
+   * phase1a-deep-research). Quand présent, `discoverParcours` NE
+   * RELANCE PAS `deepResearchTheme` en interne — il utilise l'objet
+   * fourni tel quel.
+   *
+   * Motivation : Perplexity sonar-deep-research prend 2-5 min sur
+   * roadtrips à grand rayon. Combiné avec Google + scoring Claude
+   * dans le même `step.run()`, ça pétait le timeout HTTP Inngest Cloud
+   * → Vercel SDK (~2m43s). On le sort donc en sub-step amont.
+   *
+   * Si absent : comportement historique (deepResearchTheme inline,
+   * en parallèle des nearbysearches Google).
+   */
+  injectedVerifiedContext?: VerifiedThemeContext;
 }
 
 export interface DiscoverParcoursResult {
@@ -815,15 +831,26 @@ export async function discoverParcours(
     }
   }
 
+  // (2026-05-21) Si l'appelant nous a injecté un VerifiedThemeContext
+  // (typiquement précalculé en sub-step Inngest dédié phase1a-deep-
+  // research), on saute l'appel Perplexity ici — sinon on le lance en
+  // parallèle des nearbysearches comme avant. Le but est de pouvoir
+  // sortir Perplexity Deep Research (2-5 min) d'un step.run() Inngest
+  // qui dépasserait sinon le timeout HTTP ~2m43s sur les roadtrips.
+  const deepResearchPromise: Promise<VerifiedThemeContext> = params
+    .injectedVerifiedContext
+    ? Promise.resolve(params.injectedVerifiedContext)
+    : deepResearchTheme({
+        city: params.city,
+        country: params.country,
+        theme: params.theme,
+        themeDescription: params.themeDescription,
+        narrative: params.narrative,
+      });
+
   const allDiscoveryResults = await Promise.allSettled([
     Promise.allSettled(discoveryCalls),
-    deepResearchTheme({
-      city: params.city,
-      country: params.country,
-      theme: params.theme,
-      themeDescription: params.themeDescription,
-      narrative: params.narrative,
-    }),
+    deepResearchPromise,
   ]);
 
   // Aggregate + dedup les nearbysearches (multi-centres)

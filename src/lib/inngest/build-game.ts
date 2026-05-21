@@ -31,6 +31,7 @@
  */
 import { inngest, gameBuildRequested } from "@/lib/inngest-client";
 import {
+  runPipelinePhase1aDeepResearch,
   runPipelinePhase1Discovery,
   runPipelinePhase2aNarrationGen,
   runPipelinePhase2bGameWide,
@@ -40,6 +41,7 @@ import {
   type Phase2aResult,
   type Phase2bResult,
 } from "@/lib/game-pipeline";
+import { type VerifiedThemeContext } from "@/lib/perplexity";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -91,7 +93,7 @@ export const buildGameDurable = inngest.createFunction(
     };
 
     // ════════════════════════════════════════════════════════════════
-    // 4-STEP SPLIT (2026-05-20) — passer le timeout HTTP Inngest Cloud
+    // 5-STEP SPLIT (2026-05-21) — passer le timeout HTTP Inngest Cloud
     // ════════════════════════════════════════════════════════════════
     // V1 (avant) : un seul step.run("build-from-template") avec budget
     // Vercel 800s. Les roadtrips radius 30-60km timeoutaient à 800030ms.
@@ -99,15 +101,25 @@ export const buildGameDurable = inngest.createFunction(
     // V2 : split Phase 1 (discovery) + Phase 2 (narrative + insert) en
     // 2 steps. Mais Phase 2 dure encore 2-3 min cumulés, ce qui dépasse
     // le timeout HTTP Inngest Cloud → Vercel SDK endpoint (~2m43s).
-    // Erreur observée en prod : "Your server reset the connection while
-    // we were reading the reply: Unexpected ending response."
     //
-    // V3 (ce code) : split Phase 2 en 3 sub-phases :
+    // V3 (2026-05-20) : split Phase 2 en 3 sub-phases :
     //   - 2a : narration Claude (adapt + generateSteps + Roman fix + QA)
     //   - 2b : blocs game-wide (epilogue + intro + final riddle)
     //   - 2c : insert DB + photos historiques + telemetry
+    // Mais Phase 1 (discovery) reste monolithique. Sur roadtrip (radius
+    // 30-60km), Perplexity sonar-deep-research prend 2-5 min, combiné
+    // au scoring Claude de 150 candidats + multi-center nearbysearch
+    // → Phase 1 dépasse encore le timeout HTTP ~2m43s. Observé en prod
+    // 2026-05-21 sur `le-codex-oublie-des-reines` : 2 attempts timeout.
+    //
+    // V4 (ce code) : split Phase 1 en 2 sub-phases ALSO :
+    //   - 1a : Perplexity sonar-deep-research ISOLÉ (the long pole)
+    //   - 1b : Google Places + Gemini pool + Claude scoring + selection
+    //         (reçoit le verifiedContext de 1a en input — pas de dégrad.
+    //         qualité, même résultat exact qu'avant le split).
+    //
     // Chaque step a son propre budget 800s ET son propre HTTP roundtrip,
-    // soit 4×800s cumulés effectifs. Inngest persiste les payloads
+    // soit 5×800s cumulés effectifs. Inngest persiste les payloads
     // sérialisés entre les étapes (idempotent en cas de retry).
     //
     // Inngest sérialise/désérialise le payload entre step.run() — son type
@@ -116,14 +128,19 @@ export const buildGameDurable = inngest.createFunction(
     // refuse l'assignation directe vers les types canoniques. On cast
     // chaque payload : Inngest garantit l'isomorphisme JSON round-trip
     // pour les types simples qu'on emploie ici.
-    const phase1Raw = await step.run("phase1-discovery", async () => {
-      return await runPipelinePhase1Discovery(template);
+    const verifiedCtxRaw = await step.run("phase1a-deep-research", async () => {
+      return await runPipelinePhase1aDeepResearch(template);
+    });
+    const verifiedContext = verifiedCtxRaw as VerifiedThemeContext;
+
+    const phase1Raw = await step.run("phase1b-discovery", async () => {
+      return await runPipelinePhase1Discovery(template, verifiedContext);
     });
     const phase1 = phase1Raw as Phase1Result;
 
     if (!phase1.success) {
       throw new Error(
-        `Pipeline Phase 1 (discovery) failed: ${phase1.error ?? "(no message)"}`,
+        `Pipeline Phase 1b (discovery) failed: ${phase1.error ?? "(no message)"}`,
       );
     }
 

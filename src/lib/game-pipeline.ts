@@ -84,7 +84,10 @@ import {
   discoverParcours,
   type DiscoveredStop,
 } from "./parcours-discovery";
-import { type VerifiedThemeContext } from "./perplexity";
+import {
+  deepResearchTheme,
+  type VerifiedThemeContext,
+} from "./perplexity";
 // prepareGamePackage + validateFinalGame + attemptAutoRepair moved to
 // Lambda 2 (pipeline-finalize.ts + /api/internal/finalize-game route)
 // for proper Vercel maxDuration handling. Cf. CHAINED PIPELINE block below.
@@ -666,8 +669,62 @@ export interface Phase2bResult {
  * à `runPipelinePhase2NarrativeAndInsert`. Erreurs taggées avec
  * `PipelineErrorCode` pour cohérence avec `PipelineResult`.
  */
+/**
+ * Phase 1a (2026-05-21) — Perplexity Deep Research ISOLÉ.
+ *
+ * Pourquoi ce sub-step distinct :
+ *   `deepResearchTheme()` utilise le modèle `sonar-deep-research` qui produit
+ *   un rapport sourcé long (50k chars typique). Wall time observé : 2-5 min
+ *   sur thèmes complexes (roadtrip Loire châteaux = 30 km + multi-figures
+ *   historiques, par ex.). Combiné avec Google nearbysearch + Claude scoring
+ *   dans le même `step.run()` Inngest, on dépassait le timeout HTTP entre
+ *   Inngest Cloud et le SDK Vercel (~2m43s observé en prod 2026-05-21 sur
+ *   `le-codex-oublie-des-reines`).
+ *
+ *   En sortant Perplexity DR dans un step.run() dédié, on lui donne sa propre
+ *   fenêtre de timeout. Le résultat (`VerifiedThemeContext`, ~3-10 KB) est
+ *   JSON-sérialisable et injecté dans `runPipelinePhase1Discovery` via
+ *   `injectedVerifiedContext`, qui skip alors l'appel Perplexity interne.
+ *
+ *   ⚠️ QUALITÉ : aucune dégradation. Même modèle (sonar-deep-research), même
+ *   prompt, même extraction Claude vers JSON structuré. La seule différence
+ *   est l'isolation Inngest.
+ *
+ * Retourne `VerifiedThemeContext` (jamais throw — fallback `EMPTY_CONTEXT`
+ * si Perplexity API HS).
+ */
+export async function runPipelinePhase1aDeepResearch(
+  template: GameTemplate,
+): Promise<VerifiedThemeContext> {
+  const t0 = Date.now();
+  console.log(
+    `[Pipeline 1a] Deep Research START for theme="${template.theme}" in ${template.city}`,
+  );
+  const ctx = await deepResearchTheme({
+    city: template.city,
+    country: template.country,
+    theme: template.theme,
+    themeDescription: template.themeDescription,
+    narrative: template.narrative,
+  });
+  const ms = Date.now() - t0;
+  console.log(
+    `[Pipeline 1a] Deep Research DONE in ${Math.round(ms / 1000)}s — ${ctx.iconicSites.length} iconic sites, ${ctx.realFigures.length} figures, ${ctx.events.length} events`,
+  );
+  return ctx;
+}
+
 export async function runPipelinePhase1Discovery(
   template: GameTemplate,
+  /**
+   * (2026-05-21) Si fourni, on saute l'appel Perplexity Deep Research interne
+   * (déjà fait par `runPipelinePhase1aDeepResearch` dans le step Inngest
+   * amont). On l'injecte dans `discoverParcours` via `injectedVerifiedContext`.
+   *
+   * Si absent : comportement legacy, `discoverParcours` lance Perplexity DR
+   * en parallèle des nearbysearches Google.
+   */
+  injectedVerifiedContext?: VerifiedThemeContext,
 ): Promise<Phase1Result> {
   const phase1Start = Date.now();
 
@@ -905,9 +962,13 @@ export async function runPipelinePhase1Discovery(
       transportMode: template.transportMode,
       radiusKm: template.radiusKm,
       roadtripSeedSites: template.roadtripSeedSites,
+      // (2026-05-21) Inject le contexte Perplexity DR pré-calculé pour
+      // sauter l'appel interne. Pas de dégradation qualité — c'est le
+      // résultat du même appel, juste exécuté dans un step Inngest amont.
+      injectedVerifiedContext,
     };
     console.log(
-      `[Pipeline] Discovery attempt: ${wideningAttempts[0].label} (multiplier ${wideningAttempts[0].multiplier}x)`,
+      `[Pipeline] Discovery attempt: ${wideningAttempts[0].label} (multiplier ${wideningAttempts[0].multiplier}x)${injectedVerifiedContext ? " [verifiedContext pré-injecté]" : ""}`,
     );
     let discovery = await discoverParcours({
       ...discoveryParamsBase,
