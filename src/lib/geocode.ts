@@ -1181,3 +1181,114 @@ export async function geocodeLocationRobust(
   );
   return null;
 }
+
+// ════════════════════════════════════════════════════════════════════
+// Cross-geocoder validation (Sprint 2.1, 2026-05-21)
+// ════════════════════════════════════════════════════════════════════
+/**
+ * `crossValidateGeocode` — re-geocode a landmark with a SECONDARY
+ * provider (Nominatim / OpenStreetMap) and compare the result with the
+ * primary (Google) coords. Returns a divergence breakdown that quality
+ * scoring (Sprint 2.2) consumes.
+ *
+ * MOTIVATION : Google can return a high-confidence-looking result that
+ * is actually wrong (e.g. homonym in another city slipped through a
+ * weak bias). A single-provider geocode has no way to detect this.
+ * Comparing against an independent secondary provider catches the
+ * divergence : if Google and Nominatim agree within 100m, we're 99%
+ * confident in the coord. If they diverge > 500m, something fishy is
+ * going on — flag for review.
+ *
+ * COST : 0. Nominatim is free (OSM-hosted). We pace at 1 req/s globally
+ * to honor their usage policy (already enforced via `paceNominatim`).
+ *
+ * INTEGRATION : called by the quality scorer in pipeline-validators
+ * after game_steps are inserted, OR by the pipeline post-discovery
+ * before insertion if we want a hard gate.
+ *
+ * RETURNS :
+ *   - null  : Nominatim has no match → can't validate, no info either way.
+ *   - { distanceM, confidence, ... } : we got a Nominatim hit. Caller
+ *     decides what threshold = "divergent" (we suggest > 500m).
+ */
+export interface CrossValidationResult {
+  /** Distance in meters between primary (Google) and secondary
+   *  (Nominatim) geocodes. 0 = perfect agreement. */
+  distanceM: number;
+  /** Coordinates Nominatim returned (for logs/debug). */
+  secondaryLat: number;
+  secondaryLon: number;
+  /** Nominatim's `display_name` — useful to detect homonym slipping
+   *  through Google (e.g. Google → "Notre-Dame de Paris", Nominatim →
+   *  "Notre-Dame du Havre" = obvious different cities). */
+  secondaryDisplayName: string;
+  /** Nominatim's confidence (`high` for buildings/amenities). */
+  secondaryConfidence: "high" | "medium" | "low";
+  /** Heuristic categorical assessment of the divergence :
+   *  - "agree"     : distance ≤ 100m (high confidence)
+   *  - "close"     : 100m < distance ≤ 500m (acceptable, log info)
+   *  - "diverge"   : 500m < distance ≤ 2km (warn, flag for review)
+   *  - "conflict"  : distance > 2km (severe, possible homonym, recommend block)
+   */
+  verdict: "agree" | "close" | "diverge" | "conflict";
+}
+
+export async function crossValidateGeocode(
+  landmarkName: string,
+  primaryLat: number,
+  primaryLon: number,
+  city: string,
+  country: string,
+  refPoint?: { lat: number; lon: number },
+): Promise<CrossValidationResult | null> {
+  try {
+    const nominatimResult = await viaNominatim(
+      landmarkName,
+      city,
+      country,
+      refPoint,
+    );
+    if (!nominatimResult) {
+      // Nominatim didn't find it. No info either way — caller should
+      // not treat this as a problem; many landmarks are Google-only
+      // (newly opened museums, private estates).
+      console.log(
+        `[crossValidate] Nominatim has no match for "${landmarkName}" — skipping cross-check (this is OK)`,
+      );
+      return null;
+    }
+    const distanceM = haversineMeters(
+      { lat: primaryLat, lon: primaryLon },
+      { lat: nominatimResult.lat, lon: nominatimResult.lon },
+    );
+    let verdict: CrossValidationResult["verdict"];
+    if (distanceM <= 100) verdict = "agree";
+    else if (distanceM <= 500) verdict = "close";
+    else if (distanceM <= 2_000) verdict = "diverge";
+    else verdict = "conflict";
+
+    if (verdict === "diverge" || verdict === "conflict") {
+      console.warn(
+        `[crossValidate] ⚠ ${verdict.toUpperCase()} for "${landmarkName}" : Google=(${primaryLat.toFixed(5)},${primaryLon.toFixed(5)}) vs Nominatim=(${nominatimResult.lat.toFixed(5)},${nominatimResult.lon.toFixed(5)}) — distance ${Math.round(distanceM)}m. Nominatim says "${nominatimResult.displayName}"`,
+      );
+    } else {
+      console.log(
+        `[crossValidate] ${verdict} for "${landmarkName}" — distance ${Math.round(distanceM)}m`,
+      );
+    }
+    return {
+      distanceM,
+      secondaryLat: nominatimResult.lat,
+      secondaryLon: nominatimResult.lon,
+      secondaryDisplayName: nominatimResult.displayName,
+      secondaryConfidence: nominatimResult.confidence,
+      verdict,
+    };
+  } catch (err) {
+    console.warn(
+      `[crossValidate] Nominatim threw for "${landmarkName}":`,
+      err instanceof Error ? err.message : err,
+    );
+    return null;
+  }
+}

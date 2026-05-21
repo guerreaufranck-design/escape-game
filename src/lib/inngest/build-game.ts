@@ -42,6 +42,14 @@ import {
   type Phase2bResult,
 } from "@/lib/game-pipeline";
 import { type VerifiedThemeContext } from "@/lib/perplexity";
+import {
+  scorePhase1a,
+  scorePhase1b,
+  scorePhase2a,
+  scorePhase2b,
+  assertPhasePassesOrThrow,
+} from "@/lib/pipeline-quality-scorer";
+import { recordPhaseQuality } from "@/lib/pipeline-telemetry-writer";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -133,6 +141,24 @@ export const buildGameDurable = inngest.createFunction(
     });
     const verifiedContext = verifiedCtxRaw as VerifiedThemeContext;
 
+    // ── Quality gate post-1a (Sprint 2.2) ────────────────────────────
+    // Phase 1a is non-critical — pipeline still produces a usable game
+    // with empty Perplexity context, just degraded historical anchors.
+    // We log + don't throw. Telemetry persists the score for Sprint 4.
+    const qa1a = scorePhase1a(verifiedContext);
+    logger.info(`[quality] phase1a ${qa1a.summary}`);
+    void recordPhaseQuality({
+      gameId: null,
+      phase: "phase1a",
+      quality: qa1a,
+      provider: "perplexity",
+      metadata: {
+        slug: data.slug,
+        transport_mode: data.transportMode ?? "walking",
+        radius_km: data.radiusKm ?? null,
+      },
+    });
+
     const phase1Raw = await step.run("phase1b-discovery", async () => {
       return await runPipelinePhase1Discovery(template, verifiedContext);
     });
@@ -143,6 +169,25 @@ export const buildGameDurable = inngest.createFunction(
         `Pipeline Phase 1b (discovery) failed: ${phase1.error ?? "(no message)"}`,
       );
     }
+
+    // ── Quality gate post-1b (Sprint 2.2) ────────────────────────────
+    // Phase 1b is CRITICAL — below floor = we'd ship a broken game.
+    // Hard throw → Inngest retry logic kicks in.
+    const qa1b = scorePhase1b(phase1);
+    logger.info(`[quality] phase1b ${qa1b.summary}`);
+    void recordPhaseQuality({
+      gameId: null,
+      phase: "phase1b",
+      quality: qa1b,
+      provider: "google_places",
+      metadata: {
+        slug: data.slug,
+        transport_mode: data.transportMode ?? "walking",
+        radius_km: data.radiusKm ?? null,
+        stop_count: phase1.discoveryLandmarks.length,
+      },
+    });
+    assertPhasePassesOrThrow("phase1b", qa1b);
 
     const phase2aRaw = await step.run("phase2a-narration", async () => {
       return await runPipelinePhase2aNarrationGen(template, phase1);
@@ -155,10 +200,45 @@ export const buildGameDurable = inngest.createFunction(
       );
     }
 
+    // ── Quality gate post-2a (Sprint 2.2) ────────────────────────────
+    // Phase 2a CRITICAL : missing riddles/answers = unplayable.
+    const qa2a = scorePhase2a(phase2a.verifiedLocationsAfterAdapt ?? []);
+    logger.info(`[quality] phase2a ${qa2a.summary}`);
+    void recordPhaseQuality({
+      gameId: null,
+      phase: "phase2a",
+      quality: qa2a,
+      provider: "claude",
+      metadata: { slug: data.slug },
+    });
+    assertPhasePassesOrThrow("phase2a", qa2a);
+
     const phase2bRaw = await step.run("phase2b-game-wide", async () => {
       return await runPipelinePhase2bGameWide(template, phase1, phase2a);
     });
     const phase2b = phase2bRaw as Phase2bResult;
+
+    // ── Quality gate post-2b (Sprint 2.2) ────────────────────────────
+    // Phase 2b degrades gracefully (intro/epilogue can be empty), so
+    // score-but-don't-throw. Below floor → flag needs_review.
+    const qa2b = scorePhase2b({
+      introSpeech: phase2b.introSpeech,
+      epilogue: phase2b.epilogue,
+      finalRiddle: phase2b.finalRiddle,
+    });
+    logger.info(`[quality] phase2b ${qa2b.summary}`);
+    void recordPhaseQuality({
+      gameId: null,
+      phase: "phase2b",
+      quality: qa2b,
+      provider: "claude",
+      metadata: { slug: data.slug },
+    });
+    if (!qa2b.passes) {
+      logger.warn(
+        `[quality] phase2b BELOW FLOOR — game will publish but flagged for review (intro/epilogue/final_riddle gaps).`,
+      );
+    }
 
     const result = (await step.run("phase2c-insert", async () => {
       const pipelineResult = await runPipelinePhase2cInsert(
