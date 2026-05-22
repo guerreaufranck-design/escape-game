@@ -65,6 +65,7 @@ import {
   type CoherenceFlag,
 } from "@/lib/pipeline-coherence";
 import { autoRepairThematicStops } from "@/lib/pipeline-auto-repair-stops";
+import { judgeArmchairResolvability } from "@/lib/pipeline-armchair-judge";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -618,10 +619,61 @@ export const buildGameDurable = inngest.createFunction(
           }
         : null;
 
+      // ════════════════════════════════════════════════════════════
+      // SPRINT B (2026-05-22) — ANTI-ARMCHAIR JUDGE
+      // ════════════════════════════════════════════════════════════
+      // Closes the #1 Questo critique : "players solved the entire
+      // quest in 40 minutes from home using Google Maps + Wikipedia".
+      // For an OUTDOOR escape-game, that's the death of the premise.
+      //
+      // Claude Haiku plays a CHEATER trying to solve each riddle
+      // from a couch using Google Search / Street View / Wikipedia.
+      // Riddles scored 0-10 on site_presence_score (higher = harder
+      // to cheat). Fail verdict → needs_review flag forces operator
+      // to rewrite armchair-solvable riddles to require observation.
+      //
+      // Fail-open : if the judge errors, no flag added (existing
+      // safety nets still apply). We never block publish on judge
+      // infra failure.
+      let armchairFlag: CoherenceFlag | null = null;
+      try {
+        const armchairJudge = await judgeArmchairResolvability({
+          theme: template.theme,
+          city: template.city,
+          riddles: phase2a.steps.map((s, i) => ({
+            step_order: i + 1,
+            landmark_name: s.title,
+            riddle_text: s.riddle_text,
+            answer: s.answer_text,
+            answer_source: s.answer_source,
+          })),
+        });
+        logger.info(
+          `[armchairJudge] ${armchairJudge.summary} (avg=${armchairJudge.average_score}, min=${armchairJudge.min_score}, verdict=${armchairJudge.verdict})`,
+        );
+        if (armchairJudge.verdict !== "pass") {
+          armchairFlag = {
+            code: `armchair_${armchairJudge.verdict}`,
+            severity: "fail",
+            message: armchairJudge.needs_review_reason,
+            details: {
+              avg_site_presence: armchairJudge.average_score,
+              min_site_presence: armchairJudge.min_score,
+              riddles: armchairJudge.riddles,
+            },
+          };
+        }
+      } catch (err) {
+        logger.warn(
+          `[armchairJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no armchair flag.`,
+        );
+      }
+
       return aggregateCoherenceFlags([
         radiusFlag,
         perplexityFlag,
         thematicFlagFromAutoRepair,
+        armchairFlag,
       ]);
     });
     const coherence = coherenceRaw as ReturnType<typeof aggregateCoherenceFlags>;
