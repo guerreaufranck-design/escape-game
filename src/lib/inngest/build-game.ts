@@ -50,6 +50,12 @@ import {
   assertPhasePassesOrThrow,
 } from "@/lib/pipeline-quality-scorer";
 import { recordPhaseQuality } from "@/lib/pipeline-telemetry-writer";
+import { judgeThematicRelevance } from "@/lib/pipeline-thematic-judge";
+import {
+  checkRadiusDurationCoherence,
+  escalateOnPhase1aEmpty,
+  aggregateCoherenceFlags,
+} from "@/lib/pipeline-coherence";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -240,12 +246,102 @@ export const buildGameDurable = inngest.createFunction(
       );
     }
 
+    // ════════════════════════════════════════════════════════════════
+    // SPRINT 6.2bis (2026-05-22) — POST-INCIDENT SAFETY GATES
+    // ════════════════════════════════════════════════════════════════
+    // Run defensive checks BEFORE Phase 2c INSERT so that any
+    // needs_review flag is written atomically with the game. Without
+    // this, there's a tiny race window where is_published=true could
+    // be observed before the flag lands → OddballTrip could fetch and
+    // generate a code prematurely.
+    //
+    // Checks executed :
+    //   B. radius_km vs estimated_duration_min coherence
+    //   E. Phase 1a Perplexity-empty hard escalation
+    //   A. Thematic-fit judge (Claude Haiku) — most expensive but
+    //      most important. The Aigues-Mortes 22/05 incident would
+    //      have been caught at THIS gate.
+    //
+    // Each check produces a CoherenceFlag (or null). The aggregator
+    // composes a single { needs_review, review_reason } object passed
+    // to Phase 2c insert. Multiple flags → reasons concatenated.
+    const coherenceRaw = await step.run("phase2b5-coherence-gates", async () => {
+      const radiusFlag = checkRadiusDurationCoherence({
+        transport_mode:
+          template.transportMode === "driving" ||
+          template.transportMode === "mixed" ||
+          template.transportMode === "walking"
+            ? template.transportMode
+            : "walking",
+        radius_km: template.radiusKm ?? null,
+        estimated_duration_min: template.estimatedDurationMin ?? null,
+      });
+      const perplexityEscalation = escalateOnPhase1aEmpty(qa1a.score);
+      const perplexityFlag = perplexityEscalation.trigger
+        ? {
+            code: "perplexity_dr_empty",
+            severity: "fail" as const,
+            message: perplexityEscalation.reason,
+            details: { phase1a_quality: qa1a.score },
+          }
+        : null;
+
+      // Thematic-fit judge — call Claude Haiku as a strict judge.
+      let thematicFlag = null;
+      try {
+        const judge = await judgeThematicRelevance({
+          theme: template.theme,
+          themeDescription: template.themeDescription,
+          narrative: template.narrative,
+          city: template.city,
+          stops: phase1.discoveryLandmarks.map((l, i) => ({
+            step_order: i + 1,
+            name: l.name,
+            description:
+              (l as { description?: string }).description ?? "",
+          })),
+        });
+        logger.info(
+          `[thematicJudge] ${judge.summary} (avg=${judge.average_score}, min=${judge.min_score}, verdict=${judge.verdict})`,
+        );
+        if (judge.verdict !== "pass") {
+          thematicFlag = {
+            code: `thematic_${judge.verdict}`,
+            severity: "fail" as const,
+            message: judge.needs_review_reason,
+            details: {
+              avg_score: judge.average_score,
+              min_score: judge.min_score,
+              stops: judge.stops,
+            },
+          };
+        }
+      } catch (err) {
+        logger.warn(
+          `[thematicJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no thematic flag added. Existing safety nets still apply.`,
+        );
+      }
+
+      return aggregateCoherenceFlags([radiusFlag, perplexityFlag, thematicFlag]);
+    });
+    const coherence = coherenceRaw as ReturnType<typeof aggregateCoherenceFlags>;
+    if (coherence.needs_review) {
+      logger.warn(
+        `[Sprint6.2bis] needs_review=TRUE forced by coherence gates : ${coherence.review_reason.slice(0, 300)}`,
+      );
+    } else {
+      logger.info(`[Sprint6.2bis] all coherence gates passed`);
+    }
+
     const result = (await step.run("phase2c-insert", async () => {
       const pipelineResult = await runPipelinePhase2cInsert(
         template,
         phase1,
         phase2a,
         phase2b,
+        // (Sprint 6.2bis) — propagate forced flag + original payload
+        { needs_review: coherence.needs_review, review_reason: coherence.review_reason },
+        (data as { originalPayload?: Record<string, unknown> }).originalPayload,
       );
       if (!pipelineResult.success || !pipelineResult.gameId) {
         throw new Error(

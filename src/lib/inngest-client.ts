@@ -129,6 +129,17 @@ export const gameBuildRequested = eventType("game/build.requested", {
     callbackSecret?: string;
     /** Accessibility (free vs any). */
     accessibility?: "free" | "any";
+    /**
+     * (Sprint 6.2bis, 2026-05-22) Verbatim POST body received from
+     * OddballTrip at /api/games/generate. Persisted in
+     * `games.original_payload JSONB` at Phase 2c INSERT time so that
+     * post-incident root-cause analysis can reconstruct exactly what
+     * the operator briefed us with.
+     *
+     * Stripped of any Authorization header upstream — only the JSON
+     * body is forwarded.
+     */
+    originalPayload?: Record<string, unknown>;
   }>(),
 });
 

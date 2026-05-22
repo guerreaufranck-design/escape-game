@@ -597,16 +597,36 @@ export async function validateFinalGame(
   const isIconicLandmark = (name: string): boolean =>
     ICONIC_LANDMARK_PATTERNS.some((p) => p.test(name));
 
+  // ──────────────────────────────────────────────────────────────────
+  // (Sprint 6.2bis, 2026-05-22) — iconic check is now THEME-AWARE.
+  //
+  // The 22/05 Aigues-Mortes incident showed that the old whitelist was
+  // too permissive : "Musée Fabre", "Planet Ocean", "Musée Saharien"
+  // all matched the iconic-pattern regex and slipped past sources_thin
+  // — but they had ZERO thematic link to the 1572 Huguenot theme.
+  //
+  // New rule : a landmark is iconic FOR THIS GAME only if BOTH
+  //   (1) its name matches an iconic regex pattern, AND
+  //   (2) its name shares a meaningful keyword with the theme/title.
+  //
+  // For backward compat : if `game.title` is missing/empty, fall back
+  // to the old name-only iconic check.
+  // ──────────────────────────────────────────────────────────────────
+  const { isIconicForTheme } = await import("./pipeline-coherence");
+  const themeText = `${typeof game.title === "string" ? game.title : ""} ${typeof game.city === "string" ? game.city : ""}`;
+  const isIconicForThisGame = (name: string): boolean =>
+    isIconicForTheme(name, themeText, isIconicLandmark);
+
   const sourceless = steps.filter(
     (s) =>
       !s.poi_category ||
       !s.landmark_citation ||
       String(s.landmark_citation).trim().length === 0,
   );
-  // Filter out iconic landmarks — they ARE real even if our pipeline
-  // didn't populate citation (typically the Perplexity sub-monument path).
+  // Filter out iconic-FOR-THIS-THEME landmarks — they ARE real and
+  // thematically aligned even if our pipeline didn't populate citation.
   const trulySourceless = sourceless.filter(
-    (s) => !isIconicLandmark(s.landmark_name ?? ""),
+    (s) => !isIconicForThisGame(s.landmark_name ?? ""),
   );
   const escapedAsIconic = sourceless.length - trulySourceless.length;
   if (escapedAsIconic > 0) {

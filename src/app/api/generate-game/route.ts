@@ -477,6 +477,10 @@ export async function POST(request: NextRequest) {
             accessibility: template.accessibility,
             // S9 (2026-05-18) — propagate mode to durable pipeline
             mode: template.mode,
+            // Sprint 6.2bis (2026-05-22) — persist OddballTrip's verbatim
+            // payload for post-incident debugging. Strip nothing —
+            // RLS already restricts games table to admins.
+            originalPayload: body as Record<string, unknown>,
           },
         });
         console.log(

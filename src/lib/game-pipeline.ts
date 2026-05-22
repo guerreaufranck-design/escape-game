@@ -2045,6 +2045,24 @@ export async function runPipelinePhase2cInsert(
   phase1: Phase1Result,
   phase2a: Phase2aResult,
   phase2b: Phase2bResult,
+  /**
+   * (Sprint 6.2bis, 2026-05-22) — Pre-validated needs_review escalation
+   * computed UPSTREAM by build-game.ts orchestrator. Carries flags from
+   *   - Thematic-fit judge (lib/pipeline-thematic-judge)
+   *   - Phase 1a Perplexity empty hard-flag
+   *   - radius/duration coherence check
+   * When provided, Phase 2c writes them to games.needs_review +
+   * games.review_reason at INSERT time, BEFORE the post-insert
+   * pipeline runs. This guarantees the gate is in place before any
+   * code activation can be released.
+   */
+  forcedReviewFlag?: { needs_review: boolean; review_reason: string },
+  /**
+   * (Sprint 6.2bis, 2026-05-22) — Verbatim POST body from OddballTrip,
+   * persisted in `games.original_payload` for post-incident RCA.
+   * NULL is acceptable for legacy callers / non-Inngest sync path.
+   */
+  originalPayload?: Record<string, unknown>,
 ): Promise<PipelineResult> {
   const startTime = Date.now();
 
@@ -2114,6 +2132,20 @@ export async function runPipelinePhase2cInsert(
       );
     }
 
+    // (Sprint 6.2bis, 2026-05-22) — Merge upstream forced needs_review
+    // (thematic-fit fail, Perplexity-empty escalation, radius/duration
+    // mismatch) with local Phase 1.5 centroid drift flag. The strictest
+    // (any "fail" → needs_review=true) wins. Reasons concatenated for
+    // operator visibility.
+    let mergedNeedsReview = needsReview;
+    let mergedReviewReason: string | undefined = reviewReason;
+    if (forcedReviewFlag?.needs_review) {
+      mergedNeedsReview = true;
+      mergedReviewReason = mergedReviewReason
+        ? `${mergedReviewReason} | ${forcedReviewFlag.review_reason}`
+        : forcedReviewFlag.review_reason;
+    }
+
     const gameId = await insertGameIntoDatabase(
       {
         ...template,
@@ -2126,8 +2158,8 @@ export async function runPipelinePhase2cInsert(
       [],
       epilogue,
       verifiedLocations,
-      needsReview,
-      reviewReason,
+      mergedNeedsReview,
+      mergedReviewReason,
       introSpeech,
       finalRiddle,
       // S9 (2026-05-19) : tour steps (vide en mode city_game). Écrits
@@ -2145,6 +2177,8 @@ export async function runPipelinePhase2cInsert(
         text: phase1.resolvedStartPointText,
         source: phase1.resolvedStartPointSource,
       },
+      // (Sprint 6.2bis) — Verbatim OddballTrip payload for post-incident RCA.
+      originalPayload,
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
 
@@ -2449,8 +2483,13 @@ async function insertGameIntoDatabase(
     source:
       | "startPointText-geocoded"
       | "top-landmark-google-places"
-      | "city-center-fallback";
+      | "city-center-fallback"
+      | "operator-curated";
   },
+  // (Sprint 6.2bis, 2026-05-22) Verbatim OddballTrip POST body, persisted
+  // in `games.original_payload` (migration 038) for post-incident RCA.
+  // NULL acceptable for legacy callers / non-Inngest sync path.
+  originalPayload?: Record<string, unknown>,
 ): Promise<string> {
   const supabase = createAdminClient();
   const gameId = uuidv4();
@@ -2543,6 +2582,10 @@ async function insertGameIntoDatabase(
     start_point_lat: resolvedStartPoint?.lat ?? null,
     start_point_lon: resolvedStartPoint?.lon ?? null,
     start_point_source: resolvedStartPoint?.source ?? null,
+    // (Sprint 6.2bis, migration 038) Verbatim OddballTrip payload —
+    // post-incident RCA. NULL pour les callers legacy (sync path) ou
+    // les jeux pré-déploiement de Sprint 6.2bis.
+    original_payload: originalPayload ?? null,
   });
 
   if (gameError) {
