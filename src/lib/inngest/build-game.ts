@@ -66,6 +66,7 @@ import {
 } from "@/lib/pipeline-coherence";
 import { autoRepairThematicStops } from "@/lib/pipeline-auto-repair-stops";
 import { judgeArmchairResolvability } from "@/lib/pipeline-armchair-judge";
+import { judgeCrossStopCallbacks } from "@/lib/pipeline-callbacks-judge";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -669,11 +670,56 @@ export const buildGameDurable = inngest.createFunction(
         );
       }
 
+      // ════════════════════════════════════════════════════════════
+      // SPRINT C (2026-05-22) — CROSS-STOP CALLBACKS JUDGE
+      // ════════════════════════════════════════════════════════════
+      // Players re-buy stories, not puzzle compilations. RULE G in
+      // generateGameSteps now instructs Claude to weave callbacks
+      // (stop 2..N reference prior stops, final stop ties threads).
+      // This judge VERIFIES Claude complied. Fail = needs_review.
+      //
+      // Closes Questo grievance #4 : "rupture de la cohérence
+      // narrative ; the prétexte de l'enquête s'efface".
+      let callbacksFlag: CoherenceFlag | null = null;
+      try {
+        const callbacksJudge = await judgeCrossStopCallbacks({
+          theme: template.theme,
+          stops: phase2a.steps.map((s, i) => ({
+            step_order: i + 1,
+            landmark_name: s.title,
+            title: s.title,
+            riddle_text: s.riddle_text,
+            anecdote: s.anecdote,
+          })),
+        });
+        logger.info(
+          `[callbacksJudge] ${callbacksJudge.summary} (avg=${callbacksJudge.average_score}, min=${callbacksJudge.min_score}, final=${callbacksJudge.final_stop_score}, verdict=${callbacksJudge.verdict})`,
+        );
+        if (callbacksJudge.verdict !== "pass") {
+          callbacksFlag = {
+            code: `callbacks_${callbacksJudge.verdict}`,
+            severity: "fail",
+            message: callbacksJudge.needs_review_reason,
+            details: {
+              avg_callback_score: callbacksJudge.average_score,
+              min_callback_score: callbacksJudge.min_score,
+              final_stop_score: callbacksJudge.final_stop_score,
+              stops: callbacksJudge.stops,
+            },
+          };
+        }
+      } catch (err) {
+        logger.warn(
+          `[callbacksJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no callbacks flag.`,
+        );
+      }
+
       return aggregateCoherenceFlags([
         radiusFlag,
         perplexityFlag,
         thematicFlagFromAutoRepair,
         armchairFlag,
+        callbacksFlag,
       ]);
     });
     const coherence = coherenceRaw as ReturnType<typeof aggregateCoherenceFlags>;

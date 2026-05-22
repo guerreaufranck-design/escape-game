@@ -424,6 +424,40 @@ F. RIDDLE PROTAGONIST DIVERSITY — the fictional anonymous protagonist
    apprentice scribe", "the gatekeeper's wife". NEVER reuse the same
    archetype twice in the same game. Each stop = different POV.
 
+G. CROSS-STOP CALLBACKS — narrative cohesion is the difference between
+   "this was ONE story" and "this was 7 independent puzzles". Players
+   re-buy the FORMER, not the latter. Rules:
+
+   G.1 Stops 2 through ${stepCount} MUST each contain AT LEAST ONE
+       explicit textual callback to a PRIOR stop. The callback lives
+       in the anecdote OR the riddle_text (NOT only in ar_facade_text).
+       Examples of callbacks :
+         • "The same Cathar sigil you uncovered at the first stop now
+            reappears, carved deeper, above this doorway."
+         • "Remember the date the watchman whispered at Stop 2 ? That
+            year is no coincidence here either."
+         • "The abbess's secretary's daughter — yes, the one who fled
+            on Stop 3 — was last seen on this very square."
+   G.2 Each callback must reference a DIFFERENT prior stop when there
+       are enough prior stops (don't keep referencing Stop 1 forever).
+       Spread the resonance so threads accumulate.
+   G.3 The FINAL stop MUST contain at LEAST TWO callbacks weaving
+       earlier threads into the climactic reveal. This is what makes
+       players feel the build-up paid off.
+   G.4 Callbacks ARE NOT spoilers : refer to what HAPPENED in the
+       earlier riddle/anecdote — never re-reveal the prior ar_facade
+       answer. Keep mystery layered.
+   G.5 Track callbacks in your output by mentioning the prior stop by
+       its title (e.g., "as at the Cathédrale of Stop 1...") OR by a
+       distinctive landmark/figure/object from that prior stop. Vague
+       "earlier in your journey" doesn't count.
+
+   COMPETITOR CONTEXT (motivation) : Questo's #4 grievance is "rupture
+   de la cohérence narrative" — energy spent on puzzles that don't
+   connect. We FIX that by REQUIRING the threads. This is the single
+   biggest player-retention lever (sell-to-same-customer-twice = the
+   only sustainable economics).
+
 GAME PARAMETERS:
 - City: ${city}, ${country}
 - Theme: ${theme}
