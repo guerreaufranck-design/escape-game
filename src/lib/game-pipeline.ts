@@ -1006,6 +1006,11 @@ export async function runPipelinePhase1Discovery(
       theme: template.theme,
       themeDescription: template.themeDescription,
       narrative: template.narrative,
+      // (Sprint I, 2026-05-22) — propagate rich productDescription so
+      // the Claude landmark proposer can ground its proposals on the
+      // customer's promise (specific landmarks named on the product
+      // page get priority lookup).
+      productDescription: template.productDescription,
       startPoint,
       stopCount,
       // accessibility="free" filtre les POIs payants côté Google + Claude.

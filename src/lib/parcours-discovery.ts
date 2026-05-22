@@ -56,6 +56,7 @@ import {
 } from "./parcours-selection";
 import { discoverThematicPois, discoverPatrimonialFill } from "./ai-discovery";
 import { validateThematicPois } from "./poi-validation";
+import { proposeThematicLandmarks } from "./pipeline-landmark-proposer";
 
 /**
  * Diamètre maximum (mètres) de la "boîte" géographique qui englobe le
@@ -477,6 +478,13 @@ export interface DiscoverParcoursParams {
   theme: string;
   themeDescription: string;
   narrative: string;
+  /**
+   * (Sprint I, 2026-05-22) — Rich product page description from
+   * OddballTrip. Passed to the Claude landmark proposer (Sprint I) to
+   * ground its suggestions on the customer's promise. Also propagated
+   * to other downstream prompts via game-pipeline (Sprint 6.2ter).
+   */
+  productDescription?: string;
   startPoint: { lat: number; lon: number };
   stopCount: number;
   /**
@@ -1093,6 +1101,80 @@ export async function discoverParcours(
         `[discoverParcours] Pool enrichment found 0 new iconic sites (all ${verifiedContext.iconicSites.length} either failed geocode or already in pool)`,
       );
     }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // SPRINT I (2026-05-22) — CLAUDE-PROPOSED LANDMARK ENRICHMENT
+  // ════════════════════════════════════════════════════════════════
+  // Béziers V4 (22/05 18:23) showed that even WITH Sprint A's Perplexity
+  // enrichment, the canonical theme sites (Cathédrale Saint-Nazaire,
+  // Église de la Madeleine, Tour Pépézuc) were still missing. Perplexity
+  // DR sometimes lists thematic categories ("medieval church") without
+  // the specific monument names a historian would name.
+  //
+  // This third enrichment source asks Claude Haiku, primed with the
+  // theme + themeDescription + productDescription + city, to propose
+  // 6-8 NAMED physical landmarks tied to the theme. Each proposal is
+  // then geocoded via Google Places findPlaceFromText (anti-halluc
+  // guard : invented names fail the lookup silently).
+  //
+  // Trust : same contract as Sprint A (every result goes through
+  // Google Places API). Tolerance: same as Sprint A (1.3× / 2×
+  // depending on transport mode).
+  //
+  // The user's argument 22/05 : "Cathares Béziers is the niche test —
+  // qui peut le plus peut le moins. If THIS works, 95% of games work."
+  try {
+    const beforeProposer = googleCandidates.length;
+    const existingPlaceIds2 = new Set(googleCandidates.map((c) => c.placeId));
+    const proposals = await proposeThematicLandmarks({
+      city: params.city,
+      country: params.country,
+      theme: params.theme,
+      themeDescription: params.themeDescription,
+      productDescription: params.productDescription,
+      existingPoolNames: googleCandidates.slice(0, 30).map((c) => c.name),
+      maxProposals: 8,
+    });
+    if (proposals.length > 0) {
+      console.log(
+        `[discoverParcours] Sprint I — Claude proposed ${proposals.length} thematic landmarks for lookup: ${proposals.map((p) => p.name).join(" | ")}`,
+      );
+      // Run findPlaceFromText for each proposal via the same Sprint A
+      // helper (treat proposals as if they were iconicSites). Reuse the
+      // existing enrichPoolWithPerplexityIconicSites function.
+      const enrichmentTolerance = radiusM * (isRoadtrip ? 2 : 1.3);
+      const proposalEnriched = await enrichPoolWithPerplexityIconicSites(
+        proposals.map((p) => ({
+          name: p.name,
+          significance: p.rationale,
+          sources: ["claude-haiku-proposed"],
+        })),
+        params.city,
+        params.country,
+        params.startPoint,
+        enrichmentTolerance,
+        existingPlaceIds2,
+      );
+      if (proposalEnriched.length > 0) {
+        googleCandidates = [...proposalEnriched, ...googleCandidates];
+        console.log(
+          `[discoverParcours] Sprint I — geocoded ${proposalEnriched.length}/${proposals.length} Claude proposals into pool (was ${beforeProposer}, now ${googleCandidates.length}). Names : ${proposalEnriched.map((c) => c.name).join(", ")}`,
+        );
+      } else {
+        console.log(
+          `[discoverParcours] Sprint I — Claude proposals all failed geocode or already in pool (${proposals.length} attempted)`,
+        );
+      }
+    } else {
+      console.log(
+        `[discoverParcours] Sprint I — Claude returned 0 landmark proposals (insufficient theme knowledge or empty pool result)`,
+      );
+    }
+  } catch (err) {
+    console.warn(
+      `[discoverParcours] Sprint I — Claude landmark proposer failed: ${err instanceof Error ? err.message : err}. Pipeline continues with existing pool.`,
+    );
   }
 
   // S9 (2026-05-20) — RENDEZ-VOUS GAP : on filtre les POIs trop proches
