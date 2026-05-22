@@ -68,6 +68,7 @@ import { autoRepairThematicStops } from "@/lib/pipeline-auto-repair-stops";
 import { judgeArmchairResolvability } from "@/lib/pipeline-armchair-judge";
 import { judgeCrossStopCallbacks } from "@/lib/pipeline-callbacks-judge";
 import { judgeNarrativeArc } from "@/lib/pipeline-narrative-arc-judge";
+import { judgeRiddleDifficultyCurve } from "@/lib/pipeline-difficulty-curve-judge";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -763,6 +764,57 @@ export const buildGameDurable = inngest.createFunction(
         );
       }
 
+      // ════════════════════════════════════════════════════════════
+      // SPRINT E (2026-05-22) — RIDDLE DIFFICULTY CURVE JUDGE
+      // ════════════════════════════════════════════════════════════
+      // Closes Questo grievance #1 ("simplicité excessive des
+      // mécanismes de résolution") AND prevents the inverse failure
+      // (random hard spike in act 1 that frustrates new players).
+      //
+      // Scores each riddle's intrinsic difficulty 0-10 and verifies :
+      //   • Stop 1 warmup score in [2,4]
+      //   • Rising stops in [3,7]
+      //   • Climax (stop N-1) in [6,9] AND IS the hardest stop
+      //   • Resolution (stop N) in [4,7]
+      //   • Game-wide difficulty alignment with operator-chosen 1-5
+      //
+      // Fail verdict → needs_review forces operator to rebalance.
+      let difficultyFlag: CoherenceFlag | null = null;
+      try {
+        const diffJudge = await judgeRiddleDifficultyCurve({
+          theme: template.theme,
+          gameDifficulty: template.difficulty ?? 3,
+          stops: phase2a.steps.map((s, i) => ({
+            step_order: i + 1,
+            landmark_name: s.title,
+            title: s.title,
+            riddle_text: s.riddle_text,
+            answer: s.answer_text,
+            hint_count: s.hints?.length ?? 0,
+          })),
+        });
+        logger.info(
+          `[difficultyJudge] ${diffJudge.summary} (avg=${diffJudge.average_score}, climax_peak=${diffJudge.climax_is_peak}, verdict=${diffJudge.verdict})`,
+        );
+        if (diffJudge.verdict !== "pass") {
+          difficultyFlag = {
+            code: `difficulty_${diffJudge.verdict}`,
+            severity: "fail",
+            message: diffJudge.needs_review_reason,
+            details: {
+              avg_score: diffJudge.average_score,
+              climax_is_peak: diffJudge.climax_is_peak,
+              game_difficulty_match: diffJudge.game_difficulty_match,
+              stops: diffJudge.stops,
+            },
+          };
+        }
+      } catch (err) {
+        logger.warn(
+          `[difficultyJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no difficulty flag.`,
+        );
+      }
+
       return aggregateCoherenceFlags([
         radiusFlag,
         perplexityFlag,
@@ -770,6 +822,7 @@ export const buildGameDurable = inngest.createFunction(
         armchairFlag,
         callbacksFlag,
         arcFlag,
+        difficultyFlag,
       ]);
     });
     const coherence = coherenceRaw as ReturnType<typeof aggregateCoherenceFlags>;
