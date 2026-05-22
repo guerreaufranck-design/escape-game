@@ -154,6 +154,130 @@ async function enrichSeedSitesWithCoords(
 }
 
 /**
+ * (Sprint A, 2026-05-22) Pool enrichment via Perplexity-sourced iconic sites.
+ *
+ * For each historically-iconic site Perplexity Deep Research identified
+ * for the theme (Cathédrale Saint-Nazaire for a Cathar-massacre theme,
+ * Tour Carbonnière for a Huguenot prison theme, etc.), do a TARGETED
+ * Google Places findPlaceFromText lookup to retrieve its place_id +
+ * GPS + types, and return as `NearbyCandidate[]` ready to merge into
+ * the discovery pool.
+ *
+ * Why this exists : Google Places nearbysearch ranks candidates by
+ * rating × distance, so for THEMED historic games the actual heritage
+ * sites that ARE the theme are OFTEN missing from the top 60 (modern
+ * restaurants, city halls, contemporary art galleries surface instead
+ * because they have more Google reviews). The Béziers Cathar test
+ * 22/05/2026 hit exactly this : 0 of the canonical Cathar massacre
+ * sites (Cathédrale Saint-Nazaire, Église Madeleine) were in the pool
+ * → auto-repair via reshuffle couldn't rescue, escalation forced.
+ *
+ * This function plugs the gap : Perplexity already KNOWS the iconic
+ * sites for a given theme. We just need to convert them to first-class
+ * pool candidates with the same trust contract (Google place_id +
+ * sub-10m GPS).
+ *
+ * Distance tolerance : the Perplexity-named sites are CANONICAL, so we
+ * accept up to 2× the discovery radius. A 3 km cathédrale on a 1.5 km
+ * walking parcours is still walkable for a F1-grade theme experience.
+ *
+ * Anti-hallucination preserved : every enrichment result must come back
+ * from Google Places API with a real place_id + types. Failed lookups
+ * (no candidate, network error, ambiguous name) are silently skipped —
+ * never fabricated.
+ */
+async function enrichPoolWithPerplexityIconicSites(
+  iconicSites: VerifiedThemeContext["iconicSites"],
+  city: string,
+  country: string,
+  startPoint: { lat: number; lon: number },
+  maxDistanceM: number,
+  existingPlaceIds: Set<string>,
+): Promise<NearbyCandidate[]> {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey || iconicSites.length === 0) return [];
+
+  const tasks = iconicSites.map(async (site): Promise<NearbyCandidate | null> => {
+    try {
+      const query = `${site.name}, ${city}, ${country}`;
+      const url = new URL(
+        "https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
+      );
+      url.searchParams.set("input", query);
+      url.searchParams.set("inputtype", "textquery");
+      url.searchParams.set(
+        "fields",
+        "name,geometry,place_id,formatted_address,types,rating,user_ratings_total",
+      );
+      url.searchParams.set("key", apiKey);
+      url.searchParams.set(
+        "locationbias",
+        `circle:${Math.round(maxDistanceM)}@${startPoint.lat},${startPoint.lon}`,
+      );
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), 8_000);
+      try {
+        const res = await fetch(url.toString(), { signal: ac.signal });
+        if (!res.ok) return null;
+        const data = (await res.json()) as {
+          status: string;
+          candidates?: Array<{
+            name: string;
+            formatted_address?: string;
+            place_id: string;
+            geometry?: { location: { lat: number; lng: number } };
+            types?: string[];
+            rating?: number;
+            user_ratings_total?: number;
+          }>;
+        };
+        if (data.status !== "OK" || !data.candidates?.length) return null;
+        const c = data.candidates[0];
+        if (!c.place_id || !c.geometry?.location) return null;
+        if (existingPlaceIds.has(c.place_id)) return null; // already in pool
+        const distanceM = haversineMeters(
+          { lat: c.geometry.location.lat, lon: c.geometry.location.lng },
+          startPoint,
+        );
+        if (distanceM > maxDistanceM) return null;
+        return {
+          name: c.name,
+          lat: c.geometry.location.lat,
+          lon: c.geometry.location.lng,
+          placeId: c.place_id,
+          types: c.types ?? [],
+          address: c.formatted_address,
+          rating: c.rating,
+          userRatingsTotal: c.user_ratings_total,
+          distanceM,
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    } catch (err) {
+      console.warn(
+        `[enrichPool] failed for "${site.name}": ${err instanceof Error ? err.message : err}`,
+      );
+      return null;
+    }
+  });
+
+  const results = await Promise.allSettled(tasks);
+  const enriched: NearbyCandidate[] = [];
+  // Mutate caller's existingPlaceIds set so duplicates within the
+  // enrichment batch itself don't sneak through (rare but possible).
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) {
+      if (!existingPlaceIds.has(r.value.placeId)) {
+        existingPlaceIds.add(r.value.placeId);
+        enriched.push(r.value);
+      }
+    }
+  }
+  return enriched;
+}
+
+/**
  * Rayon de recherche autour du startPoint, ADAPTATIF au stopCount.
  *
  * Logique : on vend une DURÉE (~90 min), pas un nombre de stops fixe.
@@ -922,6 +1046,54 @@ export async function discoverParcours(
   console.log(
     `[discoverParcours] Candidate pool ready: ${googleCandidates.length} POIs from "${discoverySource}" source (within ${radiusM}m)`,
   );
+
+  // ════════════════════════════════════════════════════════════════
+  // SPRINT A (2026-05-22) — POOL ENRICHMENT VIA PERPLEXITY ICONIC SITES
+  // ════════════════════════════════════════════════════════════════
+  // Post-incident Béziers Cathars 22/05 : Google nearbysearch sorts
+  // candidates by rating × distance, so for historic themes (Cathars,
+  // Huguenots, Templars, etc.) the actual heritage that IS the theme
+  // is OFTEN missing from the top 60 candidates (modern restaurants,
+  // city halls, and contemporary art galleries surface instead).
+  //
+  // Symptom : auto-repair via pool reshuffle (Sprint 6.2quater) can
+  // only re-pick from the existing pool. If Cathédrale Saint-Nazaire,
+  // Église Madeleine, Tour des Bénédictins etc. aren't IN the pool,
+  // no amount of re-ranking saves the game.
+  //
+  // Fix : after the standard Google nearbysearch, run a TARGETED
+  // findPlaceFromText query for each iconic site that Perplexity
+  // Deep Research identified for this theme. Merge results into the
+  // candidate pool at the TOP (high priority signal).
+  //
+  // Trust : every enrichment goes through Google Places API → real
+  // place_id, sub-10m GPS, validated types. Same trust level as
+  // nearbysearch. No fabrication.
+  if (verifiedContext && verifiedContext.iconicSites.length > 0) {
+    const beforeEnrich = googleCandidates.length;
+    const existingPlaceIds = new Set(googleCandidates.map((c) => c.placeId));
+    const enrichmentTolerance = radiusM * (isRoadtrip ? 2 : 1.3);
+    const enriched = await enrichPoolWithPerplexityIconicSites(
+      verifiedContext.iconicSites,
+      params.city,
+      params.country,
+      params.startPoint,
+      enrichmentTolerance,
+      existingPlaceIds,
+    );
+    if (enriched.length > 0) {
+      // Prepend = high priority signal for thematic scoring downstream.
+      // Claude curation + auto-repair both see these as TOP candidates.
+      googleCandidates = [...enriched, ...googleCandidates];
+      console.log(
+        `[discoverParcours] Pool enriched : +${enriched.length} Perplexity iconic sites (was ${beforeEnrich}, now ${googleCandidates.length}). Names : ${enriched.map((c) => c.name).join(", ")}`,
+      );
+    } else {
+      console.log(
+        `[discoverParcours] Pool enrichment found 0 new iconic sites (all ${verifiedContext.iconicSites.length} either failed geocode or already in pool)`,
+      );
+    }
+  }
 
   // S9 (2026-05-20) — RENDEZ-VOUS GAP : on filtre les POIs trop proches
   // du startPoint pour que le Stop 1 soit toujours à distance de marche
