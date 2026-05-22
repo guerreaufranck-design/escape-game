@@ -85,30 +85,131 @@ const MAX_ADAPTIVE_M = 600;
  * rendent intéressant.
  */
 const TOURISM_TYPE_BONUS: Record<string, number> = {
+  // ── HIGH HERITAGE / SCENIC (Tier 1, +3) ─────────────────────
   tourist_attraction: 3.0,
+  historical_landmark: 3.5, // bumped — these ARE the parcours backbone
+  monument: 3.5,
+  castle: 3.5,
+  fort: 3.5,
+  palace: 3.5,
+  cathedral: 3.0, // bumped — cathedrals are the parcours bones
+  city_gate: 3.0, // medieval gates (Tour Carbonnière, Porte Marine, etc.)
+  basilica: 3.0,
+  natural_feature: 2.5, // viewpoints, cliffs, scenic naturals
+
+  // ── HIGH CURATED (Tier 2, +2) ───────────────────────────────
   museum: 2.5,
-  art_gallery: 2.5,
-  historical_landmark: 3.0,
-  monument: 3.0,
-  castle: 3.0,
-  fort: 3.0,
-  palace: 3.0,
-  church: 1.5,
-  cathedral: 2.0,
-  synagogue: 1.5,
-  mosque: 1.5,
-  temple: 1.5,
-  park: 1.0,
-  plaza: 1.5,
-  fountain: 1.0,
+  art_gallery: 2.0, // demoted slightly — modern art rarely fits historic themes
+  abbey: 2.5,
+  monastery: 2.5,
+  church: 2.0, // bumped — strong heritage value
+  synagogue: 2.0,
+  mosque: 2.0,
+  hindu_temple: 2.0,
+  buddhist_temple: 2.0,
+  plaza: 2.0, // bumped — historic plazas are scenic anchors
+  bridge: 2.5, // historic bridges are great stops
+  square: 2.0, // alias of plaza in some regions
+
+  // ── PUBLIC / CIVIC (Tier 2-3, +1 to +1.5) ───────────────────
   city_hall: 1.5,
+  courthouse: 1.5,
   library: 1.0,
   university: 1.0,
-  zoo: 1.5,
-  aquarium: 1.5,
-  amusement_park: 1.0,
-  stadium: 1.0,
-  // Catégories "pas de bonus mais pas pénalisé" — implicit 0
+  fountain: 1.5, // bumped — historic fountains are evocative
+  park: 1.5, // bumped — well-curated parks (Tuileries, etc.) anchor
+  garden: 1.5,
+
+  // ── NEUTRAL / WEAK (Tier 3, ≤ 0) ────────────────────────────
+  zoo: 0.5,
+  aquarium: 0, // thematic judge will reject for historic themes anyway
+  amusement_park: -0.5, // theme-park-ish, breaks heritage tone
+  stadium: 0.5, // unless historic stadium (Roman amphitheater handled via tourist_attraction)
+  cemetery: 1.0, // historic cemeteries OK, neutral by default
+
+  // ════════════════════════════════════════════════════════════
+  // SPRINT G (2026-05-22) — SCENIC PENALTIES
+  // ════════════════════════════════════════════════════════════
+  // Closes Questo grievance #8 : "tracés contournant les zones
+  // pittoresques, passages par des avenues bruyantes ou des zones
+  // d'affaires désertes et anxiogènes en soirée".
+  //
+  // The Google nearbysearch will sometimes surface POIs that are
+  // technically rated highly (Apple Store 4.5★ with 5000 reviews)
+  // but TERRIBLE for an outdoor heritage escape-game (busy commercial
+  // anchor, anti-immersive surroundings). We aggressively penalize
+  // those types so the selection geometry NEVER picks them as stops.
+  //
+  // The auto-repair (Sprint 6.2quater) still re-ranks based on the
+  // thematic judge, so this is a SECOND line of defense — get the
+  // pool clean from the start so even Claude curation doesn't see
+  // these as plausible candidates.
+  // ── COMMERCIAL / TRANSACTIONAL (anxiogenic) ─────────────────
+  gas_station: -3.0,
+  convenience_store: -3.0,
+  supermarket: -3.0,
+  shopping_mall: -3.0,
+  car_dealer: -3.0,
+  car_rental: -2.5,
+  car_repair: -2.5,
+  atm: -2.5,
+  bank: -2.0,
+  finance: -2.0,
+  insurance_agency: -2.5,
+  real_estate_agency: -2.0,
+  lawyer: -2.5,
+  doctor: -2.0,
+  dentist: -2.5,
+  hospital: -2.0, // medical building, not the parcours story
+  pharmacy: -1.5,
+  veterinary_care: -2.0,
+
+  // ── TRANSIT (functional, deserted) ──────────────────────────
+  transit_station: -2.0,
+  bus_station: -2.5,
+  subway_station: -2.0,
+  train_station: -0.5, // historic train stations can be great (Gare d'Orsay)
+  taxi_stand: -2.5,
+  parking: -3.0,
+  rv_park: -2.5,
+
+  // ── HOSPITALITY (modern chains, not heritage) ───────────────
+  lodging: -1.0,
+  campground: -1.0,
+  spa: -1.5,
+  gym: -2.0,
+  hair_care: -2.5,
+  beauty_salon: -2.5,
+  laundry: -3.0,
+
+  // ── EATING (mass-market) ────────────────────────────────────
+  meal_delivery: -3.0,
+  meal_takeaway: -2.5,
+  // Note : restaurants/cafés are NEUTRAL (no entry) — they can be
+  // scenic markers ("the historic Café Procope") and the thematic
+  // judge handles fit.
+
+  // ── RETAIL (generic) ────────────────────────────────────────
+  store: -1.5,
+  clothing_store: -2.0,
+  electronics_store: -2.5,
+  furniture_store: -2.5,
+  home_goods_store: -2.5,
+  hardware_store: -2.5,
+  shoe_store: -2.5,
+  jewelry_store: -1.5, // some are historic boutiques
+  book_store: -1.0, // some are landmark bookstores (Shakespeare & Co.)
+
+  // ── OFFICE / GOVT MODERN ────────────────────────────────────
+  embassy: -1.5,
+  post_office: -1.5,
+  storage: -3.0,
+
+  // ── INFRA / NOT A LANDMARK ──────────────────────────────────
+  route: -3.0, // tunnels, roads
+  political: -2.0, // government zones
+  premise: -2.0, // generic building
+  subpremise: -2.0,
 };
 
 export interface SelectionParams {
