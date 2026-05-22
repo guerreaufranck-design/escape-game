@@ -67,6 +67,7 @@ import {
 import { autoRepairThematicStops } from "@/lib/pipeline-auto-repair-stops";
 import { judgeArmchairResolvability } from "@/lib/pipeline-armchair-judge";
 import { judgeCrossStopCallbacks } from "@/lib/pipeline-callbacks-judge";
+import { judgeNarrativeArc } from "@/lib/pipeline-narrative-arc-judge";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -714,12 +715,61 @@ export const buildGameDurable = inngest.createFunction(
         );
       }
 
+      // ════════════════════════════════════════════════════════════
+      // SPRINT D (2026-05-22) — NARRATIVE ARC JUDGE (Act 1/2/3 + climax)
+      // ════════════════════════════════════════════════════════════
+      // RULE H in generateGameSteps now structures stops as a 3-act
+      // arc with climax on the penultimate stop. This judge verifies
+      // the dramaturgy actually delivers : exposition / rising /
+      // climax / resolution beats land on the right stops, climax
+      // genuinely climaxes, resolution pays off the climax setup.
+      //
+      // Closes Questo grievance #5 : "dénouement abrupt, indices
+      // concentrés en fin de parcours, rendant vains les efforts
+      // d'analyse menés durant le trajet".
+      let arcFlag: CoherenceFlag | null = null;
+      try {
+        const arcJudge = await judgeNarrativeArc({
+          theme: template.theme,
+          narrative: template.narrative,
+          stops: phase2a.steps.map((s, i) => ({
+            step_order: i + 1,
+            landmark_name: s.title,
+            title: s.title,
+            riddle_text: s.riddle_text,
+            anecdote: s.anecdote,
+          })),
+          finalRiddle: phase2b.finalRiddle?.riddle,
+        });
+        logger.info(
+          `[arcJudge] ${arcJudge.summary} (avg=${arcJudge.average_score}, climax=${arcJudge.climax_score}, final=${arcJudge.final_score}, verdict=${arcJudge.verdict})`,
+        );
+        if (arcJudge.verdict !== "pass") {
+          arcFlag = {
+            code: `arc_${arcJudge.verdict}`,
+            severity: "fail",
+            message: arcJudge.needs_review_reason,
+            details: {
+              avg_score: arcJudge.average_score,
+              climax_score: arcJudge.climax_score,
+              final_score: arcJudge.final_score,
+              stops: arcJudge.stops,
+            },
+          };
+        }
+      } catch (err) {
+        logger.warn(
+          `[arcJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no arc flag.`,
+        );
+      }
+
       return aggregateCoherenceFlags([
         radiusFlag,
         perplexityFlag,
         thematicFlagFromAutoRepair,
         armchairFlag,
         callbacksFlag,
+        arcFlag,
       ]);
     });
     const coherence = coherenceRaw as ReturnType<typeof aggregateCoherenceFlags>;

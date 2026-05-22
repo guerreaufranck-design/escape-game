@@ -458,6 +458,45 @@ G. CROSS-STOP CALLBACKS — narrative cohesion is the difference between
    biggest player-retention lever (sell-to-same-customer-twice = the
    only sustainable economics).
 
+H. NARRATIVE ARC — 3 ACTS + CLIMAX. The ${stepCount} stops MUST be
+   structured as a dramaturgical arc, not a flat compilation. Closes
+   Questo grievance #5 ("dénouement abrupt", indices concentrés en
+   fin de parcours, anti-climactic).
+
+   Position mapping (1-indexed) :
+     • Stops 1 .. floor(N×0.3)  = ACT 1 (EXPOSITION)
+         Establish world + premise + hook. Introduce the central
+         question/symbol/character. NEVER reveal the main twist here.
+         Tone : invitation, intrigue, atmospheric setup.
+
+     • Mid-range stops          = ACT 2 (RISING ACTION)
+         Each stop DEEPENS the mystery or shifts what the player
+         thought they knew. New revelations, complications, stakes
+         raised. Tone : escalation, suspense.
+
+     • Stop ${stepCount - 1} (penultimate) = CLIMAX
+         The PEAK dramatic moment. Biggest reveal, peak emotion,
+         confrontation, "oh wow" beat. Tension maxes here.
+         This stop should feel BIGGER than every other stop. The
+         AR magic word here should be the most thematically charged.
+
+     • Stop ${stepCount} (final) = ACT 3 (RESOLUTION)
+         Payoff. Threads tie. DIRECT consequence of the climax. The
+         player should feel arrival. Sets up the game-wide final
+         riddle delivered after this stop.
+
+   ENFORCEMENT :
+   H.1 Do NOT drop the main twist in act 1 or early act 2 — save it
+       for the climax stop.
+   H.2 Climax stop's anecdote must contain the highest-stakes moment
+       of the verifiedContext events (e.g. the massacre date for a
+       siege theme, the trial date for a witchcraft theme).
+   H.3 Resolution stop's content must REFER BACK to the climax — it
+       can't pivot to an unrelated final scene.
+   H.4 Don't let act 1 stops feel "as big" as climax — they should
+       feel smaller, more atmospheric. Climax earns its weight by
+       contrast.
+
 GAME PARAMETERS:
 - City: ${city}, ${country}
 - Theme: ${theme}
