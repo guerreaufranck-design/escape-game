@@ -596,6 +596,24 @@ export type Phase1Result =
         | "startPointText-geocoded"
         | "top-landmark-google-places"
         | "city-center-fallback";
+      /**
+       * (Sprint 6.2quater, 2026-05-22) — Full Google Places candidate
+       * pool exposed by Phase 1b discovery, for thematic auto-repair
+       * (Phase 1b5). The selected stops are in `discoveryLandmarks` ;
+       * `allCandidates` carries the 53+ non-selected POIs that may
+       * better fit the theme. JSON-serializable for Inngest.
+       */
+      allCandidates: Array<{
+        name: string;
+        lat: number;
+        lon: number;
+        placeId: string;
+        types: string[];
+        address?: string;
+        rating?: number;
+        userRatingsTotal?: number;
+        distanceM: number;
+      }>;
     }
   | {
       success: false;
@@ -1334,6 +1352,10 @@ export async function runPipelinePhase1Discovery(
       resolvedStartPoint: startPoint,
       resolvedStartPointText: resolvedStartPointLabel,
       resolvedStartPointSource: startPointSource,
+      // (Sprint 6.2quater, 2026-05-22) — full Google Places candidate
+      // pool, exposed for Phase 1b5 thematic auto-repair. Empty array
+      // if discovery used Gemini-only path (no Google pool to recycle).
+      allCandidates: discovery.allCandidates ?? [],
     };
   } catch (error) {
     const errorMessage =

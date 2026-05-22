@@ -41,7 +41,11 @@ import {
   type Phase2aResult,
   type Phase2bResult,
 } from "@/lib/game-pipeline";
-import { type VerifiedThemeContext } from "@/lib/perplexity";
+import {
+  type VerifiedThemeContext,
+  type ResearchedLocation,
+} from "@/lib/perplexity";
+import { type DiscoveredStop } from "@/lib/parcours-discovery";
 import {
   scorePhase1a,
   scorePhase1b,
@@ -50,12 +54,17 @@ import {
   assertPhasePassesOrThrow,
 } from "@/lib/pipeline-quality-scorer";
 import { recordPhaseQuality } from "@/lib/pipeline-telemetry-writer";
-import { judgeThematicRelevance } from "@/lib/pipeline-thematic-judge";
+import {
+  judgeThematicRelevance,
+  type ThematicJudgeResult,
+} from "@/lib/pipeline-thematic-judge";
 import {
   checkRadiusDurationCoherence,
   escalateOnPhase1aEmpty,
   aggregateCoherenceFlags,
+  type CoherenceFlag,
 } from "@/lib/pipeline-coherence";
+import { autoRepairThematicStops } from "@/lib/pipeline-auto-repair-stops";
 
 export const buildGameDurable = inngest.createFunction(
   {
@@ -172,13 +181,17 @@ export const buildGameDurable = inngest.createFunction(
     const phase1Raw = await step.run("phase1b-discovery", async () => {
       return await runPipelinePhase1Discovery(template, verifiedContext);
     });
-    const phase1 = phase1Raw as Phase1Result;
+    const phase1Initial = phase1Raw as Phase1Result;
 
-    if (!phase1.success) {
+    if (!phase1Initial.success) {
       throw new Error(
-        `Pipeline Phase 1b (discovery) failed: ${phase1.error ?? "(no message)"}`,
+        `Pipeline Phase 1b (discovery) failed: ${phase1Initial.error ?? "(no message)"}`,
       );
     }
+    // `let` (not const) — Phase 1b5 auto-repair may rebind this with
+    // repaired landmarks before Phase 2a consumes it. We pin the type
+    // to the success variant so reassignments preserve narrowing.
+    let phase1: Extract<Phase1Result, { success: true }> = phase1Initial;
 
     // ── Quality gate post-1b (Sprint 2.2) ────────────────────────────
     // Phase 1b is CRITICAL — below floor = we'd ship a broken game.
@@ -198,6 +211,315 @@ export const buildGameDurable = inngest.createFunction(
       },
     });
     assertPhasePassesOrThrow("phase1b", qa1b);
+
+    // ════════════════════════════════════════════════════════════════
+    // SPRINT 6.2quater (2026-05-22) — THEMATIC AUTO-REPAIR
+    // ════════════════════════════════════════════════════════════════
+    // Closes the auto-correction loop opened by Sprint 6.2bis. Instead
+    // of merely DETECTING thematic drift (judge) and escalating to a
+    // human, we now ATTEMPT TO FIX it automatically by reshuffling the
+    // Google Places candidate pool that Phase 1b already produced.
+    //
+    // Algorithm :
+    //   1. Run the thematic-fit judge on phase1.discoveryLandmarks.
+    //   2. If verdict === "pass" → no-op, continue to Phase 2a.
+    //   3. Else split stops : keep (fit_score ≥ 4), discard (< 4).
+    //   4. Re-pick N replacements from the Google Places pool
+    //      (phase1.allCandidates minus already-selected ids), guided
+    //      by Claude Haiku with strict Tier 1/2/3 + museum policy.
+    //   5. Re-run the judge on [keep + new picks]. If pass (or weak ≥
+    //      6.0 avg) → swap in the repaired landmarks AND matching
+    //      ResearchedLocation array. Phase 2a then narrates the new
+    //      stops as if they'd been chosen originally.
+    //   6. If still failing after MAX_ATTEMPTS=2 → emit a
+    //      `residualThematicFlag` so phase2b5-coherence-gates can
+    //      escalate to needs_review (preserving Sprint 6.2bis safety).
+    //
+    // Anti-hallucination : Claude RE-RANKS the existing pool ; it
+    // cannot invent place_ids. Every replacement has valid GPS + types
+    // + Google rating already validated by Phase 1b.
+    //
+    // Running this BEFORE phase2a-narration means the narration is
+    // generated against the FINAL (repaired) stops list — no wasted
+    // Claude calls re-adapting a doomed narrative.
+    const autoRepairRaw = await step.run(
+      "phase1b5-thematic-autorepair",
+      async () => {
+        // 1. Run the thematic judge on the initial Phase 1b selection.
+        let initialJudge: ThematicJudgeResult;
+        try {
+          initialJudge = await judgeThematicRelevance({
+            theme: template.theme,
+            themeDescription: template.themeDescription,
+            narrative: template.narrative,
+            productDescription: template.productDescription,
+            city: template.city,
+            stops: phase1.discoveryLandmarks.map((l, i) => ({
+              step_order: i + 1,
+              name: l.name,
+              description:
+                (l as { description?: string }).description ?? "",
+            })),
+          });
+        } catch (err) {
+          logger.warn(
+            `[phase1b5-autorepair] thematic judge unavailable (${err instanceof Error ? err.message : err}). Fail-open : skipping auto-repair, no residual flag. Sprint 6.2bis safety nets still apply.`,
+          );
+          return {
+            judged: false,
+            repaired: false,
+            reason: "judge unavailable",
+            newLandmarks: null,
+            newVerifiedLocations: null,
+            newStopModes: null,
+            newNavigationHints: null,
+            residualThematicFlag: null,
+            initialJudgeSummary: null,
+            repairReplacedCount: 0,
+            repairAttempts: 0,
+            repairFinalAvgScore: null,
+          };
+        }
+
+        logger.info(
+          `[phase1b5-autorepair] initial judge : ${initialJudge.summary} (avg=${initialJudge.average_score}, min=${initialJudge.min_score}, verdict=${initialJudge.verdict})`,
+        );
+
+        if (initialJudge.verdict === "pass") {
+          return {
+            judged: true,
+            repaired: false,
+            reason: "initial judge passed — no repair needed",
+            newLandmarks: null,
+            newVerifiedLocations: null,
+            newStopModes: null,
+            newNavigationHints: null,
+            residualThematicFlag: null,
+            initialJudgeSummary: initialJudge.summary,
+            repairReplacedCount: 0,
+            repairAttempts: 0,
+            repairFinalAvgScore: initialJudge.average_score,
+          };
+        }
+
+        // 2. Verdict != pass → attempt auto-repair via pool reshuffle.
+        logger.warn(
+          `[phase1b5-autorepair] judge ${initialJudge.verdict} — invoking pool-reshuffling auto-repair (avg=${initialJudge.average_score}, min=${initialJudge.min_score})`,
+        );
+
+        const candidatePool = phase1.allCandidates ?? [];
+        if (candidatePool.length === 0) {
+          logger.warn(
+            "[phase1b5-autorepair] candidate pool empty (Gemini-only discovery path?) — cannot auto-repair, escalating to needs_review.",
+          );
+          return {
+            judged: true,
+            repaired: false,
+            reason: "candidate pool empty — auto-repair skipped",
+            newLandmarks: null,
+            newVerifiedLocations: null,
+            newStopModes: null,
+            newNavigationHints: null,
+            residualThematicFlag: {
+              code: `thematic_${initialJudge.verdict}`,
+              severity: "fail" as const,
+              message: `${initialJudge.needs_review_reason} (auto-repair skipped : no candidate pool available — Gemini-only discovery path)`,
+              details: {
+                avg_score: initialJudge.average_score,
+                min_score: initialJudge.min_score,
+                stops: initialJudge.stops,
+                auto_repair_skipped_reason: "pool_empty",
+              },
+            },
+            initialJudgeSummary: initialJudge.summary,
+            repairReplacedCount: 0,
+            repairAttempts: 0,
+            repairFinalAvgScore: initialJudge.average_score,
+          };
+        }
+
+        const scoreByStepOrder = new Map(
+          initialJudge.stops.map((s) => [s.step_order, s.fit_score]),
+        );
+        const originalStops = phase1.discoveryLandmarks.map((l, i) => ({
+          step_order: i + 1,
+          name: l.name,
+          lat: l.lat,
+          lon: l.lon,
+          placeId: l.placeId,
+          types: l.types,
+          rating: l.rating,
+          fit_score: scoreByStepOrder.get(i + 1) ?? 0,
+          description: (l as { description?: string }).description,
+        }));
+
+        const repair = await autoRepairThematicStops({
+          theme: template.theme,
+          themeDescription: template.themeDescription,
+          productDescription: template.productDescription,
+          city: template.city,
+          country: template.country,
+          originalStops,
+          pool: candidatePool,
+        });
+
+        if (!repair.success) {
+          logger.warn(
+            `[phase1b5-autorepair] ❌ auto-repair failed : ${repair.reason}`,
+          );
+          return {
+            judged: true,
+            repaired: false,
+            reason: repair.reason,
+            newLandmarks: null,
+            newVerifiedLocations: null,
+            newStopModes: null,
+            newNavigationHints: null,
+            residualThematicFlag: {
+              code: `thematic_${initialJudge.verdict}`,
+              severity: "fail" as const,
+              message: `${initialJudge.needs_review_reason} | Auto-repair attempted but failed: ${repair.reason}`,
+              details: {
+                avg_score: initialJudge.average_score,
+                min_score: initialJudge.min_score,
+                stops: initialJudge.stops,
+                auto_repair_attempts: repair.attempts,
+                auto_repair_final_avg:
+                  repair.postRepairJudge?.average_score ?? null,
+                auto_repair_final_verdict:
+                  repair.postRepairJudge?.verdict ?? null,
+              },
+            },
+            initialJudgeSummary: initialJudge.summary,
+            repairReplacedCount: 0,
+            repairAttempts: repair.attempts,
+            repairFinalAvgScore:
+              repair.postRepairJudge?.average_score ?? null,
+          };
+        }
+
+        // 3. Auto-repair succeeded — synthesize the new DiscoveredStop[]
+        //    and matching ResearchedLocation[]. Keepers reuse their
+        //    original entries verbatim ; replacements are minted from
+        //    the Google Places pool. Phase 2a's adaptNarrativeForReplaced
+        //    Stops will then write a fresh narration for the new mix.
+        logger.info(
+          `[phase1b5-autorepair] ✅ auto-repair succeeded : ${repair.reason}`,
+        );
+
+        const newLandmarks: DiscoveredStop[] = repair.repairedStops.map(
+          (rs) => {
+            if (!rs.fromAutoRepair) {
+              const original = phase1.discoveryLandmarks.find(
+                (l) =>
+                  (l.placeId && l.placeId === rs.placeId) ||
+                  l.name === rs.name,
+              );
+              if (original) return original;
+            }
+            const poolEntry = (phase1.allCandidates ?? []).find(
+              (c) => c.placeId === rs.placeId,
+            );
+            return {
+              name: rs.name,
+              description: "",
+              source: "auto-repair-google-places",
+              lat: rs.lat,
+              lon: rs.lon,
+              placeId: rs.placeId,
+              distanceFromStartM: poolEntry?.distanceM ?? 0,
+              stopMode: "radar" as const,
+              navigationHint: undefined,
+              types: rs.types,
+              rating: rs.rating,
+            };
+          },
+        );
+
+        const newVerifiedLocations: ResearchedLocation[] = newLandmarks.map(
+          (s) => ({
+            name: s.name,
+            landmarkName: s.name,
+            latitude: s.lat,
+            longitude: s.lon,
+            whatToObserve: s.description,
+            answer: "AUTO",
+            answerType: "name" as const,
+            answerSource: "virtual_ar" as const,
+            source: s.source ?? "auto-repair-google-places",
+            themeLink: s.description,
+          }),
+        );
+
+        const newStopModes = newLandmarks.map((l) => l.stopMode);
+        const newNavigationHints = newLandmarks.map(
+          (l) => l.navigationHint ?? null,
+        );
+
+        return {
+          judged: true,
+          repaired: true,
+          reason: repair.reason,
+          newLandmarks,
+          newVerifiedLocations,
+          newStopModes,
+          newNavigationHints,
+          residualThematicFlag: null,
+          initialJudgeSummary: initialJudge.summary,
+          repairReplacedCount: repair.replacedCount,
+          repairAttempts: repair.attempts,
+          repairFinalAvgScore:
+            repair.postRepairJudge?.average_score ?? null,
+        };
+      },
+    );
+    const autoRepair = autoRepairRaw as {
+      judged: boolean;
+      repaired: boolean;
+      reason: string;
+      newLandmarks: DiscoveredStop[] | null;
+      newVerifiedLocations: ResearchedLocation[] | null;
+      newStopModes: Array<"radar" | "narrative"> | null;
+      newNavigationHints: Array<string | null> | null;
+      residualThematicFlag: CoherenceFlag | null;
+      initialJudgeSummary: string | null;
+      repairReplacedCount: number;
+      repairAttempts: number;
+      repairFinalAvgScore: number | null;
+    };
+
+    if (
+      autoRepair.repaired &&
+      autoRepair.newLandmarks &&
+      autoRepair.newVerifiedLocations &&
+      autoRepair.newStopModes &&
+      autoRepair.newNavigationHints
+    ) {
+      logger.info(
+        `[build-game] Applying auto-repair : ${autoRepair.repairReplacedCount} stop(s) replaced from pool (attempts=${autoRepair.repairAttempts}, final_avg=${autoRepair.repairFinalAvgScore}). Phase 2a will narrate the repaired mix.`,
+      );
+      // Annotate the existing review reason so the operator can see the
+      // auto-repair fingerprint without forcing needs_review (the judge
+      // is now happy with the repaired mix).
+      const repairTrace = `[AUTO_REPAIR_APPLIED] ${autoRepair.repairReplacedCount} stop(s) auto-swapped from Google Places pool (final avg fit=${autoRepair.repairFinalAvgScore}, attempts=${autoRepair.repairAttempts}).`;
+      const prevReason = phase1.reviewReason;
+      phase1 = {
+        ...phase1,
+        discoveryLandmarks: autoRepair.newLandmarks,
+        verifiedLocations: autoRepair.newVerifiedLocations,
+        stopModes: autoRepair.newStopModes,
+        navigationHints: autoRepair.newNavigationHints,
+        reviewReason: prevReason
+          ? `${prevReason} | ${repairTrace}`
+          : repairTrace,
+      };
+    } else if (autoRepair.judged && autoRepair.residualThematicFlag) {
+      logger.warn(
+        `[build-game] Auto-repair could not fix thematic drift — residual flag will force needs_review at phase2b5.`,
+      );
+    } else if (autoRepair.judged) {
+      logger.info(`[build-game] Initial thematic judge passed — no repair needed.`);
+    }
 
     const phase2aRaw = await step.run("phase2a-narration", async () => {
       return await runPipelinePhase2aNarrationGen(template, phase1);
@@ -252,6 +574,9 @@ export const buildGameDurable = inngest.createFunction(
 
     // ════════════════════════════════════════════════════════════════
     // SPRINT 6.2bis (2026-05-22) — POST-INCIDENT SAFETY GATES
+    //   + Sprint 6.2quater integration : thematic flag is now sourced
+    //     from the upstream phase1b5-thematic-autorepair step (only
+    //     emitted if auto-repair failed to fix the drift).
     // ════════════════════════════════════════════════════════════════
     // Run defensive checks BEFORE Phase 2c INSERT so that any
     // needs_review flag is written atomically with the game. Without
@@ -262,13 +587,16 @@ export const buildGameDurable = inngest.createFunction(
     // Checks executed :
     //   B. radius_km vs estimated_duration_min coherence
     //   E. Phase 1a Perplexity-empty hard escalation
-    //   A. Thematic-fit judge (Claude Haiku) — most expensive but
-    //      most important. The Aigues-Mortes 22/05 incident would
-    //      have been caught at THIS gate.
+    //   A. Residual thematic-fit flag from phase1b5-thematic-autorepair
+    //      (judge + auto-repair already ran upstream ; we just consume
+    //      whatever flag survived). The Aigues-Mortes 22/05 incident
+    //      would now be auto-repaired before reaching this point —
+    //      this flag only fires when auto-repair itself couldn't fix.
     //
     // Each check produces a CoherenceFlag (or null). The aggregator
     // composes a single { needs_review, review_reason } object passed
     // to Phase 2c insert. Multiple flags → reasons concatenated.
+    const thematicFlagFromAutoRepair = autoRepair.residualThematicFlag;
     const coherenceRaw = await step.run("phase2b5-coherence-gates", async () => {
       const radiusFlag = checkRadiusDurationCoherence({
         transport_mode:
@@ -290,45 +618,11 @@ export const buildGameDurable = inngest.createFunction(
           }
         : null;
 
-      // Thematic-fit judge — call Claude Haiku as a strict judge.
-      let thematicFlag = null;
-      try {
-        const judge = await judgeThematicRelevance({
-          theme: template.theme,
-          themeDescription: template.themeDescription,
-          narrative: template.narrative,
-          // Sprint 6.2ter — rich grounding text from OddballTrip
-          productDescription: template.productDescription,
-          city: template.city,
-          stops: phase1.discoveryLandmarks.map((l, i) => ({
-            step_order: i + 1,
-            name: l.name,
-            description:
-              (l as { description?: string }).description ?? "",
-          })),
-        });
-        logger.info(
-          `[thematicJudge] ${judge.summary} (avg=${judge.average_score}, min=${judge.min_score}, verdict=${judge.verdict})`,
-        );
-        if (judge.verdict !== "pass") {
-          thematicFlag = {
-            code: `thematic_${judge.verdict}`,
-            severity: "fail" as const,
-            message: judge.needs_review_reason,
-            details: {
-              avg_score: judge.average_score,
-              min_score: judge.min_score,
-              stops: judge.stops,
-            },
-          };
-        }
-      } catch (err) {
-        logger.warn(
-          `[thematicJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no thematic flag added. Existing safety nets still apply.`,
-        );
-      }
-
-      return aggregateCoherenceFlags([radiusFlag, perplexityFlag, thematicFlag]);
+      return aggregateCoherenceFlags([
+        radiusFlag,
+        perplexityFlag,
+        thematicFlagFromAutoRepair,
+      ]);
     });
     const coherence = coherenceRaw as ReturnType<typeof aggregateCoherenceFlags>;
     if (coherence.needs_review) {

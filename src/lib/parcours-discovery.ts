@@ -490,6 +490,20 @@ export interface DiscoverParcoursResult {
   escalatedTransportMode?: "walking" | "mixed" | "driving";
   /** Diamètre effectif (mètres) utilisé après escalation. */
   escalatedDiameterM?: number;
+  /**
+   * (Sprint 6.2quater, 2026-05-22) — Full Google Places candidate pool
+   * BEFORE the Claude scoring pick. Carries up to 60-150 POIs with
+   * GPS + types + ratings, deduplicated & filtered by radius/rendez-
+   * vous gap, ready for re-scoring by the thematic auto-repair step.
+   *
+   * Without this exposure, the unchosen 50+ candidates were silently
+   * discarded after Phase 1b — wasted data. Now auto-repair can re-
+   * tap them when the initial Claude pick has thematic drift.
+   *
+   * Each entry is JSON-serializable (NearbyCandidate is flat numbers
+   * + strings — no Date/Map/Set), survives Inngest step boundaries.
+   */
+  allCandidates?: NearbyCandidate[];
 }
 
 /**
@@ -1566,6 +1580,12 @@ export async function discoverParcours(
     discoverySource,
     escalatedTransportMode: escalatedMode,
     escalatedDiameterM,
+    // Sprint 6.2quater (2026-05-22) — expose the full Google Places
+    // candidate pool so the thematic auto-repair step can re-tap it
+    // when the initial pick has drift. The pool is post-radius-filter
+    // and post-rendez-vous-gap-filter (cleaner data than raw nearby
+    // search). Cap to 60 entries to keep Inngest serialization small.
+    allCandidates: googleCandidates.slice(0, 60),
   };
 }
 
