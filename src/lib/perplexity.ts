@@ -658,6 +658,14 @@ export async function deepResearchTheme(params: {
   theme: string;
   themeDescription: string;
   narrative: string;
+  /**
+   * (Sprint 6.2ter, 2026-05-22) Rich product page description from
+   * OddballTrip. When provided, used as the PRIMARY anchor for the
+   * research prompt — it names the specific landmarks the customer
+   * was promised. Greatly improves Perplexity DR yield vs the short
+   * themeDescription alone.
+   */
+  productDescription?: string;
 }): Promise<VerifiedThemeContext> {
   const apiKey = process.env.PERPLEXITY_API_KEY;
   if (!apiKey) {
@@ -665,11 +673,18 @@ export async function deepResearchTheme(params: {
     return EMPTY_CONTEXT;
   }
 
+  // Sprint 6.2ter (2026-05-22) — when OddballTrip sent a rich product
+  // description, use it as the PRIMARY anchor. Else fall back to the
+  // legacy short themeDescription path (pre-bedef90 deployments).
+  const richProductBlock = params.productDescription && params.productDescription.trim().length > 50
+    ? `\n\nRICH PRODUCT DESCRIPTION (the EXACT text the customer read on the product page — names the landmarks and role-play promised) :\n"""${params.productDescription.trim()}"""\n\nIMPORTANT : when this rich description names SPECIFIC landmarks (e.g. "Tour de Constance", "Porte du Rhône"), those MUST appear in your ICONIC SITES list as priority items — they are the customer's promised experience.`
+    : "";
+
   const researchPrompt = `Conduct deep research on the following theme for a tourist outdoor walking experience in ${params.city}, ${params.country}.
 
 THEME: ${params.theme}
 PITCH: ${params.themeDescription}
-NARRATIVE CONTEXT: ${params.narrative}
+NARRATIVE CONTEXT: ${params.narrative}${richProductBlock}
 
 I need you to find AUTHORITATIVE, SOURCED information about this theme. Your output will be used to anchor the factual content of an outdoor walking game — accuracy is critical.
 

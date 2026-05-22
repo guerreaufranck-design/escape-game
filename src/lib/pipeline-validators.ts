@@ -44,7 +44,9 @@ export interface ValidationIssue {
     | "sources_thin"
     | "missing_final_explanation"
     // Added 2026-05-17 (B3 GPS cross-validation) :
-    | "gps_cross_check_drift";
+    | "gps_cross_check_drift"
+    // Added 2026-05-22 (Sprint 6.2ter — promised landmarks check) :
+    | "promised_landmarks_absent";
   /** Message humain pour l'email d'alerte. */
   message: string;
   /** Détails techniques pour debug. */
@@ -172,7 +174,7 @@ export async function validateFinalGame(
   const { data: game, error: gameErr } = await supabase
     .from("games")
     .select(
-      "id, slug, title, mode, transport_mode, radius_km, final_answer, final_answer_explanation, city",
+      "id, slug, title, mode, transport_mode, radius_km, final_answer, final_answer_explanation, city, product_description",
     )
     .eq("id", gameId)
     .single();
@@ -648,6 +650,103 @@ export async function validateFinalGame(
         escapedAsIconic,
       },
     });
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  // 4.6 (Sprint 6.2ter, 2026-05-22) — PROMISED LANDMARKS PRESENCE
+  //
+  // When OddballTrip ships a rich `product_description` paragraph that
+  // EXPLICITLY names specific landmarks (e.g. "Tour de Constance" /
+  // "Porte du Rhône" / "Tour de la Poudrière" for Aigues-Mortes Echo
+  // of 1572), those landmarks MUST appear in the final stops list.
+  // The customer read that text on the product page and paid expecting
+  // to visit them.
+  //
+  // Detection : naive substring match (case-insensitive, accent-stripped)
+  // of capitalized noun phrases extracted from product_description
+  // against stop landmark_name. A more sophisticated NER approach is
+  // possible later but substring catches the common case where the
+  // description names the landmark exactly.
+  //
+  // Threshold : if product_description names ≥ 2 distinct landmarks and
+  // less than 50% of them appear in stops, flag. (Single named landmark
+  // = too noisy, could be a passing mention.)
+  // ─────────────────────────────────────────────────────────────────
+  const productDescription =
+    typeof game.product_description === "string"
+      ? game.product_description
+      : "";
+  if (productDescription.length > 100) {
+    // Extract candidate landmark names from product description :
+    // sequences of 2+ Title-Case words possibly joined by "de"/"du"/
+    // "des"/"of"/"la"/"le". Examples : "Tour de Constance",
+    // "Notre-Dame des Sablons", "Porte du Rhône".
+    const NAMED_LANDMARK_RE =
+      /([A-ZÉÈÊÀÂÎÏÔÖÛÜÇ][a-zéèêàâîïôöûüç'-]+(?:\s+(?:de\s+la|de\s+l'|de\s+|du\s+|des\s+|d'|la\s+|le\s+|les\s+|of\s+|the\s+)?[A-ZÉÈÊÀÂÎÏÔÖÛÜÇ][a-zéèêàâîïôöûüç'-]+){1,4})/g;
+    const candidates = new Set<string>();
+    const STOPWORDS_PHRASES = new Set([
+      "Saint Louis", "Saint-Louis", "Notre Dame", "Notre-Dame",
+      "Catherine de Médicis", "Saint Bartholomew", "Saint-Barthélemy",
+      "Louis IX", "Louis XIV", "Wars of Religion", "Edict of Nantes",
+      // Historical persons / events to exclude (kept as text but not landmark)
+    ]);
+    let match: RegExpExecArray | null;
+    while ((match = NAMED_LANDMARK_RE.exec(productDescription)) !== null) {
+      const phrase = match[1].trim();
+      if (phrase.length < 5 || phrase.length > 60) continue;
+      // Exclude purely historical persons / events
+      if (STOPWORDS_PHRASES.has(phrase)) continue;
+      // Exclude pure city names (already known from game.city)
+      if (
+        typeof game.city === "string" &&
+        phrase.toLowerCase().includes(game.city.split(/[,·]/)[0].trim().toLowerCase())
+      ) {
+        continue;
+      }
+      candidates.add(phrase);
+    }
+    if (candidates.size >= 2) {
+      // Match each candidate against stop landmark_name (case-insensitive,
+      // accent-stripped substring).
+      const norm = (s: string) =>
+        s
+          .toLowerCase()
+          .normalize("NFD")
+          .replace(/[̀-ͯ]/g, "")
+          .replace(/[^a-z0-9\s]/g, " ");
+      const stopNames = steps.map((s) => norm(s.landmark_name ?? ""));
+      const matched: string[] = [];
+      const missing: string[] = [];
+      for (const cand of candidates) {
+        const candNorm = norm(cand);
+        // Match if either direction substring works (stop name contains
+        // candidate OR candidate contains stop name — handles "Tour de
+        // Constance" vs "Tour de Constance, Aigues-Mortes")
+        const found = stopNames.some(
+          (sn) => sn.includes(candNorm) || candNorm.includes(sn),
+        );
+        if (found) matched.push(cand);
+        else missing.push(cand);
+      }
+      const matchRatio = matched.length / candidates.size;
+      if (matchRatio < 0.5 && missing.length > 0) {
+        issues.push({
+          code: "promised_landmarks_absent",
+          message:
+            `Product description names ${candidates.size} landmarks but only ${matched.length}/${candidates.size} appear in stops (${Math.round(matchRatio * 100)}%). The customer was promised these specific places on the product page — they MUST be in the parcours. Missing : ${missing.slice(0, 5).join(" ; ")}.`,
+          details: {
+            candidates_extracted: Array.from(candidates),
+            matched_in_stops: matched,
+            missing_in_stops: missing,
+            match_ratio: Number(matchRatio.toFixed(2)),
+          },
+        });
+      } else {
+        console.log(
+          `[pipeline-validators] promised_landmarks check : ${matched.length}/${candidates.size} matched (${Math.round(matchRatio * 100)}%) — pass`,
+        );
+      }
+    }
   }
 
   // 5. Translation completeness (if language provided)

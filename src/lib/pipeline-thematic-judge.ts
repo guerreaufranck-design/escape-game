@@ -70,6 +70,14 @@ export interface JudgeInput {
   themeDescription: string;
   /** Optional narrative provided by OddballTrip — gives extra context. */
   narrative?: string;
+  /**
+   * (Sprint 6.2ter, 2026-05-22) Rich product page description from
+   * OddballTrip. When present, the judge uses it as the CANONICAL
+   * reference (vs the short themeDescription) for scoring fit. The
+   * judge is also instructed to STRONGLY prefer stops whose name
+   * appears in the productDescription text.
+   */
+  productDescription?: string;
   /** City context — helps the judge accept regional fit for borderline cases. */
   city: string;
   /** Stops to evaluate. Provide name + a short description (landmark_history
@@ -132,9 +140,19 @@ function buildUserPrompt(input: JudgeInput): string {
         `${s.step_order}. ${s.name}${s.description ? ` — ${s.description.slice(0, 300)}` : ""}`,
     )
     .join("\n");
+
+  // Sprint 6.2ter (2026-05-22) — when productDescription is provided,
+  // use it as the canonical reference. The judge must STRONGLY prefer
+  // stops whose name appears in this text (the customer was promised
+  // these specific landmarks on the product page).
+  const richProductBlock =
+    input.productDescription && input.productDescription.trim().length > 50
+      ? `\n\nPRODUCT-PAGE DESCRIPTION (the EXACT text the customer read before buying — names the promised landmarks and role-play) :\n"""${input.productDescription.trim()}"""\n\nIMPORTANT JUDGING RULE : any stop whose name (or a clear synonym) appears in the product-page description above MUST score AT LEAST 8/10 — these are the landmarks the customer was explicitly promised. Conversely, a stop NOT mentioned in the description has to demonstrate strong thematic fit on its own merits.`
+      : "";
+
   return `GAME THEME : "${input.theme}"
 THEME DESCRIPTION : ${input.themeDescription}
-${input.narrative ? `NARRATIVE CONTEXT : ${input.narrative.slice(0, 600)}\n` : ""}CITY CONTEXT : ${input.city}
+${input.narrative ? `NARRATIVE CONTEXT : ${input.narrative.slice(0, 600)}\n` : ""}CITY CONTEXT : ${input.city}${richProductBlock}
 
 PROPOSED STOPS (${input.stops.length}) :
 ${stopsBlock}

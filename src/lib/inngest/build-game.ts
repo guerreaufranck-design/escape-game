@@ -85,6 +85,10 @@ export const buildGameDurable = inngest.createFunction(
       narrative:
         data.narrative ??
         `An outdoor adventure called "${data.title}", set in ${data.city}. ${data.themeDescription}`,
+      // Sprint 6.2ter (2026-05-22) — rich product description forwarded
+      // through the template so every downstream stage (Perplexity DR,
+      // discovery, narration, judge, validator) can ground on it.
+      productDescription: (data as { productDescription?: string }).productDescription,
       difficulty: data.difficulty ?? 3,
       estimatedDurationMin: data.estimatedDurationMin ?? 135,
       stopCount: data.stopCount ?? 8,
@@ -293,6 +297,8 @@ export const buildGameDurable = inngest.createFunction(
           theme: template.theme,
           themeDescription: template.themeDescription,
           narrative: template.narrative,
+          // Sprint 6.2ter — rich grounding text from OddballTrip
+          productDescription: template.productDescription,
           city: template.city,
           stops: phase1.discoveryLandmarks.map((l, i) => ({
             step_order: i + 1,

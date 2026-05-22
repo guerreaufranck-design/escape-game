@@ -481,6 +481,15 @@ export async function POST(request: NextRequest) {
             // payload for post-incident debugging. Strip nothing —
             // RLS already restricts games table to admins.
             originalPayload: body as Record<string, unknown>,
+            // Sprint 6.2ter (2026-05-22) — rich product description for
+            // grounding all downstream prompts (Perplexity DR, Phase 1b
+            // discovery, Phase 2a narration, thematic judge).
+            // OddballTrip ships this as `productDescription` since
+            // commit bedef90. Empty string acceptable.
+            productDescription:
+              typeof body.productDescription === "string"
+                ? body.productDescription
+                : undefined,
           },
         });
         console.log(

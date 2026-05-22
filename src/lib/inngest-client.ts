@@ -140,6 +140,25 @@ export const gameBuildRequested = eventType("game/build.requested", {
      * body is forwarded.
      */
     originalPayload?: Record<string, unknown>;
+    /**
+     * (Sprint 6.2ter, 2026-05-22) Rich product page description from
+     * OddballTrip (the ~700-1000 char paragraph shown to the customer
+     * on the product page). Named the SPECIFIC landmarks, role-play
+     * angle, and AR mechanics the customer was promised.
+     *
+     * Used as grounding text across every downstream prompt :
+     *   - Phase 1a Perplexity DR  (factual research anchored on it)
+     *   - Phase 1b discovery       (Claude scoring uses promised landmarks)
+     *   - Phase 2a narration       (Claude must match the promised role-play)
+     *   - Sprint 6.2bis judge      (judge calibrates on the rich text)
+     *   - Validator                (checks promised landmarks present)
+     *
+     * OddballTrip ships this in payload as `productDescription` since
+     * their commit bedef90 (2026-05-22). Backward compat : NULL/empty
+     * for legacy pre-shipped requests — pipeline tolerates and uses
+     * the existing themeDescription/narrative fallback.
+     */
+    productDescription?: string;
   }>(),
 });
 

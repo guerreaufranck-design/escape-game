@@ -102,6 +102,28 @@ export interface GameTemplate {
   theme: string;
   themeDescription: string;
   narrative: string;
+  /**
+   * (Sprint 6.2ter, 2026-05-22) Rich product page description sent by
+   * OddballTrip (commit bedef90). The ~700-1000 char paragraph that
+   * names the SPECIFIC landmarks, role-play angle, and AR mechanics
+   * promised to the customer on the product page.
+   *
+   * Used as the canonical grounding text across every downstream
+   * prompt :
+   *   - Phase 1a Perplexity DR  — factual research anchored on the
+   *     landmarks the product description NAMES
+   *   - Phase 1b discovery       — Claude scoring boosts candidates
+   *     whose name appears in productDescription
+   *   - Phase 2a narration       — Claude reproduces the role-play
+   *     and AR mechanics promised (e.g. "émissaire Catherine de Médicis")
+   *   - Thematic-fit judge       — judge calibrates on this richer
+   *     reference instead of the short themeDescription
+   *   - Validator                — checks promised landmarks present
+   *
+   * Optional / empty acceptable : when missing, pipeline falls back to
+   * themeDescription + narrative as before.
+   */
+  productDescription?: string;
   difficulty: number; // 1-5
   estimatedDurationMin: number;
   coverImage?: string;
@@ -716,6 +738,8 @@ export async function runPipelinePhase1aDeepResearch(
     theme: template.theme,
     themeDescription: template.themeDescription,
     narrative: template.narrative,
+    // Sprint 6.2ter (2026-05-22) — rich grounding text
+    productDescription: template.productDescription,
   });
   const ms = Date.now() - t0;
   console.log(
@@ -2586,6 +2610,10 @@ async function insertGameIntoDatabase(
     // post-incident RCA. NULL pour les callers legacy (sync path) ou
     // les jeux pré-déploiement de Sprint 6.2bis.
     original_payload: originalPayload ?? null,
+    // (Sprint 6.2ter, migration 039) Rich product page description —
+    // grounding text for all downstream prompts. NULL acceptable
+    // (OddballTrip optionally sends it; pipeline tolerates absence).
+    product_description: template.productDescription ?? null,
   });
 
   if (gameError) {
