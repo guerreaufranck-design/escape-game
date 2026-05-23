@@ -89,6 +89,99 @@ function getAnthropicClient(): Anthropic {
 }
 
 /**
+ * ANTI-HALLUCINATION GUARD — règle réutilisable injectée dans tous les
+ * prompts de génération narrative (generateGameSteps, generateEpilogue,
+ * generateIntroSpeech, generateFinalRiddle).
+ *
+ * Contexte (2026-05-23) : retours clients Cuenca + Béziers + Bordeaux ont
+ * montré que Claude invente avec assurance des faits historiques (puits
+ * inexistants à Plaza Mayor, "archives municipales 2019", "découverte
+ * archéologique 2019 sous Saint-Seurin", "Master Builder Rodrigo en 1390",
+ * etc.). À chaque fois, le client peut vérifier sur Google et constate
+ * que c'est faux → perte de confiance instantanée.
+ *
+ * Ces patterns sont SPÉCIFIQUEMENT BANNIS ici. Tout fait asserté DOIT
+ * être soit vérifiable (verifiedContext, Wikipedia, histoire enseignée),
+ * soit explicitement framé comme légende / spéculation / fiction assumée.
+ */
+const ANTI_HALLUCINATION_RULE = `
+╔═══════════════════════════════════════════════════════════════════════╗
+║ ⚠️ RULE — NO INVENTED FACTS (2026-05-23, Cuenca + Bordeaux refunds)   ║
+╠═══════════════════════════════════════════════════════════════════════╣
+║                                                                       ║
+║ The customer pays for a city visit grounded in REAL history. They     ║
+║ Google what they read. If they find ONE invented "fact" presented as  ║
+║ historical truth, they leave a 1-star review and we lose 5 sales.     ║
+║                                                                       ║
+║ ABSOLUTELY FORBIDDEN — these patterns are auto-rejected by reviewers: ║
+║                                                                       ║
+║  1. "Until [recent year], historians believed... but [year] revealed" ║
+║     → Bordeaux bug : "Jusqu'en 2019, les historiens supposaient...    ║
+║       de nouvelles preuves archéologiques ont émergé sous Saint-Seurin"║
+║     → Béziers bug : "jusqu'en 2019, lorsque les archives municipales  ║
+║       ont révélé des registres de propriété médiévaux"                ║
+║     → THESE EVENTS DO NOT EXIST. Never write recent-revelation tropes.║
+║                                                                       ║
+║  2. "Recent archaeological discoveries / documents / archives have    ║
+║     revealed..." when you cannot cite the actual discovery.           ║
+║                                                                       ║
+║  3. Specific dates for fictional events presented as historical:      ║
+║     → "21 juillet 1209, dernière performance publique du Sorcier"     ║
+║     → If the character is invented, do NOT give them a specific dated ║
+║       event. Use vague time markers : "in the spring of 1209", "on    ║
+║       a morning that summer" — never a precise date.                  ║
+║                                                                       ║
+║  4. Fictional named historical figures presented as real :            ║
+║     → "Master Builder Rodrigo first stood here in 1390" — Rodrigo is  ║
+║       invented but presented as a documented architect. BANNED.       ║
+║     → If a protagonist is fictional, use ARCHETYPE not name :         ║
+║       "the master builder", "the anonymous watchman", "the abbess's   ║
+║       secretary" — never give them a fake historical name that the    ║
+║       customer might google.                                          ║
+║                                                                       ║
+║  5. Invented institutional events :                                   ║
+║     → "the 2019 municipal archives revealed..." — banned unless real  ║
+║     → "documents declassified in 2017 show..." — banned unless real   ║
+║     → "DNA analysis in 2018 confirmed..." — banned unless real        ║
+║                                                                       ║
+║  6. Invented physical objects presented as observable :               ║
+║     → "the ancient stone well in the plaza's center" (Cuenca Plaza    ║
+║       Mayor — well does NOT exist, customer searched 30 min)          ║
+║     → "the carved lion above the entrance" (only if you actually know ║
+║       there is one). Default to GENERIC anchors : "the main facade",  ║
+║       "the entrance", "the front of the building".                    ║
+║                                                                       ║
+║ ✅ HOW TO HANDLE FICTION SAFELY :                                     ║
+║                                                                       ║
+║  A. Frame fiction explicitly : "selon la légende locale", "imagine",  ║
+║     "if these stones could speak", "ferme les yeux et vois". The      ║
+║     customer accepts fiction WHEN they know it's fiction.             ║
+║                                                                       ║
+║  B. Ground in verified facts when available (verifiedContext block,   ║
+║     Wikipedia-grade history) and ONLY add speculation explicitly      ║
+║     marked as such.                                                   ║
+║                                                                       ║
+║  C. For anecdotes : if you cite a date + event, it MUST be real and   ║
+║     cite a real source (Wikipedia / Britannica / archives). If you    ║
+║     don't have one, write a CULTURAL/PATRIMONIAL fact instead         ║
+║     ("this church was built between X and Y centuries") rather than   ║
+║     inventing a specific event.                                       ║
+║                                                                       ║
+║  D. For the EPILOGUE specifically : do NOT invent a "twist revelation"║
+║     based on fake recent research. The real twist is the player       ║
+║     understanding the connections between the stops they visited.     ║
+║     Reveal patterns, not invented archaeological discoveries.         ║
+║                                                                       ║
+║ SELF-CHECK before emitting each paragraph :                           ║
+║   - "Could the customer fact-check this on Google and find I lied?"   ║
+║   - If yes → REWRITE with a generic patrimonial truth or explicit     ║
+║     legend framing.                                                   ║
+║                                                                       ║
+╚═══════════════════════════════════════════════════════════════════════╝
+`;
+
+
+/**
  * Generate escape game steps from verified research data
  * Claude creates immersive riddles around pre-verified answers
  */
@@ -371,7 +464,7 @@ from "we sent the player to a hotel with an invented Resistance story".
 `
     : "";
 
-  const prompt = `${genreOverlay}${verifiedFactsBlock}${thematicAnchorsBlock}You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
+  const prompt = `${ANTI_HALLUCINATION_RULE}${genreOverlay}${verifiedFactsBlock}${thematicAnchorsBlock}You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
 
 ═══════════════════════════════════════════════════════════════════════
 🎯 CORE PRINCIPLE — the customer bought A CITY VISIT FIRST, theme second
@@ -1795,7 +1888,7 @@ export async function generateEpilogue(params: {
 
   const genreOverlay = buildGenreEpilogueOverlay(params.genre ?? DEFAULT_GENRE);
 
-  const prompt = `${genreOverlay}You are a master storyteller writing the EPILOGUE of an outdoor escape game adventure that the player has just completed in ${params.city}, ${params.country}.
+  const prompt = `${ANTI_HALLUCINATION_RULE}${genreOverlay}You are a master storyteller writing the EPILOGUE of an outdoor escape game adventure that the player has just completed in ${params.city}, ${params.country}.
 
 GAME THEME: ${params.theme}
 GAME NARRATIVE: ${params.narrative}
@@ -2406,7 +2499,7 @@ export async function generateIntroSpeech(params: {
   stopCount: number;
 }): Promise<IntroSpeechResult> {
   const client = getAnthropicClient();
-  const prompt = `You are scripting the opening monologue of an outdoor walking game guide.
+  const prompt = `${ANTI_HALLUCINATION_RULE}You are scripting the opening monologue of an outdoor walking game guide.
 
 GAME
   Title: "${params.title}"
@@ -2527,7 +2620,7 @@ export async function generateFinalRiddle(params: {
     )
     .join("\n");
 
-  const prompt = `You are designing the final puzzle of an outdoor walking game in ${params.city}.
+  const prompt = `${ANTI_HALLUCINATION_RULE}You are designing the final puzzle of an outdoor walking game in ${params.city}.
 
 GAME
   Title: "${params.title}"

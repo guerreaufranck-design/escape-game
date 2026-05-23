@@ -261,6 +261,20 @@ export interface SelectionResult {
  * sert uniquement à classer en interne.
  */
 export function computeTouristicScore(candidate: NearbyCandidate): number {
+  // ━━━ Signal PRIMAIRE (2026-05-23, post-Bordeaux fix) ━━━━━━━━━━━━━━━━━
+  // CITY-FIRST themeScore (0-10) — propagé depuis le proposer Perplexity
+  // qui a appliqué la formule base_patrimoine + theme_bonus selon les
+  // règles "must-see filter" + "mandatory category checklist".
+  // Quand présent, il PILOTE le tri : un landmark iconique avec
+  // themeScore=9 doit gagner contre une église mineure rating 4.7 mais
+  // themeScore=4. Avant ce fix, Bordeaux V13.3 perdait Place de la
+  // Bourse (faible rating) au profit d'églises mineures.
+  // Pondération forte (×10) pour dominer le signal Google rating.
+  const themeScoreBonus =
+    typeof candidate.themeScore === "number"
+      ? candidate.themeScore * 10
+      : 0;
+
   // Signal 1 : rating × log(reviews) — Bayesian-ish
   const rating = candidate.rating ?? 3.5;
   const reviews = candidate.userRatingsTotal ?? 1;
@@ -280,7 +294,7 @@ export function computeTouristicScore(candidate: NearbyCandidate): number {
   // À 0m : bonus 1.0. À 2500m : bonus ~0. Linéaire.
   const proximityBonus = Math.max(0, 1 - candidate.distanceM / 2500);
 
-  return ratingScore + typeBonus + proximityBonus;
+  return themeScoreBonus + ratingScore + typeBonus + proximityBonus;
 }
 
 /**
@@ -443,8 +457,18 @@ export function selectStopsByGeometry(params: SelectionParams): SelectionResult 
   );
   let relaxationSteps = 0;
 
-  // Relaxation progressive si on est sous minN
-  while (selected.length < minN && attemptMinDist > ABSOLUTE_FLOOR_M) {
+  // Relaxation progressive pour atteindre TARGET (pas juste MIN).
+  // BUG fix 2026-05-23 (post-Bordeaux V13.3 7/8) : avant cette modif
+  // on ne relaxait qu'en dessous de minN=6. Conséquence : Bordeaux
+  // avait 7 candidats survivants après le 1er pick (min-distance 150m
+  // initial), pool contenait 8+ candidats, mais on s'arrêtait à 7 car
+  // 7 >= minN=6. Le client paie pour 8 stops et reçoit 7.
+  //
+  // Nouveau comportement : on relaxe jusqu'à atteindre targetN, sauf
+  // si on touche le plancher ABSOLUTE_FLOOR_M (au-delà = stops
+  // physiquement empilés). Si le pool est plus petit que target,
+  // on s'arrête naturellement.
+  while (selected.length < targetN && attemptMinDist > ABSOLUTE_FLOOR_M) {
     attemptMinDist = Math.max(
       ABSOLUTE_FLOOR_M,
       attemptMinDist - RELAXATION_STEP_M,
@@ -455,8 +479,13 @@ export function selectStopsByGeometry(params: SelectionParams): SelectionResult 
       targetN,
       attemptMinDist,
     );
-    selected = retry.selected;
-    rejected = retry.rejected;
+    // Garde-fou : on n'accepte le retry que s'il améliore (ou égale)
+    // ce qu'on avait déjà. Évite de régresser si la relaxation aboutit
+    // à un pick suboptimal par hasard.
+    if (retry.selected.length >= selected.length) {
+      selected = retry.selected;
+      rejected = retry.rejected;
+    }
   }
 
   const actualMinPairDistanceM = computeMinPairDistance(selected);

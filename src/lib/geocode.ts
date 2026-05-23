@@ -784,6 +784,20 @@ export interface NearbyCandidate {
   userRatingsTotal?: number;
   /** Distance au point de référence en mètres. */
   distanceM: number;
+  /**
+   * CITY-FIRST themeScore — 0-10. Propagé depuis le proposer (Perplexity
+   * deep-research) où il représente `base_patrimoine + theme_bonus`.
+   * 8-10 = landmark iconique de la ville (cathédrale, place centrale,
+   * pont historique, ruines romaines, etc.) qu'il faut PRÉSERVER même
+   * si rating Google moyen. Quand absent, l'ancienne logique (rating
+   * × reviews + type bonus) s'applique seule.
+   *
+   * AJOUTÉ 2026-05-23 — sans ce champ, `selectStopsByGeometry` re-triait
+   * uniquement par rating Google et écartait Place de la Bourse (faible
+   * rating malgré son statut iconique) au profit d'églises mineures.
+   * Bug reproduit sur Bordeaux V13.3 (Place de la Bourse absente).
+   */
+  themeScore?: number;
 }
 
 /**
