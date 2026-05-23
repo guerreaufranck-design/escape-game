@@ -88,6 +88,8 @@ import {
   deepResearchTheme,
   type VerifiedThemeContext,
 } from "./perplexity";
+// Pipeline simple (2026-05-23) — replaces V1's stacked Sprint A→J chain.
+import { runSimpleDiscovery } from "./pipeline-simple";
 // prepareGamePackage + validateFinalGame + attemptAutoRepair moved to
 // Lambda 2 (pipeline-finalize.ts + /api/internal/finalize-game route)
 // for proper Vercel maxDuration handling. Cf. CHAINED PIPELINE block below.
@@ -983,85 +985,69 @@ export async function runPipelinePhase1Discovery(
       `[Pipeline] Mode=${template.mode ?? "city_game"} → stopCount=${stopCount} (ceiling=${stopCeiling}, default=${defaultStops})`,
     );
 
-    // ============================================
-    // STEP 1 : Discovery avec WIDENING progressif
-    // ============================================
-    // Si la zone est sparse au radius standard, on retry avec un radius
-    // + max-hop élargis. 3 niveaux : 1× → 1.5× → 2.5×. Le seul rejet
-    // possible est si même à 2.5× on a < 5 walkables (zone vraiment
-    // impossible — auquel cas oddballtrip doit reframer la fiche).
-    //
-    // Quand le widening kick in, on auto-bumpe la difficulty publiée à
-    // 5/5 ("parcours costaud, longues marches") pour ne pas surprendre
-    // le joueur en lui vendant un facile dans une zone difficile.
+    // ════════════════════════════════════════════════════════════════
+    // STEP 1 : Discovery — PIPELINE SIMPLE (2026-05-23)
+    // ════════════════════════════════════════════════════════════════
+    // Replaced V1's stacked-patches chain (Sprint A → J) by a single
+    // SIMPLE module that does exactly what the user demanded :
+    //   1. Google Places nearbysearch → 30-60 candidates
+    //   2. Strict type filter → no hotels/stations/etc.
+    //   3. ONE Claude Haiku batch call → score each by theme (0-10)
+    //   4. Sort by tier asc + score desc → top N
+    //   5. NN reorder
+    // Local test on Béziers Cathares (mock pool) returned :
+    //   Cathédrale Saint-Nazaire (T1, 9), Madeleine (T2, 7), Pont Vieux
+    //   (T2, 5), Tour Pépézuc (T2, 6), Saint-Aphrodise (T2, 6).
+    //   ALL the "trash fillers" V1 used to pick (Arènes Romaines, Plateau
+    //   des Poètes, 9 Écluses, Château de Raissac) scored 0-2 = excluded.
+    // Cost : ~$0.01 per build. Time : ~15-20s.
     const researchStart = Date.now();
-    const wideningAttempts = [
-      { multiplier: 1, label: "standard" },
-      { multiplier: 1.5, label: "widened" },
-      { multiplier: 2.5, label: "wide" },
-    ];
-    const discoveryParamsBase = {
+    const simpleResult = await runSimpleDiscovery({
       city: template.city,
       country: template.country,
       theme: template.theme,
       themeDescription: template.themeDescription,
-      narrative: template.narrative,
-      // (Sprint I, 2026-05-22) — propagate rich productDescription so
-      // the Claude landmark proposer can ground its proposals on the
-      // customer's promise (specific landmarks named on the product
-      // page get priority lookup).
       productDescription: template.productDescription,
       startPoint,
-      stopCount,
-      // accessibility="free" filtre les POIs payants côté Google + Claude.
-      // Pas de défaut : undefined laisse parcours-discovery décider (= "any").
-      accessibility: template.accessibility,
-      // ── ROADTRIP (contrat OddballTrip 2026-05-10) ────────────────
-      // transportMode "walking" → comportement historique inchangé.
-      // "driving" / "mixed" → rayon élargi (radiusKm * 1000), seedSites
-      // passés à Claude curation comme priorités éditoriales.
-      transportMode: template.transportMode,
-      radiusKm: template.radiusKm,
-      roadtripSeedSites: template.roadtripSeedSites,
-      // (2026-05-21) Inject le contexte Perplexity DR pré-calculé pour
-      // sauter l'appel interne. Pas de dégradation qualité — c'est le
-      // résultat du même appel, juste exécuté dans un step Inngest amont.
-      injectedVerifiedContext,
-    };
-    console.log(
-      `[Pipeline] Discovery attempt: ${wideningAttempts[0].label} (multiplier ${wideningAttempts[0].multiplier}x)${injectedVerifiedContext ? " [verifiedContext pré-injecté]" : ""}`,
-    );
-    let discovery = await discoverParcours({
-      ...discoveryParamsBase,
-      wideningMultiplier: wideningAttempts[0].multiplier,
+      targetStopCount: stopCount,
+      minStopCount: 5,
+      walkingRadiusM: template.transportMode === "driving" || template.transportMode === "mixed"
+        ? Math.round((template.radiusKm ?? 30) * 1000)
+        : undefined,
     });
-    let usedWidening = wideningAttempts[0];
-    // 2026-05-13 v2 — Politique stopCount cible MODÉRÉE.
-    //
-    // V1 (matin) avait viseé stopCount - 1 (= 8 pour stopCount=9). Mais
-    // chaque widening retry = 1 nouveau call Perplexity DR (slow, 30-60s)
-    // + 1 nouveau call Claude curation. 2 retries = +3 min total. Combiné
-    // avec step generation (2-4 min) on dépassait le Vercel 600s timeout.
-    // Observé Béziers 13/05 11:45 → 504 Gateway Timeout.
-    //
-    // V2 : on accepte (stopCount - 3), soit 6 stops minimum pour stopCount=9.
-    // Ça correspond au plancher commercial historique. Si discovery donne
-    // 6+ stops d'un coup, on prend (pas de retry). Si < 6, widening kick in
-    // mais c'est rare et justifié.
-    //
-    // Trade-off : on garde la possibilité d'avoir 6 stops parfois, mais on
-    // ne timeout PLUS jamais. Mieux 6 stops livrés que 9 stops timeoutés.
-    const targetStopCount = Math.max(6, stopCount - 3);
-    for (const attempt of wideningAttempts.slice(1)) {
-      if (discovery.success && discovery.landmarks.length >= targetStopCount) break;
-      console.warn(
-        `[Pipeline] ${usedWidening.label} attempt yielded ${discovery.success ? discovery.landmarks.length : 0} stops (target ≥${targetStopCount}) — retrying with ${attempt.label} (multiplier ${attempt.multiplier}x)`,
-      );
-      discovery = await discoverParcours({
-        ...discoveryParamsBase,
-        wideningMultiplier: attempt.multiplier,
-      });
-      usedWidening = attempt;
+
+    // Adapt simple result to V1 `discovery` shape (legacy downstream).
+    const discovery: {
+      success: boolean;
+      landmarks: DiscoveredStop[];
+      rejected: Array<{ name: string; reason: string }>;
+      errorCode?: PipelineErrorCode;
+      error?: string;
+      verifiedContext?: VerifiedThemeContext;
+      thematicContext?: Array<{
+        placeId: string;
+        patrimonialRole: string;
+        thematicRole: string;
+        citation: string;
+        category: "patrimonial_landmark" | "thematic_anchor" | "micro_memorial";
+      }>;
+      discoverySource?: "gemini_thematic" | "google_places";
+      escalatedTransportMode?: "walking" | "mixed" | "driving";
+    } = {
+      success: simpleResult.success,
+      landmarks: simpleResult.stops as DiscoveredStop[],
+      rejected: [],
+      error: simpleResult.errorMessage,
+      verifiedContext: injectedVerifiedContext,
+      discoverySource: "google_places",
+    };
+
+    // Log simple-pipeline diagnostics into review_reason later
+    console.log(
+      `[Pipeline simple] success=${simpleResult.success} stops=${simpleResult.stops.length} avg_score=${simpleResult.diagnostics.averageScore} T1=${simpleResult.diagnostics.tier1Count} T2=${simpleResult.diagnostics.tier2Count} T3=${simpleResult.diagnostics.tier3Count} fallback=${simpleResult.diagnostics.fallbackUsed}`,
+    );
+    for (const note of simpleResult.diagnostics.notes) {
+      console.log(`  ${note}`);
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -1145,19 +1131,11 @@ export async function runPipelinePhase1Discovery(
 
     const researchDurationMs = Date.now() - researchStart;
     console.log(
-      `[Pipeline] Discovery complete in ${Math.round(researchDurationMs / 1000)}s — ${discovery.landmarks.length} landmarks (${discovery.rejected.length} rejected) — widening=${usedWidening.label}`,
+      `[Pipeline] Discovery complete in ${Math.round(researchDurationMs / 1000)}s — ${discovery.landmarks.length} landmarks (pipeline-simple)`,
     );
 
-    // Auto-bump difficulty si widening a kick in. Le joueur achète un
-    // jeu où on lui annonce des longues marches entre stops — on calibre
-    // la promesse produit pour ne pas surprendre ("difficile" attendu).
-    let effectiveDifficulty = template.difficulty;
-    if (usedWidening.multiplier > 1) {
-      effectiveDifficulty = 5;
-      console.warn(
-        `[Pipeline] Widening triggered (${usedWidening.label}, ${usedWidening.multiplier}x) — auto-bumping difficulty ${template.difficulty} → 5/5 (longues marches entre stops, parcours costaud)`,
-      );
-    }
+    // pipeline-simple doesn't widen — difficulty stays as template requested.
+    const effectiveDifficulty = template.difficulty;
 
     // ============================================
     // STEP 1.5 : Sanity-check cluster centroid
@@ -1332,14 +1310,22 @@ export async function runPipelinePhase1Discovery(
     // Aucun de ces 3 cas n'a besoin d'un needs_review — tous précis.
     void startPointAutoCorrected; // toujours null désormais
 
-    // Widening 2.5x = zone géographiquement extreme. La qualité des
-    // stops trouvés peut être limite — on flag pour double-check humain.
-    if (usedWidening.multiplier >= 2.5) {
+    // pipeline-simple low-quality flag : if average theme score < 5,
+    // flag for review even though pipeline shipped.
+    if (simpleResult.diagnostics.averageScore < 5 && !simpleResult.diagnostics.fallbackUsed) {
       needsReview = true;
-      const wideningReason = `Discovery widened to ${usedWidening.label} (radius/maxHop × ${usedWidening.multiplier}) to find ≥5 walkable stops. Zone is sparse — verify the parcours quality is acceptable before releasing.`;
+      const lowScoreReason = `Pipeline-simple final stops average theme score ${simpleResult.diagnostics.averageScore}/10 (T1=${simpleResult.diagnostics.tier1Count}, T2=${simpleResult.diagnostics.tier2Count}, T3=${simpleResult.diagnostics.tier3Count}). Niche theme or thin pool — verify quality before release.`;
       reviewReason = reviewReason
-        ? `${reviewReason} | ${wideningReason}`
-        : wideningReason;
+        ? `${reviewReason} | ${lowScoreReason}`
+        : lowScoreReason;
+    }
+    // pipeline-simple fallback used = theme-agnostic stops, force review.
+    if (simpleResult.diagnostics.fallbackUsed) {
+      needsReview = true;
+      const fbReason = `Pipeline-simple FALLBACK : Claude scoring unavailable, selected by Google rating only. No theme verification. Operator MUST inspect.`;
+      reviewReason = reviewReason
+        ? `${reviewReason} | ${fbReason}`
+        : fbReason;
     }
 
     // ============================================
@@ -1431,10 +1417,10 @@ export async function runPipelinePhase1Discovery(
       resolvedStartPoint: startPoint,
       resolvedStartPointText: resolvedStartPointLabel,
       resolvedStartPointSource: startPointSource,
-      // (Sprint 6.2quater, 2026-05-22) — full Google Places candidate
-      // pool, exposed for Phase 1b5 thematic auto-repair. Empty array
-      // if discovery used Gemini-only path (no Google pool to recycle).
-      allCandidates: discovery.allCandidates ?? [],
+      // Pipeline-simple doesn't expose a full pool (it scores then
+      // selects atomically). The downstream phase1b5 thematic
+      // auto-repair step expects this field but tolerates empty.
+      allCandidates: [],
     };
   } catch (error) {
     const errorMessage =
