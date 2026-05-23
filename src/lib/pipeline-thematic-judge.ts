@@ -108,11 +108,25 @@ SCORING FORMULA :
        (Cathédrale, Casas Colgadas, Tour Eiffel)
     7-8 Top tourist patrimoine (named churches, towers, Roman ruins,
         named bridges, historic squares with own Google entry)
-    5-6 Notable heritage (secondary churches, smaller museums in
-        historic buildings, named historic streets)
-    3-4 Decent stop (named buildings, atmospheric parks)
-    1-2 Generic (random promenade, anonymous park, parking)
-    0   Anti-patrimoine (gas station, fast-food, modern mall)
+    5-6 Notable heritage — ANY MUSEUM (even off-theme like a
+        bullfighting "Musée Taurin", a regional art museum), any
+        named public garden ("Jardin de la Plantade"), secondary
+        churches, named historic streets, named promenades
+        ("Allées Paul Riquet")
+    3-4 Generic but named (named atmospheric small buildings)
+    1-2 Anonymous (random unnamed path, parking lot)
+    0   Anti-patrimoine ONLY (gas station, fast-food, modern mall,
+        supermarket, hotel chain).
+
+  🚨 V12 CALIBRATION FIX :
+     NEVER score a museum or named public garden below 4. They are
+     PATRIMOINE TOURISTIQUE by definition. The Musée Taurin in
+     Béziers = base 5 minimum (museum = cultural visit), even on a
+     Cathar theme. Narrator weaves : "Long after the Cathares fell,
+     this building became a bullfighting museum — but its walls
+     remember the smoke..."
+
+     Same for Jardin de la Plantade = base 4-5 (public garden, named).
 
   THEME BONUS :
     +1  Documented connection to theme (specific event/figure/era)
@@ -159,12 +173,12 @@ OUTPUT : strict JSON, no markdown, no commentary.
 }
 
 VERDICT RULES (compute yourself, don't deviate) :
-  - "pass" : average_score >= 5.5 AND min_score >= 3
-  - "weak" : average_score >= 4.0 AND min_score >= 1
-  - "fail" : average_score < 4.0 OR min_score = 0
-  (V11 — thresholds lowered because new scoring is base-patrimoine
-   inclusive : Tier 2 stops realistically score 5-7 not 3-5, so
-   the pass bar shifts down to match)`;
+  - "pass" : average_score >= 5.5
+  - "weak" : average_score >= 4.0
+  - "fail" : average_score < 4.0
+  (V12 — verdict on AVERAGE ONLY, no min_score floor. A single weak-
+   theme stop should not torpedo a game with good average quality —
+   narrator weaves it in.)`;
 
 function buildUserPrompt(input: JudgeInput): string {
   const stopsBlock = input.stops
@@ -262,11 +276,14 @@ export async function judgeThematicRelevance(
 
   // Recompute verdict ourselves (model verdict is double-check)
   let verdict: ThematicVerdict;
-  // V11 (2026-05-23) thresholds lowered to match new city-first scoring
-  // formula (base patrimoine + theme bonus). Tier 2 stops legitimately
-  // score 5-7 now, so the pass bar shifts down.
-  if (average >= 5.5 && min >= 3) verdict = "pass";
-  else if (average >= 4.0 && min >= 1) verdict = "weak";
+  // V12 (2026-05-23) — verdict on AVERAGE ONLY, no min threshold.
+  // Reason : even if 1 stop scores low (off-theme museum etc.), the
+  // narrator can weave it into the story. As long as the AVERAGE
+  // quality is good, we ship. The user mandate : "client buys a
+  // city visit, theme is a narrative layer — never block on a
+  // single weak-theme stop".
+  if (average >= 5.5) verdict = "pass";
+  else if (average >= 4.0) verdict = "weak";
   else verdict = "fail";
 
   const summary =
