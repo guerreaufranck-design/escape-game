@@ -1310,14 +1310,22 @@ export async function runPipelinePhase1Discovery(
     // Aucun de ces 3 cas n'a besoin d'un needs_review — tous précis.
     void startPointAutoCorrected; // toujours null désormais
 
-    // pipeline-simple low-quality flag : if average theme score < 5,
-    // flag for review even though pipeline shipped.
-    if (simpleResult.diagnostics.averageScore < 5 && !simpleResult.diagnostics.fallbackUsed) {
+    // V13 (2026-05-23) — pipeline-simple low-quality flag :
+    // Only trigger needs_review if average score < 4.0 (CATASTROPHIC).
+    // Avg 4.0-5.5 is INFORMATIONAL only (log to review_reason but
+    // do NOT block release — narrator weaves the theme on top).
+    if (simpleResult.diagnostics.averageScore < 4.0 && !simpleResult.diagnostics.fallbackUsed) {
       needsReview = true;
-      const lowScoreReason = `Pipeline-simple final stops average theme score ${simpleResult.diagnostics.averageScore}/10 (T1=${simpleResult.diagnostics.tier1Count}, T2=${simpleResult.diagnostics.tier2Count}, T3=${simpleResult.diagnostics.tier3Count}). Niche theme or thin pool — verify quality before release.`;
+      const lowScoreReason = `Pipeline-simple final stops average theme score ${simpleResult.diagnostics.averageScore}/10 (T1=${simpleResult.diagnostics.tier1Count}, T2=${simpleResult.diagnostics.tier2Count}, T3=${simpleResult.diagnostics.tier3Count}). Catastrophic theme mismatch — operator must inspect.`;
       reviewReason = reviewReason
         ? `${reviewReason} | ${lowScoreReason}`
         : lowScoreReason;
+    } else if (simpleResult.diagnostics.averageScore < 5.5) {
+      // 4.0-5.5 : log as info only, no needs_review trigger
+      const infoReason = `[INFO] Pipeline-simple avg theme score ${simpleResult.diagnostics.averageScore}/10 (T1=${simpleResult.diagnostics.tier1Count}, T2=${simpleResult.diagnostics.tier2Count}, T3=${simpleResult.diagnostics.tier3Count}). Theme moderate, narrator weaves on top.`;
+      reviewReason = reviewReason
+        ? `${reviewReason} | ${infoReason}`
+        : infoReason;
     }
     // pipeline-simple fallback used = theme-agnostic stops, force review.
     if (simpleResult.diagnostics.fallbackUsed) {

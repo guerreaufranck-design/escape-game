@@ -43,13 +43,17 @@ import { selectStopsByGeometry } from "./parcours-selection";
 
 const DEFAULT_WALKING_RADIUS_M = 1_750; // 3.5km diameter
 const DEFAULT_TARGET_STOPS = 8;
-const DEFAULT_MIN_STOPS = 6; // V10 bumped from 5 to match V1 sanity-check floor (was below_floor flag)
+const DEFAULT_MIN_STOPS = 6; // V10 bumped from 5 to match V1 sanity-check floor
 const MIN_INTER_STOP_M = 150; // Anti twin stops (= 2 min de marche)
-/** Rendez-vous gap : start point ≠ stop 1. Le joueur arrive au RDV
- *  (entrée d'un café, panneau, etc.) puis MARCHE vers le 1er stop —
- *  c'est ce qui donne l'impression que "le jeu commence". Sans gap,
- *  stop 1 est sur le RDV et le joueur valide en 13 secondes. */
-const RENDEZVOUS_GAP_M = 150;
+/**
+ * V13 (2026-05-23) — RDV gap REMOVED.
+ *
+ * Per user mandate : "OddballTrip stocke le startPointText sur la fiche
+ * produit, on ne peut pas le changer. Donc on accepte que startPoint =
+ * stop 1." Le guide intro joue au RDV → le joueur active l'AR sur
+ * place → game starts immediately.
+ */
+const RENDEZVOUS_GAP_M = 0;
 
 // ═══════════════════════════════════════════════════════════════════
 // FILTERS — types et noms à reject
