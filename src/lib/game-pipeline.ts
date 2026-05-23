@@ -1064,12 +1064,73 @@ export async function runPipelinePhase1Discovery(
       usedWidening = attempt;
     }
 
-    // Floor absolu : 6 stops. Si même à 2.5x widening on a < 6, on FAIL
-    // (la zone est éditorialement à reframer).
-    if (!discovery.success || discovery.landmarks.length < 6) {
+    // ════════════════════════════════════════════════════════════════
+    // PATCH 100% INSERT GUARANTEE (2026-05-23) — pas user demand
+    // ════════════════════════════════════════════════════════════════
+    // V1 throw-ait si < 6 stops trouvés → purchase customer bloquée,
+    // refund Stripe nécessaire. Avec ce patch :
+    //   - Si discovery a trouvé ≥ 3 stops → on publie avec needs_review
+    //     (mieux qu'un jeu inexistant pour un client qui a payé)
+    //   - Si < 3 stops → fallback ULTIME : Google Places top tourist
+    //     attractions de la ville (théme-agnostique), publie 5 stops
+    //     "découverte ville" + needs_review explicite
+    //   - JAMAIS de throw qui crash le pipeline
+    if (!discovery.success || discovery.landmarks.length < 3) {
+      console.warn(
+        `[Pipeline] Discovery returned ${discovery.success ? discovery.landmarks.length : 0} stops (need ≥3) — TRIGGERING THEME-AGNOSTIC FALLBACK to guarantee insert`,
+      );
+      try {
+        const fallback = await discoverNearbyLandmarks(startPoint, {
+          radiusM: 3000,
+          limit: 30,
+          types: [
+            "tourist_attraction",
+            "museum",
+            "church",
+            "park",
+            "place_of_worship",
+            "city_hall",
+          ],
+        });
+        // Take top 5 by rating
+        const topFallback = [...fallback]
+          .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+          .slice(0, 5);
+        if (topFallback.length >= 3) {
+          discovery.landmarks = topFallback.map((c) => ({
+            name: c.name,
+            description: `Theme-agnostic fallback stop (Google top tourist_attraction in ${template.city})`,
+            source: "fallback-tourist-attractions",
+            lat: c.lat,
+            lon: c.lon,
+            placeId: c.placeId,
+            distanceFromStartM: c.distanceM,
+            stopMode: "radar" as const,
+            navigationHint: undefined,
+            types: c.types,
+            rating: c.rating,
+          }));
+          discovery.success = true;
+          console.warn(
+            `[Pipeline] FALLBACK installed ${discovery.landmarks.length} generic stops for ${template.city} — game will publish with needs_review=true`,
+          );
+        } else {
+          console.warn(
+            `[Pipeline] Even fallback failed: only ${topFallback.length} top-rated POIs in 3km. Pipeline will throw.`,
+          );
+        }
+      } catch (fallbackErr) {
+        console.warn(
+          `[Pipeline] Fallback discovery threw: ${fallbackErr instanceof Error ? fallbackErr.message : fallbackErr}`,
+        );
+      }
+    }
+    // Final guard : if even fallback didn't work, then throw (genuinely
+    // unfixable — e.g., Google Places API down OR city name invalid).
+    if (!discovery.success || discovery.landmarks.length < 3) {
       const err = new Error(
         discovery.error ||
-          `All widening attempts failed — zone too sparse for ≥6 walkable stops even at 2.5× radius/maxHop. Reframe the fiche editorially.`,
+          `Pipeline fallback exhausted — Google Places returned ${discovery.landmarks.length} stops for "${template.city}". Most likely : invalid city name OR Google API down. Manual review required.`,
       ) as Error & {
         code?: PipelineErrorCode;
         failedLandmarks?: FailedLandmark[];
@@ -1130,6 +1191,19 @@ export async function runPipelinePhase1Discovery(
       : 5_000;
     let needsReview = false;
     let reviewReason: string | undefined;
+
+    // PATCH 100% INSERT GUARANTEE — if we used the theme-agnostic
+    // fallback (top tourist_attraction), force needs_review=true with
+    // explicit reason so the operator knows.
+    const usedFallback = discovery.landmarks.every(
+      (l) => l.source === "fallback-tourist-attractions",
+    );
+    if (usedFallback) {
+      needsReview = true;
+      reviewReason = `[FALLBACK_THEME_AGNOSTIC] Theme-specific discovery returned <3 stops for theme "${template.theme}". Pipeline fell back to Google Places top tourist_attractions in ${template.city}. Game published WITHOUT theme alignment — operator MUST manually edit stops + narration before release, OR refund the customer.`;
+      console.warn(`[Pipeline] ⚠ needs_review=true — ${reviewReason}`);
+    }
+
     {
       const n = discovery.landmarks.length;
       const cx = discovery.landmarks.reduce((s, l) => s + l.lat, 0) / n;
