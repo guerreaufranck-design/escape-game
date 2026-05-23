@@ -163,6 +163,7 @@ export async function GET(
           currentRiddle = {
             title: translated.title || enFields.title,
             text: translated.riddle_text || enFields.riddle_text,
+            landmarkName: step.landmark_name ?? null,
             image: step.riddle_image,
             hasPhotoChallenge: step.has_photo_challenge,
             answerSource,
@@ -171,6 +172,7 @@ export async function GET(
           currentRiddle = {
             title: t(step.title, locale),
             text: t(step.riddle_text, locale),
+            landmarkName: step.landmark_name ?? null,
             image: step.riddle_image,
             hasPhotoChallenge: step.has_photo_challenge,
             answerSource,

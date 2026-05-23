@@ -37,6 +37,15 @@ export interface GameState {
   currentRiddle: {
     title: string;
     text: string;
+    /**
+     * Real-world landmark name (e.g. "Plaza Mayor", "Cathédrale Saint-Nazaire").
+     * Exposed to the player as a navigational anchor so they ALWAYS know
+     * which physical place they're heading to — even before opening AR.
+     * Fixes the Cuenca refund where the poetic title ("Plaza of Desperate
+     * Petitions") gave the player zero clue which actual square to find.
+     * Null only for legacy games stored before the landmark_name column.
+     */
+    landmarkName: string | null;
     image: string | null;
     hasPhotoChallenge: boolean;
     /**

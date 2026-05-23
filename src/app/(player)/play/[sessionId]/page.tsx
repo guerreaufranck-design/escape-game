@@ -1019,27 +1019,69 @@ export default function PlayPage() {
             </CardContent>
           </Card>
 
-          {/* AR mode teaser — prominent feature announcement */}
-          <Card className="bg-gradient-to-br from-emerald-950/60 to-slate-900/80 border-emerald-500/30">
-            <CardContent className="p-4">
+          {/* AR mode teaser — refonte pédagogique 2026-05-23 post-Cuenca.
+              Le client de Cuenca a refusé la RA parce qu'il ne savait pas
+              ce que c'était ("there are no puzzles" + "GPS bug"). Personne
+              ne sait ce qu'est la RA. Cette carte explique :
+                1. CE QUE C'EST (1 phrase, vulgarisée)
+                2. COMMENT FAIRE (3 étapes claires)
+                3. QUOI ATTENDRE (la magie : un mot apparaît sur la façade)
+              Pas de jargon "augmented reality" en gros, pas de promesse
+              creuse. On dit "votre caméra fait apparaître la réponse sur
+              le mur" — visuel, concret, démystifié. */}
+          <Card className="bg-gradient-to-br from-fuchsia-950/60 to-slate-900/80 border-fuchsia-500/40 shadow-lg shadow-fuchsia-900/20">
+            <CardContent className="p-4 space-y-3">
               <div className="flex items-start gap-3">
-                <div className="flex-shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/40">
-                  <Sparkles className="h-5 w-5 text-emerald-300" />
+                <div className="flex-shrink-0 inline-flex items-center justify-center w-10 h-10 rounded-xl bg-fuchsia-500/20 border border-fuchsia-500/40">
+                  <Camera className="h-5 w-5 text-fuchsia-300" />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className="text-sm font-bold text-emerald-300">
-                      {tt('play.arIntroTitle', locale)}
+                  <div className="flex items-center gap-2 mb-1 flex-wrap">
+                    <h3 className="text-sm font-bold text-fuchsia-200">
+                      {tt('play.arEduTitle', locale) || 'Le mode caméra magique'}
                     </h3>
-                    <Badge className="bg-emerald-500/20 text-emerald-300 border-emerald-500/40 text-[9px] font-bold uppercase tracking-wider">
+                    <Badge className="bg-fuchsia-500/20 text-fuchsia-200 border-fuchsia-500/40 text-[9px] font-bold uppercase tracking-wider">
                       {tt('play.arIntroBadge', locale)}
                     </Badge>
                   </div>
                   <p className="text-xs text-slate-300 leading-relaxed">
-                    {tt('play.arIntroDesc', locale)}
+                    {tt('play.arEduDesc', locale) ||
+                      'Sur chaque lieu, un mot caché apparaît sur le mur quand vous pointez la caméra de votre téléphone vers la façade. Pas besoin d\'app à installer — c\'est directement dans le jeu.'}
                   </p>
                 </div>
               </div>
+              {/* 3-step pictogram guide */}
+              <div className="grid grid-cols-3 gap-2 pt-2 border-t border-fuchsia-900/40">
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-fuchsia-500/15 border border-fuchsia-500/30 mb-1.5">
+                    <span className="text-base font-bold text-fuchsia-300">1</span>
+                  </div>
+                  <p className="text-[10px] text-fuchsia-100/80 leading-tight">
+                    {tt('play.arStep1', locale) || 'Marchez jusqu\'au lieu indiqué'}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-fuchsia-500/15 border border-fuchsia-500/30 mb-1.5">
+                    <span className="text-base font-bold text-fuchsia-300">2</span>
+                  </div>
+                  <p className="text-[10px] text-fuchsia-100/80 leading-tight">
+                    {tt('play.arStep2', locale) || 'Touchez le bouton violet'}
+                  </p>
+                </div>
+                <div className="text-center">
+                  <div className="inline-flex items-center justify-center w-9 h-9 rounded-full bg-fuchsia-500/15 border border-fuchsia-500/30 mb-1.5">
+                    <span className="text-base font-bold text-fuchsia-300">3</span>
+                  </div>
+                  <p className="text-[10px] text-fuchsia-100/80 leading-tight">
+                    {tt('play.arStep3', locale) || 'Pointez la caméra vers le mur'}
+                  </p>
+                </div>
+              </div>
+              {/* Reassurance — explicit about permissions ask */}
+              <p className="text-[10px] text-slate-400 italic leading-relaxed pt-1">
+                {tt('play.arPermissionHint', locale) ||
+                  'Votre téléphone vous demandera l\'autorisation d\'utiliser la caméra et la boussole. Acceptez les deux pour profiter du jeu — rien n\'est enregistré, tout reste sur votre appareil.'}
+              </p>
             </CardContent>
           </Card>
 
@@ -1475,6 +1517,73 @@ export default function PlayPage() {
                     {gameState.currentRiddle.title}
                   </h2>
                 </div>
+
+                {/* ── Proximity card (réinjecté 2026-05-23 post-Cuenca) ──
+                    La vue map avait été retirée le 2026-05-18 (S2) au
+                    profit de l'AR 100% pour le guidage. Field test Cuenca
+                    (Bibinouze, 30 min stuck Plaza Mayor) a montré le bug :
+                    sans map ni nom de lieu réel, le joueur naviguait à
+                    l'aveugle, devait absolument ouvrir l'AR + grant le
+                    motion-permission iOS pour avoir une direction. Si
+                    l'un des deux échoue, c'est game-over.
+                    Cette carte affiche TOUJOURS : nom réel du lieu,
+                    distance, cardinale, ETA marche, + une mini-map
+                    visuelle, + un fallback Google Maps en lien externe
+                    en dernier recours. Pas besoin d'ouvrir l'AR pour
+                    savoir où aller. */}
+                {gameState.approximateTarget && (
+                  <Card className="mb-6 bg-slate-900/80 border-emerald-900/40">
+                    <CardContent className="pt-4 pb-3 space-y-3">
+                      {gameState.currentRiddle.landmarkName && (
+                        <div className="flex items-start gap-2">
+                          <MapPin className="h-4 w-4 text-emerald-400 mt-0.5 shrink-0" />
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-400">
+                              {tt('play.heading', locale) || 'Direction'}
+                            </p>
+                            <p className="text-base font-bold text-white leading-tight truncate">
+                              {gameState.currentRiddle.landmarkName}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                      <GameMap
+                        playerLat={geo.latitude}
+                        playerLon={geo.longitude}
+                        targetLat={gameState.approximateTarget.latitude}
+                        targetLon={gameState.approximateTarget.longitude}
+                        validationRadius={gameState.validationRadius}
+                        locale={locale}
+                      />
+                      <NavigationGuide
+                        playerLat={geo.latitude}
+                        playerLon={geo.longitude}
+                        targetLat={gameState.approximateTarget.latitude}
+                        targetLon={gameState.approximateTarget.longitude}
+                        distance={distance}
+                        label={tt('play.distanceToTarget', locale) || 'Distance jusqu\'au lieu'}
+                        locale={locale}
+                        navigationHint={navigationHint}
+                      />
+                      {/* Lien de secours Google Maps — pour les cas où
+                          GPS in-app dérive (canyons urbains type Cuenca,
+                          vieille ville Béziers, etc.). Le joueur peut
+                          ouvrir Maps natif qui a son propre GPS + données
+                          de trafic, et revenir dans le jeu une fois sur
+                          place. Coup zéro côté UX, énorme filet de
+                          sécurité. */}
+                      <a
+                        href={`https://www.google.com/maps/dir/?api=1&destination=${gameState.approximateTarget.latitude},${gameState.approximateTarget.longitude}&travelmode=walking`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="flex items-center justify-center gap-2 w-full px-3 py-2 rounded-lg border border-emerald-700/40 bg-emerald-950/40 text-xs font-medium text-emerald-300 hover:bg-emerald-900/40 transition-colors"
+                      >
+                        <Navigation className="h-3.5 w-3.5" />
+                        {tt('play.openInMaps', locale) || 'Ouvrir dans Maps'}
+                      </a>
+                    </CardContent>
+                  </Card>
+                )}
 
                 {/* AR-required banner. S9 (2026-05-18) : skip pour
                     mode city_tour — pas d'énigme à résoudre, l'AR sert

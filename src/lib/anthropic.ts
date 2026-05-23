@@ -411,6 +411,40 @@ B. The riddle does NOT ask the player to read something off the wall.
    It tells them to GO to the place, OBSERVE the surroundings, and
    INVITES them to use their AR camera to make the secret appear.
 
+B-BIS. ⚠️ ANTI-HALLUCINATION — PHYSICAL ANCHOR RULE (added 2026-05-23
+   after Cuenca refund — riddle invented "ancient stone well in the
+   plaza's center" but Plaza Mayor de Cuenca has NO well. Player wasted
+   30 min searching for an imaginary object, demanded refund) :
+
+   Every reference in the riddle_text AND in the hint to a PHYSICAL
+   OBJECT or SURFACE at the location (well, statue, fountain, gargoyle,
+   carved lion, specific inscription, named door, named tower, named
+   balcony, etc.) MUST come from one of these whitelisted sources :
+
+     1. The location's "What to observe" field (provided per stop below)
+     2. The location's "DOCUMENTED HISTORICAL ROLE" field if present
+     3. GENERIC anchors that exist at EVERY monument and CAN'T be wrong :
+          - "the main facade" / "la façade"
+          - "the entrance" / "the main door"
+          - "the front of the building"
+          - "the cathedral wall" / "the church wall" (only if it IS one)
+          - "the tower" (only if a tower is documented above)
+          - "the central plaza" (only if the stop IS a plaza)
+
+   FORBIDDEN under ALL circumstances : inventing a well, a fountain, a
+   specific carving, a named statue, a gargoyle, an obelisk, a bench,
+   a plaque, a coat of arms, a sundial, a specific stone, a specific
+   window, etc., when these objects are NOT explicitly named in source
+   1 or 2 above. If you have no specific feature, USE A GENERIC ANCHOR
+   from list 3. A boring-but-true anchor ("aim your AR camera at the
+   main facade") beats a vivid-but-false one ("aim your AR camera at
+   the ancient well in the center") every single time.
+
+   Self-check before emitting each stop : every physical noun in your
+   riddle_text and hint MUST be traceable to whatObserve/patrimonialRole
+   or be a generic anchor. If it's neither, REWRITE that sentence to
+   use a generic anchor.
+
 C. The riddle IS the tour. Weave in REAL touristic / cultural / historical
    pointers about what the player is walking past on the way to the next
    stop. ("As you turn down Calle X, you'll pass the 16th-century
@@ -661,6 +695,17 @@ FOR EACH OF THE ${stepCount} STEPS, create a JSON object with:
          door", "open the AR camera and slowly sweep the south wall
          left to right")
      (b) name the surface in plain words anyone can find
+     (c) ⚠️ APPLY RULE B-BIS HERE — the named surface MUST be either
+         documented in whatObserve/patrimonialRole OR a generic anchor.
+         NEVER invent a well, a fountain, a statue, a carving, etc.,
+         that is not explicitly named in the source data. The Cuenca
+         refund came from a hint that read "Point your AR camera
+         directly at the ancient stone well in the plaza's center" —
+         there was no well. The player gave up after 30 min searching.
+         When the source data is sparse, default to a generic anchor:
+         "the main facade", "the front of the building", "the
+         entrance". A boring-but-truthful hint is INFINITELY better
+         than a vivid lie.
 
    Example (good):
      "Open your phone's camera in the AR mode and aim it at the

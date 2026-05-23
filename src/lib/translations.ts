@@ -366,6 +366,69 @@ export const ui: Translations = {
     es: 'Durante el juego, pulsa el boton "Modo RA" en el mapa para abrir la camara. Un marcador flotante se ancla en el espacio en la posicion del objetivo, un mini radar arriba a la izquierda muestra su direccion en 360° y los anillos de colores indican la proximidad. Cuando estas alineado y cerca, el telefono vibra: objetivo fijado.',
     it: 'Durante il gioco, tocca il pulsante "Modalita AR" sulla mappa per aprire la fotocamera. Un marcatore fluttuante viene ancorato nello spazio alla posizione del tuo obiettivo, un mini-radar in alto a sinistra ne mostra la direzione a 360° e gli anelli colorati indicano la prossimita. Quando sei allineato e vicino, il telefono vibra: obiettivo agganciato.',
   },
+  // ── Refonte pédagogique AR 2026-05-23 post-refund Cuenca ──
+  // Vulgarisation : "réalité augmentée" → "caméra magique". 3 étapes
+  // simples + reassurance permissions. Le mot "RA/AR" disparaît du
+  // titre pour ne pas perdre les gens qui ne savent pas ce que c'est.
+  'play.arEduTitle': {
+    fr: 'La camera magique du jeu',
+    en: 'The game\'s magic camera',
+    de: 'Die magische Kamera des Spiels',
+    es: 'La camara magica del juego',
+    it: 'La fotocamera magica del gioco',
+  },
+  'play.arEduDesc': {
+    fr: 'Sur chaque lieu, un mot cache apparait sur le mur quand vous pointez la camera de votre telephone vers la facade. Pas besoin d\'installer une appli — c\'est integre au jeu.',
+    en: 'At each spot, a hidden word appears on the wall when you point your phone\'s camera at the facade. No app to install — it\'s built into the game.',
+    de: 'An jedem Ort erscheint ein verstecktes Wort auf der Wand, wenn Sie die Kamera Ihres Telefons auf die Fassade richten. Keine App-Installation notig — alles ist im Spiel integriert.',
+    es: 'En cada lugar, una palabra oculta aparece en la pared cuando apuntas la camara de tu telefono a la fachada. No necesitas instalar nada — todo esta integrado en el juego.',
+    it: 'In ogni punto, una parola nascosta appare sul muro quando punti la fotocamera del telefono verso la facciata. Nessuna app da installare — e tutto integrato nel gioco.',
+  },
+  'play.arStep1': {
+    fr: 'Marchez jusqu\'au lieu indique',
+    en: 'Walk to the marked spot',
+    de: 'Gehen Sie zum markierten Ort',
+    es: 'Camina hasta el lugar indicado',
+    it: 'Cammina fino al luogo indicato',
+  },
+  'play.arStep2': {
+    fr: 'Touchez le bouton violet "Mode AR"',
+    en: 'Tap the purple "AR mode" button',
+    de: 'Tippen Sie auf den violetten "AR-Modus"-Button',
+    es: 'Pulsa el boton violeta "Modo AR"',
+    it: 'Tocca il pulsante viola "Modalita AR"',
+  },
+  'play.arStep3': {
+    fr: 'Pointez la camera vers la facade',
+    en: 'Point the camera at the facade',
+    de: 'Richten Sie die Kamera auf die Fassade',
+    es: 'Apunta la camara a la fachada',
+    it: 'Punta la fotocamera verso la facciata',
+  },
+  'play.arPermissionHint': {
+    fr: 'Votre telephone vous demandera l\'autorisation d\'utiliser la camera et la boussole. Acceptez les deux pour profiter du jeu — rien n\'est enregistre, tout reste sur votre appareil.',
+    en: 'Your phone will ask permission to use the camera and the compass. Accept both to enjoy the game — nothing is recorded, everything stays on your device.',
+    de: 'Ihr Telefon wird Sie um Erlaubnis bitten, die Kamera und den Kompass zu verwenden. Akzeptieren Sie beides, um das Spiel zu geniessen — nichts wird aufgezeichnet, alles bleibt auf Ihrem Gerat.',
+    es: 'Tu telefono pedira permiso para usar la camara y la brujula. Acepta ambos para disfrutar del juego — nada se graba, todo queda en tu dispositivo.',
+    it: 'Il tuo telefono chiedera il permesso di usare la fotocamera e la bussola. Accetta entrambi per goderti il gioco — nulla viene registrato, tutto resta sul tuo dispositivo.',
+  },
+  'play.heading': {
+    fr: 'Direction', en: 'Heading to', de: 'Richtung', es: 'Direccion', it: 'Direzione',
+  },
+  'play.distanceToTarget': {
+    fr: 'Distance jusqu\'au lieu',
+    en: 'Distance to the spot',
+    de: 'Entfernung zum Ort',
+    es: 'Distancia hasta el lugar',
+    it: 'Distanza dal luogo',
+  },
+  'play.openInMaps': {
+    fr: 'Ouvrir dans Maps',
+    en: 'Open in Maps',
+    de: 'In Maps offnen',
+    es: 'Abrir en Maps',
+    it: 'Apri in Maps',
+  },
   'ar.label': {
     fr: 'Realite augmentee', en: 'Augmented reality', de: 'Augmented Reality', es: 'Realidad aumentada', it: 'Realta aumentata',
   },
