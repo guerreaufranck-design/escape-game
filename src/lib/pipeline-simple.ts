@@ -56,6 +56,29 @@ const MIN_INTER_STOP_M = 150; // Anti twin stops (= 2 min de marche)
 const RENDEZVOUS_GAP_M = 0;
 
 // ═══════════════════════════════════════════════════════════════════
+// V15 (2026-05-23) — COMPACT SITE MODE
+// ═══════════════════════════════════════════════════════════════════
+// Sites compacts type Mont Saint-Michel, Carcassonne intra-muros,
+// Pompeii, Saint-Émilion, Acropole, Palais des Papes Avignon — où le
+// diamètre du site touristique est < 1 km mais contient 8+ landmarks
+// importants à <100m les uns des autres.
+//
+// Sans ce mode, la pipeline normale (MIN_INTER_STOP_M=150, walking=1750)
+// éjecte 80% des candidats pour cause de min-distance et inclut des
+// stops hors-site (digue continentale pour MSM).
+//
+// DÉTECTION AUTO : après proposer Perplexity, on calcule le diamètre du
+// nuage de candidats. Si max_pair_distance < COMPACT_DETECTION_THRESHOLD_M,
+// on bascule en compact mode (relax min-distance + restreint walking radius).
+// Aucun drapeau opérateur nécessaire — purement data-driven.
+
+const COMPACT_DETECTION_THRESHOLD_M = 1_000;
+const COMPACT_WALKING_RADIUS_M = 500;
+const COMPACT_MIN_INTER_STOP_M = 40;
+const COMPACT_MAX_VALIDATION_RADIUS_M = 25;
+const COMPACT_MIN_VALIDATION_RADIUS_M = 15;
+
+// ═══════════════════════════════════════════════════════════════════
 // FILTERS — types et noms à reject
 // ═══════════════════════════════════════════════════════════════════
 
@@ -987,6 +1010,15 @@ export interface SimpleDiscoveryResult {
     averageScore: number;
     minScoreInFinal: number;
     notes: string[];
+    /**
+     * V15 (2026-05-23) — true si le pipeline a détecté un site compact
+     * (Mont Saint-Michel, Carcassonne intra-muros, Pompeii, etc.).
+     * Quand true, le downstream doit :
+     *   - clamper validation_radius_meters entre 15 et 25m (vs 25-50m)
+     *   - adapter le prompt narratif (anchors physiques très spécifiques)
+     *   - ajuster l'UX joueur (radar AR montre 3 prochains stops)
+     */
+    compactMode?: boolean;
   };
   errorMessage?: string;
 }
@@ -1052,6 +1084,43 @@ export async function runSimpleDiscovery(
     notes.push(`After rendez-vous gap ${RENDEZVOUS_GAP_M}m : ${geocoded.length}/${geocodedRaw.length} survived`);
   }
 
+  // ── PHASE 2.6 : V15 COMPACT SITE DETECTION ─────────────────────
+  // Calcule le diamètre du nuage de candidats (max pair distance).
+  // Si < COMPACT_DETECTION_THRESHOLD_M (1 km), bascule en compact mode :
+  //   - réduit walking radius pour le fallback nearbysearch
+  //   - réduit min-distance pour ne pas éliminer les sous-bâtiments
+  //   - re-filtre les candidats hors du nouveau radius (si déjà present)
+  //   - clamp validation_radius_meters des stops finaux
+  // Cas typiques : Mont Saint-Michel (970×750m), Carcassonne intra-muros,
+  // Pompeii, Saint-Émilion, Acropole d'Athènes, Palais des Papes Avignon.
+  let compactMode = false;
+  let effectiveRadiusM = radiusM;
+  let effectiveMinDistM = MIN_INTER_STOP_M;
+  if (geocoded.length >= 2) {
+    let maxPairDist = 0;
+    for (let i = 0; i < geocoded.length; i++) {
+      for (let j = i + 1; j < geocoded.length; j++) {
+        const d = haversineMeters(
+          { lat: geocoded[i].lat, lon: geocoded[i].lon },
+          { lat: geocoded[j].lat, lon: geocoded[j].lon },
+        );
+        if (d > maxPairDist) maxPairDist = d;
+      }
+    }
+    if (maxPairDist < COMPACT_DETECTION_THRESHOLD_M) {
+      compactMode = true;
+      effectiveRadiusM = COMPACT_WALKING_RADIUS_M;
+      effectiveMinDistM = COMPACT_MIN_INTER_STOP_M;
+      notes.push(
+        `🏛️ COMPACT SITE MODE detected (max pair dist=${Math.round(maxPairDist)}m < ${COMPACT_DETECTION_THRESHOLD_M}m) — walking_radius→${effectiveRadiusM}m, min_inter_stop→${effectiveMinDistM}m, validation_radius will be clamped ${COMPACT_MIN_VALIDATION_RADIUS_M}-${COMPACT_MAX_VALIDATION_RADIUS_M}m`,
+      );
+    } else {
+      notes.push(
+        `(diameter check : max pair dist=${Math.round(maxPairDist)}m ≥ ${COMPACT_DETECTION_THRESHOLD_M}m → city mode)`,
+      );
+    }
+  }
+
   // ── PHASE 3 : Fallback si trop peu ──────────────────────────
   let pool = geocoded;
   let fallbackUsed = false;
@@ -1059,10 +1128,10 @@ export async function runSimpleDiscovery(
   // (not just less than MIN). Target 8 stops, even if Claude found 5+,
   // we hit nearbysearch to fill up to 8 with Claude-scored heritage.
   if (pool.length < target) {
-    notes.push(`Pool ${pool.length} < target=${target} — triggering Google nearbysearch fallback (Claude-scored)`);
+    notes.push(`Pool ${pool.length} < target=${target} — triggering Google nearbysearch fallback (Claude-scored, radius=${effectiveRadiusM}m)`);
     const fallback = await fallbackNearbysearch(
       input.startPoint,
-      radiusM,
+      effectiveRadiusM, // COMPACT MODE : utilise le radius réduit (500m) pour ne pas chercher au-delà du site
       input.theme,
       input.themeDescription,
       input.city,
@@ -1074,6 +1143,17 @@ export async function runSimpleDiscovery(
     pool = [...pool, ...newOnes];
     if (pool.length < target) {
       fallbackUsed = true; // We needed fallback to even reach target
+    }
+  }
+
+  // ── PHASE 3.5 : V15 — en compact mode, éjecter les candidats du
+  // fallback hors du site (au-delà du radius compact). Pas appliqué à
+  // city mode car le pool original respecte déjà le radius initial.
+  if (compactMode) {
+    const before = pool.length;
+    pool = pool.filter((c) => c.distanceM <= effectiveRadiusM);
+    if (before > pool.length) {
+      notes.push(`COMPACT : pruned ${before - pool.length} stops outside ${effectiveRadiusM}m radius`);
     }
   }
 
@@ -1107,10 +1187,10 @@ export async function runSimpleDiscovery(
     candidates: pool,
     targetN: Math.min(target, pool.length),
     minN: Math.min(minStops, pool.length),
-    minDistanceM: MIN_INTER_STOP_M,
+    minDistanceM: effectiveMinDistM, // V15 compact mode = 40m, sinon 150m
   });
   notes.push(
-    `min-distance selection : ${sel.selected.length}/${target} (min_pair=${Math.round(sel.actualMinPairDistanceM)}m, relaxed to ${sel.finalMinDistanceUsedM}m)`,
+    `min-distance selection : ${sel.selected.length}/${target} (min_pair=${Math.round(sel.actualMinPairDistanceM)}m, relaxed to ${sel.finalMinDistanceUsedM}m, mode=${compactMode ? "compact" : "city"})`,
   );
 
   // Re-attach metadata from pool
@@ -1169,6 +1249,7 @@ export async function runSimpleDiscovery(
       averageScore: Number(averageScore.toFixed(2)),
       minScoreInFinal,
       notes,
+      compactMode, // V15 — propagé pour clamp validation_radius downstream
     },
   };
 }

@@ -1912,6 +1912,56 @@ export async function runPipelinePhase2aNarrationGen(
       }
     }
 
+    // ============================================
+    // V15 (2026-05-23) — COMPACT SITE : clamp validation radius
+    // ============================================
+    // Pour les sites compacts (Mont Saint-Michel, Carcassonne intra-muros,
+    // Pompeii, Saint-Émilion, etc.), on détecte ici localement le
+    // diamètre du nuage de stops et on clamp validation_radius_meters
+    // à [15, 25]m pour éviter les chevauchements entre stops (rayons
+    // 40-50m sur des stops à 60-100m d'intervalle créaient des
+    // doubles-validations). S'applique APRÈS les overrides
+    // narrative/driving (donc compatible — on respecte 80m / 250m).
+    //
+    // Détection locale (pas via simpleResult qui est hors scope ici) :
+    // calcule max pair distance des coords des steps. Si < 1km → compact.
+    if (steps.length >= 2) {
+      let maxPair = 0;
+      for (let i = 0; i < steps.length; i++) {
+        for (let j = i + 1; j < steps.length; j++) {
+          const R = 6_371_000;
+          const tr = (d: number) => (d * Math.PI) / 180;
+          const dL = tr(steps[j].latitude - steps[i].latitude);
+          const dO = tr(steps[j].longitude - steps[i].longitude);
+          const a =
+            Math.sin(dL / 2) ** 2 +
+            Math.cos(tr(steps[i].latitude)) *
+              Math.cos(tr(steps[j].latitude)) *
+              Math.sin(dO / 2) ** 2;
+          const d = 2 * R * Math.asin(Math.sqrt(a));
+          if (d > maxPair) maxPair = d;
+        }
+      }
+      const isLocallyCompact = maxPair < 1_000;
+      if (isLocallyCompact) {
+        console.log(
+          `[Pipeline] 🏛️ COMPACT SITE detected locally (diameter=${Math.round(maxPair)}m < 1000m) — clamping validation_radius to [15, 25]m`,
+        );
+        for (let i = 0; i < steps.length; i++) {
+          if (stopModes[i] === "narrative") continue;
+          if ((steps[i].validation_radius_meters ?? 30) >= 80) continue;
+          const old = steps[i].validation_radius_meters ?? 30;
+          const clamped = Math.max(15, Math.min(25, old));
+          if (clamped !== old) {
+            steps[i].validation_radius_meters = clamped;
+            console.log(
+              `[Pipeline]   step ${i + 1} ("${steps[i].title}") radius ${old}m → ${clamped}m`,
+            );
+          }
+        }
+      }
+    }
+
     // ── ROADTRIP : valider radius élargi (driving / mixed) ───────────
     // Le radar walking valide à 30m. Au volant à 90 km/h, 30m = 1.2s →
     // false negatives garantis (le joueur passe sans déclencher). On
