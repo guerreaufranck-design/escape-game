@@ -145,13 +145,19 @@ export async function proposeThematicLandmarks(
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY missing");
 
   const client = new Anthropic({ apiKey });
-  const msg = await client.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 1500,
-    temperature: 0.2, // slight variance helps Claude propose less-obvious sites
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildUserPrompt(input) }],
-  });
+  // Hard 30s timeout — SDK default is 10 min which would hang the
+  // Inngest step well past Vercel's 800s budget. Béziers V5 (22/05
+  // 08:02 UTC) hung 31+ min in production because of missing timeouts.
+  const msg = await client.messages.create(
+    {
+      model: "claude-haiku-4-5",
+      max_tokens: 1500,
+      temperature: 0.2,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: buildUserPrompt(input) }],
+    },
+    { timeout: 30_000 },
+  );
 
   const text = msg.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")

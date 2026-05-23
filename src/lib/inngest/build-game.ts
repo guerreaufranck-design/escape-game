@@ -623,195 +623,166 @@ export const buildGameDurable = inngest.createFunction(
         : null;
 
       // ════════════════════════════════════════════════════════════
-      // SPRINT B (2026-05-22) — ANTI-ARMCHAIR JUDGE
+      // SPRINTS B/C/D/E (2026-05-22) — 4 EXPERIENCE-QUALITY JUDGES
+      // EMERGENCY PATCH 2026-05-23 : run in PARALLEL via Promise.allSettled
       // ════════════════════════════════════════════════════════════
-      // Closes the #1 Questo critique : "players solved the entire
-      // quest in 40 minutes from home using Google Maps + Wikipedia".
-      // For an OUTDOOR escape-game, that's the death of the premise.
+      // The Béziers V5 incident 23/05 08:02 UTC showed that running these
+      // 4 Claude Haiku judges SEQUENTIALLY pushed the phase2b5 step.run
+      // budget past Vercel's HTTP timeout (~2m43s on Inngest Cloud →
+      // Vercel SDK endpoint). Now :
       //
-      // Claude Haiku plays a CHEATER trying to solve each riddle
-      // from a couch using Google Search / Street View / Wikipedia.
-      // Riddles scored 0-10 on site_presence_score (higher = harder
-      // to cheat). Fail verdict → needs_review flag forces operator
-      // to rewrite armchair-solvable riddles to require observation.
+      //   1. All 4 judges share a single Promise.allSettled, so wall-clock
+      //      time = max(individual), not sum.
+      //   2. Each Anthropic call has a hard 30s timeout (patched into the
+      //      judge modules themselves).
+      //   3. Fail-open semantics preserved : any rejected promise = no
+      //      flag added (we never block publish on infra failure).
       //
-      // Fail-open : if the judge errors, no flag added (existing
-      // safety nets still apply). We never block publish on judge
-      // infra failure.
+      // What each judge catches :
+      //   B armchair  : Questo #1 critique — "solved from couch via Google"
+      //   C callbacks : Questo #4 critique — "rupture cohérence narrative"
+      //   D arc       : Questo #5 critique — "dénouement abrupt"
+      //   E difficulty: Questo #1 alt — "simplicité excessive" + curve
+      const judgeStops = phase2a.steps.map((s, i) => ({
+        step_order: i + 1,
+        landmark_name: s.title,
+        title: s.title,
+        riddle_text: s.riddle_text,
+        anecdote: s.anecdote,
+      }));
+      const [armchairRes, callbacksRes, arcRes, difficultyRes] =
+        await Promise.allSettled([
+          judgeArmchairResolvability({
+            theme: template.theme,
+            city: template.city,
+            riddles: phase2a.steps.map((s, i) => ({
+              step_order: i + 1,
+              landmark_name: s.title,
+              riddle_text: s.riddle_text,
+              answer: s.answer_text,
+              answer_source: s.answer_source,
+            })),
+          }),
+          judgeCrossStopCallbacks({
+            theme: template.theme,
+            stops: judgeStops,
+          }),
+          judgeNarrativeArc({
+            theme: template.theme,
+            narrative: template.narrative,
+            stops: judgeStops,
+            finalRiddle: phase2b.finalRiddle?.riddle,
+          }),
+          judgeRiddleDifficultyCurve({
+            theme: template.theme,
+            gameDifficulty: template.difficulty ?? 3,
+            stops: phase2a.steps.map((s, i) => ({
+              step_order: i + 1,
+              landmark_name: s.title,
+              title: s.title,
+              riddle_text: s.riddle_text,
+              answer: s.answer_text,
+              hint_count: s.hints?.length ?? 0,
+            })),
+          }),
+        ]);
+
       let armchairFlag: CoherenceFlag | null = null;
-      try {
-        const armchairJudge = await judgeArmchairResolvability({
-          theme: template.theme,
-          city: template.city,
-          riddles: phase2a.steps.map((s, i) => ({
-            step_order: i + 1,
-            landmark_name: s.title,
-            riddle_text: s.riddle_text,
-            answer: s.answer_text,
-            answer_source: s.answer_source,
-          })),
-        });
+      if (armchairRes.status === "fulfilled") {
+        const j = armchairRes.value;
         logger.info(
-          `[armchairJudge] ${armchairJudge.summary} (avg=${armchairJudge.average_score}, min=${armchairJudge.min_score}, verdict=${armchairJudge.verdict})`,
+          `[armchairJudge] ${j.summary} (avg=${j.average_score}, min=${j.min_score}, verdict=${j.verdict})`,
         );
-        if (armchairJudge.verdict !== "pass") {
+        if (j.verdict !== "pass") {
           armchairFlag = {
-            code: `armchair_${armchairJudge.verdict}`,
+            code: `armchair_${j.verdict}`,
             severity: "fail",
-            message: armchairJudge.needs_review_reason,
+            message: j.needs_review_reason,
             details: {
-              avg_site_presence: armchairJudge.average_score,
-              min_site_presence: armchairJudge.min_score,
-              riddles: armchairJudge.riddles,
+              avg_site_presence: j.average_score,
+              min_site_presence: j.min_score,
+              riddles: j.riddles,
             },
           };
         }
-      } catch (err) {
+      } else {
         logger.warn(
-          `[armchairJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no armchair flag.`,
+          `[armchairJudge] judge unavailable (${armchairRes.reason instanceof Error ? armchairRes.reason.message : armchairRes.reason}) — fail-open, no armchair flag.`,
         );
       }
 
-      // ════════════════════════════════════════════════════════════
-      // SPRINT C (2026-05-22) — CROSS-STOP CALLBACKS JUDGE
-      // ════════════════════════════════════════════════════════════
-      // Players re-buy stories, not puzzle compilations. RULE G in
-      // generateGameSteps now instructs Claude to weave callbacks
-      // (stop 2..N reference prior stops, final stop ties threads).
-      // This judge VERIFIES Claude complied. Fail = needs_review.
-      //
-      // Closes Questo grievance #4 : "rupture de la cohérence
-      // narrative ; the prétexte de l'enquête s'efface".
       let callbacksFlag: CoherenceFlag | null = null;
-      try {
-        const callbacksJudge = await judgeCrossStopCallbacks({
-          theme: template.theme,
-          stops: phase2a.steps.map((s, i) => ({
-            step_order: i + 1,
-            landmark_name: s.title,
-            title: s.title,
-            riddle_text: s.riddle_text,
-            anecdote: s.anecdote,
-          })),
-        });
+      if (callbacksRes.status === "fulfilled") {
+        const j = callbacksRes.value;
         logger.info(
-          `[callbacksJudge] ${callbacksJudge.summary} (avg=${callbacksJudge.average_score}, min=${callbacksJudge.min_score}, final=${callbacksJudge.final_stop_score}, verdict=${callbacksJudge.verdict})`,
+          `[callbacksJudge] ${j.summary} (avg=${j.average_score}, min=${j.min_score}, final=${j.final_stop_score}, verdict=${j.verdict})`,
         );
-        if (callbacksJudge.verdict !== "pass") {
+        if (j.verdict !== "pass") {
           callbacksFlag = {
-            code: `callbacks_${callbacksJudge.verdict}`,
+            code: `callbacks_${j.verdict}`,
             severity: "fail",
-            message: callbacksJudge.needs_review_reason,
+            message: j.needs_review_reason,
             details: {
-              avg_callback_score: callbacksJudge.average_score,
-              min_callback_score: callbacksJudge.min_score,
-              final_stop_score: callbacksJudge.final_stop_score,
-              stops: callbacksJudge.stops,
+              avg_callback_score: j.average_score,
+              min_callback_score: j.min_score,
+              final_stop_score: j.final_stop_score,
+              stops: j.stops,
             },
           };
         }
-      } catch (err) {
+      } else {
         logger.warn(
-          `[callbacksJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no callbacks flag.`,
+          `[callbacksJudge] judge unavailable (${callbacksRes.reason instanceof Error ? callbacksRes.reason.message : callbacksRes.reason}) — fail-open, no callbacks flag.`,
         );
       }
 
-      // ════════════════════════════════════════════════════════════
-      // SPRINT D (2026-05-22) — NARRATIVE ARC JUDGE (Act 1/2/3 + climax)
-      // ════════════════════════════════════════════════════════════
-      // RULE H in generateGameSteps now structures stops as a 3-act
-      // arc with climax on the penultimate stop. This judge verifies
-      // the dramaturgy actually delivers : exposition / rising /
-      // climax / resolution beats land on the right stops, climax
-      // genuinely climaxes, resolution pays off the climax setup.
-      //
-      // Closes Questo grievance #5 : "dénouement abrupt, indices
-      // concentrés en fin de parcours, rendant vains les efforts
-      // d'analyse menés durant le trajet".
       let arcFlag: CoherenceFlag | null = null;
-      try {
-        const arcJudge = await judgeNarrativeArc({
-          theme: template.theme,
-          narrative: template.narrative,
-          stops: phase2a.steps.map((s, i) => ({
-            step_order: i + 1,
-            landmark_name: s.title,
-            title: s.title,
-            riddle_text: s.riddle_text,
-            anecdote: s.anecdote,
-          })),
-          finalRiddle: phase2b.finalRiddle?.riddle,
-        });
+      if (arcRes.status === "fulfilled") {
+        const j = arcRes.value;
         logger.info(
-          `[arcJudge] ${arcJudge.summary} (avg=${arcJudge.average_score}, climax=${arcJudge.climax_score}, final=${arcJudge.final_score}, verdict=${arcJudge.verdict})`,
+          `[arcJudge] ${j.summary} (avg=${j.average_score}, climax=${j.climax_score}, final=${j.final_score}, verdict=${j.verdict})`,
         );
-        if (arcJudge.verdict !== "pass") {
+        if (j.verdict !== "pass") {
           arcFlag = {
-            code: `arc_${arcJudge.verdict}`,
+            code: `arc_${j.verdict}`,
             severity: "fail",
-            message: arcJudge.needs_review_reason,
+            message: j.needs_review_reason,
             details: {
-              avg_score: arcJudge.average_score,
-              climax_score: arcJudge.climax_score,
-              final_score: arcJudge.final_score,
-              stops: arcJudge.stops,
+              avg_score: j.average_score,
+              climax_score: j.climax_score,
+              final_score: j.final_score,
+              stops: j.stops,
             },
           };
         }
-      } catch (err) {
+      } else {
         logger.warn(
-          `[arcJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no arc flag.`,
+          `[arcJudge] judge unavailable (${arcRes.reason instanceof Error ? arcRes.reason.message : arcRes.reason}) — fail-open, no arc flag.`,
         );
       }
 
-      // ════════════════════════════════════════════════════════════
-      // SPRINT E (2026-05-22) — RIDDLE DIFFICULTY CURVE JUDGE
-      // ════════════════════════════════════════════════════════════
-      // Closes Questo grievance #1 ("simplicité excessive des
-      // mécanismes de résolution") AND prevents the inverse failure
-      // (random hard spike in act 1 that frustrates new players).
-      //
-      // Scores each riddle's intrinsic difficulty 0-10 and verifies :
-      //   • Stop 1 warmup score in [2,4]
-      //   • Rising stops in [3,7]
-      //   • Climax (stop N-1) in [6,9] AND IS the hardest stop
-      //   • Resolution (stop N) in [4,7]
-      //   • Game-wide difficulty alignment with operator-chosen 1-5
-      //
-      // Fail verdict → needs_review forces operator to rebalance.
       let difficultyFlag: CoherenceFlag | null = null;
-      try {
-        const diffJudge = await judgeRiddleDifficultyCurve({
-          theme: template.theme,
-          gameDifficulty: template.difficulty ?? 3,
-          stops: phase2a.steps.map((s, i) => ({
-            step_order: i + 1,
-            landmark_name: s.title,
-            title: s.title,
-            riddle_text: s.riddle_text,
-            answer: s.answer_text,
-            hint_count: s.hints?.length ?? 0,
-          })),
-        });
+      if (difficultyRes.status === "fulfilled") {
+        const j = difficultyRes.value;
         logger.info(
-          `[difficultyJudge] ${diffJudge.summary} (avg=${diffJudge.average_score}, climax_peak=${diffJudge.climax_is_peak}, verdict=${diffJudge.verdict})`,
+          `[difficultyJudge] ${j.summary} (avg=${j.average_score}, climax_peak=${j.climax_is_peak}, verdict=${j.verdict})`,
         );
-        if (diffJudge.verdict !== "pass") {
+        if (j.verdict !== "pass") {
           difficultyFlag = {
-            code: `difficulty_${diffJudge.verdict}`,
+            code: `difficulty_${j.verdict}`,
             severity: "fail",
-            message: diffJudge.needs_review_reason,
+            message: j.needs_review_reason,
             details: {
-              avg_score: diffJudge.average_score,
-              climax_is_peak: diffJudge.climax_is_peak,
-              game_difficulty_match: diffJudge.game_difficulty_match,
-              stops: diffJudge.stops,
+              avg_score: j.average_score,
+              climax_is_peak: j.climax_is_peak,
+              game_difficulty_match: j.game_difficulty_match,
+              stops: j.stops,
             },
           };
         }
-      } catch (err) {
+      } else {
         logger.warn(
-          `[difficultyJudge] judge unavailable (${err instanceof Error ? err.message : err}) — fail-open, no difficulty flag.`,
+          `[difficultyJudge] judge unavailable (${difficultyRes.reason instanceof Error ? difficultyRes.reason.message : difficultyRes.reason}) — fail-open, no difficulty flag.`,
         );
       }
 

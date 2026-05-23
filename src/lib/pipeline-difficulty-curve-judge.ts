@@ -208,13 +208,17 @@ export async function judgeRiddleDifficultyCurve(
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY missing");
 
   const client = new Anthropic({ apiKey });
-  const msg = await client.messages.create({
-    model: "claude-haiku-4-5",
-    max_tokens: 2400,
-    temperature: 0,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: "user", content: buildUserPrompt(input) }],
-  });
+  // Hard 30s timeout — see pipeline-landmark-proposer.ts.
+  const msg = await client.messages.create(
+    {
+      model: "claude-haiku-4-5",
+      max_tokens: 2400,
+      temperature: 0,
+      system: SYSTEM_PROMPT,
+      messages: [{ role: "user", content: buildUserPrompt(input) }],
+    },
+    { timeout: 30_000 },
+  );
 
   const text = msg.content
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
