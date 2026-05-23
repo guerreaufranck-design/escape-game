@@ -43,7 +43,7 @@ import { selectStopsByGeometry } from "./parcours-selection";
 
 const DEFAULT_WALKING_RADIUS_M = 1_750; // 3.5km diameter
 const DEFAULT_TARGET_STOPS = 8;
-const DEFAULT_MIN_STOPS = 5;
+const DEFAULT_MIN_STOPS = 6; // V10 bumped from 5 to match V1 sanity-check floor (was below_floor flag)
 const MIN_INTER_STOP_M = 150; // Anti twin stops (= 2 min de marche)
 /** Rendez-vous gap : start point ≠ stop 1. Le joueur arrive au RDV
  *  (entrée d'un café, panneau, etc.) puis MARCHE vers le 1er stop —
@@ -122,18 +122,45 @@ HARD RULES — PROPOSE
   ✅ Mix Tier 1 (canonical) + Tier 2 (era-fit) for variety
   ✅ Walking-distance scope (assume 1.75km radius around city center)
 
+  ⚠️ MENTAL TEST before adding a landmark :
+     "Would Google Maps find this if I typed the name in the search bar
+      and added the city name ?"
+     If you're not 90% sure → DROP IT. Better 8 confirmed-existing
+     landmarks than 12 with 4 that don't exist on Google.
+
 ═══════════════════════════════════════════════════════════
-DON'T PROPOSE
+DON'T PROPOSE — GOOGLE PLACES BLIND SPOTS
 ═══════════════════════════════════════════════════════════
 
-  ❌ Generic categories ("a medieval church")
-  ❌ Events / temporary shows ("Spectacle Son & Lumière", "Festival X")
+  ❌ GEOGRAPHIC FEATURES (rarely have discrete Google entries) :
+       - "Ramparts of X", "City Walls", "Remparts"
+       - "Old Town Quarter", "Medieval Quarter", "Historic Center"
+       - "Gorge", "Cliff", "Mountain pass"
+       - "Promenade", "Esplanade" (unless named like "Allées Paul Riquet")
+       - Generic streets ("Rue de X" — only Google-finds famous ones)
+
+  ❌ RUINS / NON-STANDING (often not on Google) :
+       - "Château de X (Ruins)" — strip ruins if you must propose
+       - "Old foundations of...", "Remains of..."
+       - Archaeological digs (these don't have public Google entries)
+
+  ❌ EVENTS / TEMPORARY :
+       - "Spectacle Son & Lumière", "Festival X 2024"
+
+  ❌ COMMERCIAL :
+       - Hotels, restaurants, shops, transport stations
+
+  ❌ DUPLICATES (Google has BOTH names but they're 50m apart, same site) :
+       Pick ONE official name only.
+
   ❌ Modern reconstructions / replicas
-  ❌ Hotels, restaurants, shopping, transport stations
-  ❌ Two slightly-different names for the SAME building
-       (e.g., "Cathédrale Saint-Nazaire" AND "Ancien Palais épiscopal -
-        Saint-Nazaire" — pick ONE, they're 50m apart)
   ❌ Hallucinated/imaginary sites — only what you KNOW exists
+
+  ✅ DO PROPOSE : cathedrals, churches, named monasteries, named convents,
+     specific named towers/gates (e.g., "Tour de Constance", "Porte
+     Narbonnaise"), named bridges, named museums (only if historic
+     building), named palaces, named houses (only if landmark like
+     "Casa de los Picos"), named squares with own Google entry.
 
 ═══════════════════════════════════════════════════════════
 TIER + SCORE — for each proposal
@@ -308,15 +335,44 @@ interface GeocodedLandmark extends NearbyCandidate {
   proposedName: string; // original Claude name (before Google rename)
 }
 
-async function geocodeOne(
-  proposed: ProposedLandmark,
-  city: string,
-  country: string,
+/**
+ * Generate name variants for retry when geocode fails. Google rates names
+ * slightly differently across users (Basilique de la X vs Église de la X,
+ * "(Ruins)" suffixes drop, etc.). We try the original name, then up to 3
+ * synonyms.
+ */
+function nameVariants(name: string): string[] {
+  const variants: string[] = [name];
+  // Strip parens
+  const noParens = name.replace(/\s*\([^)]*\)/g, "").trim();
+  if (noParens !== name) variants.push(noParens);
+  // Basilique ↔ Église
+  if (/\bBasilique\b/i.test(name)) {
+    variants.push(name.replace(/\bBasilique\b/i, "Église"));
+  }
+  if (/\bÉglise\b/i.test(name)) {
+    variants.push(name.replace(/\bÉglise\b/i, "Basilique"));
+  }
+  // Catedral / Cathédrale (FR/ES)
+  if (/\bCatedral\b/i.test(name)) {
+    variants.push(name.replace(/\bCatedral\b/i, "Cathédrale"));
+  }
+  if (/\bCathédrale\b/i.test(name)) {
+    variants.push(name.replace(/\bCathédrale\b/i, "Catedral"));
+  }
+  // Strip city-name suffix if present (it gets re-added in the query)
+  const noCity = name.replace(/,\s*[A-Z][\wÀ-ÿ -]+\s*$/, "").trim();
+  if (noCity !== name && noCity.length > 4) variants.push(noCity);
+  // Dedup
+  return Array.from(new Set(variants));
+}
+
+async function geocodeOnce(
+  query: string,
   startPoint: { lat: number; lon: number },
   maxDistanceM: number,
   apiKey: string,
-): Promise<GeocodedLandmark | null> {
-  const query = `${proposed.name}, ${city}, ${country}`;
+): Promise<{ raw: { name: string; place_id: string; geometry: { location: { lat: number; lng: number } }; types?: string[]; rating?: number; user_ratings_total?: number; formatted_address?: string } | null } | { raw: null }> {
   const url = new URL(
     "https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
   );
@@ -336,7 +392,7 @@ async function geocodeOne(
   const timer = setTimeout(() => ac.abort(), 8_000);
   try {
     const res = await fetch(url.toString(), { signal: ac.signal });
-    if (!res.ok) return null;
+    if (!res.ok) return { raw: null };
     const data = (await res.json()) as {
       status: string;
       candidates?: Array<{
@@ -349,8 +405,8 @@ async function geocodeOne(
         user_ratings_total?: number;
       }>;
     };
-    if (data.status !== "OK" || !data.candidates?.length) return null;
-
+    if (data.status !== "OK" || !data.candidates?.length) return { raw: null };
+    // Find first acceptable candidate
     for (const c of data.candidates) {
       if (!c.geometry?.location || !c.place_id) continue;
       const types = c.types ?? [];
@@ -362,32 +418,76 @@ async function geocodeOne(
       );
       if (distanceM > maxDistanceM) continue;
       return {
-        name: c.name,
-        lat: c.geometry.location.lat,
-        lon: c.geometry.location.lng,
-        placeId: c.place_id,
-        types,
-        address: c.formatted_address,
-        rating: c.rating,
-        userRatingsTotal: c.user_ratings_total,
-        distanceM,
-        tier: proposed.tier,
-        themeScore: proposed.themeScore,
-        rationale: proposed.rationale,
-        realFigure: proposed.realFigure,
-        realEvent: proposed.realEvent,
-        proposedName: proposed.name,
+        raw: {
+          name: c.name,
+          place_id: c.place_id,
+          geometry: { location: c.geometry.location },
+          types,
+          rating: c.rating,
+          user_ratings_total: c.user_ratings_total,
+          formatted_address: c.formatted_address,
+        },
       };
     }
-    return null;
+    return { raw: null };
   } catch (err) {
     console.warn(
-      `[simple] geocode "${proposed.name}" failed: ${err instanceof Error ? err.message : err}`,
+      `[simple] geocode "${query}" failed: ${err instanceof Error ? err.message : err}`,
     );
-    return null;
+    return { raw: null };
   } finally {
     clearTimeout(timer);
   }
+}
+
+async function geocodeOne(
+  proposed: ProposedLandmark,
+  city: string,
+  country: string,
+  startPoint: { lat: number; lon: number },
+  maxDistanceM: number,
+  apiKey: string,
+): Promise<GeocodedLandmark | null> {
+  // FIX 2 (2026-05-23) — retry with variants if first geocode fails.
+  // Google's findPlaceFromText is finicky on naming (Basilique vs Église,
+  // "(Ruins)" parens, with/without city suffix).
+  const variants = nameVariants(proposed.name);
+  let raw: Awaited<ReturnType<typeof geocodeOnce>>["raw"] = null;
+  for (const v of variants) {
+    const query = `${v}, ${city}, ${country}`;
+    const res = await geocodeOnce(query, startPoint, maxDistanceM, apiKey);
+    if (res.raw) {
+      if (variants.indexOf(v) > 0) {
+        console.log(`[simple] geocode VARIANT WIN for "${proposed.name}" → "${v}" → "${res.raw.name}"`);
+      }
+      raw = res.raw;
+      break;
+    }
+  }
+  if (!raw) {
+    return null;
+  }
+  const distanceM = haversineMeters(
+    { lat: raw.geometry.location.lat, lon: raw.geometry.location.lng },
+    startPoint,
+  );
+  return {
+    name: raw.name,
+    lat: raw.geometry.location.lat,
+    lon: raw.geometry.location.lng,
+    placeId: raw.place_id,
+    types: raw.types ?? [],
+    address: raw.formatted_address,
+    rating: raw.rating,
+    userRatingsTotal: raw.user_ratings_total,
+    distanceM,
+    tier: proposed.tier,
+    themeScore: proposed.themeScore,
+    rationale: proposed.rationale,
+    realFigure: proposed.realFigure,
+    realEvent: proposed.realEvent,
+    proposedName: proposed.name,
+  };
 }
 
 async function geocodeAll(
@@ -421,9 +521,21 @@ async function geocodeAll(
 // FALLBACK — Google nearbysearch top-rating (if Claude knows nothing)
 // ═══════════════════════════════════════════════════════════════════
 
+/**
+ * Fallback nearbysearch — but NOW with Claude scoring (V10 fix 3).
+ * When Claude's proposer doesn't give us enough geocoded landmarks,
+ * we hit Google nearbysearch for top heritage POIs, then ASK Claude
+ * to score each by theme. Picks Claude's top picks, not Google's.
+ *
+ * This way fillers are at least theme-compatible (no more "Spectacle
+ * Son & Lumière 2024" fillers in 1209 Cathar games).
+ */
 async function fallbackNearbysearch(
   startPoint: { lat: number; lon: number },
   radiusM: number,
+  theme: string,
+  themeDescription: string,
+  city: string,
 ): Promise<GeocodedLandmark[]> {
   let raw: NearbyCandidate[];
   try {
@@ -446,15 +558,99 @@ async function fallbackNearbysearch(
   }
   const filtered = raw
     .filter((c) => isAcceptableType(c.types))
-    .filter((c) => !isEventName(c.name))
-    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
-  return filtered.slice(0, 20).map((c) => ({
-    ...c,
-    tier: 3 as const, // fallback = no theme verification
-    themeScore: 0, // unknown
-    rationale: "Fallback (Google top-rating, no theme verification)",
-    proposedName: c.name,
-  }));
+    .filter((c) => !isEventName(c.name));
+  if (filtered.length === 0) return [];
+
+  // V10 FIX 3 : score these via Claude (single batch) BEFORE using.
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    // No Claude available — degrade to rating-only top
+    console.warn("[simple] fallback Claude scoring unavailable, defaulting to top-rating");
+    return filtered
+      .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+      .slice(0, 20)
+      .map((c) => ({
+        ...c,
+        tier: 3 as const,
+        themeScore: 0,
+        rationale: "Fallback (Google top-rating, no Claude)",
+        proposedName: c.name,
+      }));
+  }
+  const client = new Anthropic({ apiKey });
+  const top = filtered
+    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0))
+    .slice(0, 30);
+  const prompt = `Score these ${top.length} POIs for thematic fit with the game "${theme}" in ${city}.
+THEME DESCRIPTION : ${themeDescription}
+
+POIs :
+${top.map((c, i) => `[${i}] ${c.name} | types=[${c.types.slice(0, 3).join(",")}] | rating=${c.rating ?? "?"}(${c.userRatingsTotal ?? "?"})`).join("\n")}
+
+For each, score 0-10 (10=canonical, 4-6=era-compatible, 1-3=tangential, 0=anti-thematic).
+Return strict JSON :
+{
+  "scores": [
+    {"index": 0, "themeScore": 7, "tier": 2, "rationale": "brief"},
+    ...
+  ]
+}`;
+  let scores: Array<{ index: number; themeScore: number; tier: 1 | 2 | 3; rationale: string }> = [];
+  try {
+    const msg = await client.messages.create(
+      {
+        model: "claude-haiku-4-5",
+        max_tokens: 3000,
+        temperature: 0,
+        messages: [{ role: "user", content: prompt }],
+      },
+      { timeout: 45_000 },
+    );
+    const text = msg.content
+      .filter((b): b is Anthropic.TextBlock => b.type === "text")
+      .map((b) => b.text)
+      .join("")
+      .trim()
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+    const parsed = JSON.parse(text) as { scores?: unknown };
+    if (Array.isArray(parsed.scores)) {
+      for (const s of parsed.scores) {
+        const r = (s ?? {}) as Record<string, unknown>;
+        const idx = typeof r.index === "number" ? r.index : -1;
+        if (idx < 0 || idx >= top.length) continue;
+        const ts = Math.max(0, Math.min(10, typeof r.themeScore === "number" ? r.themeScore : 0));
+        const tierRaw = typeof r.tier === "number" ? r.tier : 3;
+        scores.push({
+          index: idx,
+          themeScore: ts,
+          tier: tierRaw === 1 ? 1 : tierRaw === 2 ? 2 : 3,
+          rationale: typeof r.rationale === "string" ? r.rationale : "",
+        });
+      }
+    }
+  } catch (err) {
+    console.warn(
+      `[simple] fallback Claude scoring failed: ${err instanceof Error ? err.message : err}`,
+    );
+  }
+
+  // Sort scored by themeScore desc, take top 20
+  scores.sort((a, b) => b.themeScore - a.themeScore);
+  const out: GeocodedLandmark[] = [];
+  for (const s of scores.slice(0, 20)) {
+    const c = top[s.index];
+    if (!c) continue;
+    out.push({
+      ...c,
+      tier: s.tier,
+      themeScore: s.themeScore,
+      rationale: s.rationale || "Fallback (nearbysearch + Claude scored)",
+      proposedName: c.name,
+    });
+  }
+  return out;
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -594,15 +790,26 @@ export async function runSimpleDiscovery(
   // ── PHASE 3 : Fallback si trop peu ──────────────────────────
   let pool = geocoded;
   let fallbackUsed = false;
-  if (pool.length < minStops) {
-    notes.push(`Pool ${pool.length} < minStops=${minStops} — triggering Google nearbysearch fallback`);
-    const fallback = await fallbackNearbysearch(input.startPoint, radiusM);
-    notes.push(`Fallback returned ${fallback.length} candidates`);
+  // V10 FIX : Aggressive fill — trigger fallback if we have less than TARGET
+  // (not just less than MIN). Target 8 stops, even if Claude found 5+,
+  // we hit nearbysearch to fill up to 8 with Claude-scored heritage.
+  if (pool.length < target) {
+    notes.push(`Pool ${pool.length} < target=${target} — triggering Google nearbysearch fallback (Claude-scored)`);
+    const fallback = await fallbackNearbysearch(
+      input.startPoint,
+      radiusM,
+      input.theme,
+      input.themeDescription,
+      input.city,
+    );
+    notes.push(`Fallback returned ${fallback.length} Claude-scored candidates`);
     // Merge : keep themed first, fillers second
     const existingIds = new Set(pool.map((c) => c.placeId));
     const newOnes = fallback.filter((c) => !existingIds.has(c.placeId));
     pool = [...pool, ...newOnes];
-    fallbackUsed = true;
+    if (pool.length < target) {
+      fallbackUsed = true; // We needed fallback to even reach target
+    }
   }
 
   if (pool.length < minStops) {

@@ -326,7 +326,9 @@ export const buildGameDurable = inngest.createFunction(
             newNavigationHints: null,
             residualThematicFlag: {
               code: `thematic_${initialJudge.verdict}`,
-              severity: "fail" as const,
+              // V10 silence : thematic_weak → WARN. Only thematic_fail
+              // (avg < 4, catastrophic) blocks. weak (avg 4-5.5) ships.
+              severity: (initialJudge.verdict === "fail" ? "fail" : "warn") as "fail" | "warn",
               message: `${initialJudge.needs_review_reason} (auto-repair skipped : no candidate pool available — Gemini-only discovery path)`,
               details: {
                 avg_score: initialJudge.average_score,
@@ -381,7 +383,9 @@ export const buildGameDurable = inngest.createFunction(
             newNavigationHints: null,
             residualThematicFlag: {
               code: `thematic_${initialJudge.verdict}`,
-              severity: "fail" as const,
+              // V10 silence : thematic_weak → WARN. Only thematic_fail
+              // (avg < 4, catastrophic) blocks. weak (avg 4-5.5) ships.
+              severity: (initialJudge.verdict === "fail" ? "fail" : "warn") as "fail" | "warn",
               message: `${initialJudge.needs_review_reason} | Auto-repair attempted but failed: ${repair.reason}`,
               details: {
                 avg_score: initialJudge.average_score,
@@ -693,10 +697,13 @@ export const buildGameDurable = inngest.createFunction(
         logger.info(
           `[armchairJudge] ${j.summary} (avg=${j.average_score}, min=${j.min_score}, verdict=${j.verdict})`,
         );
+        // V10 silence : keep armchair as FAIL only when ALL riddles are
+        // armchair-solvable (verdict=fail). Verdict=weak → just warn.
+        // We don't want to block over the occasional Google-able riddle.
         if (j.verdict !== "pass") {
           armchairFlag = {
             code: `armchair_${j.verdict}`,
-            severity: "fail",
+            severity: j.verdict === "fail" ? "fail" : "warn",
             message: j.needs_review_reason,
             details: {
               avg_site_presence: j.average_score,
@@ -717,10 +724,12 @@ export const buildGameDurable = inngest.createFunction(
         logger.info(
           `[callbacksJudge] ${j.summary} (avg=${j.average_score}, min=${j.min_score}, final=${j.final_stop_score}, verdict=${j.verdict})`,
         );
+        // V10 silence : narration quality judge → WARN only, no needs_review.
+        // Informational audit log only. Game ships regardless.
         if (j.verdict !== "pass") {
           callbacksFlag = {
             code: `callbacks_${j.verdict}`,
-            severity: "fail",
+            severity: "warn",
             message: j.needs_review_reason,
             details: {
               avg_callback_score: j.average_score,
@@ -742,10 +751,11 @@ export const buildGameDurable = inngest.createFunction(
         logger.info(
           `[arcJudge] ${j.summary} (avg=${j.average_score}, climax=${j.climax_score}, final=${j.final_score}, verdict=${j.verdict})`,
         );
+        // V10 silence : narrative arc judge → WARN only, no needs_review.
         if (j.verdict !== "pass") {
           arcFlag = {
             code: `arc_${j.verdict}`,
-            severity: "fail",
+            severity: "warn",
             message: j.needs_review_reason,
             details: {
               avg_score: j.average_score,
@@ -767,10 +777,11 @@ export const buildGameDurable = inngest.createFunction(
         logger.info(
           `[difficultyJudge] ${j.summary} (avg=${j.average_score}, climax_peak=${j.climax_is_peak}, verdict=${j.verdict})`,
         );
+        // V10 silence : difficulty curve judge → WARN only, no needs_review.
         if (j.verdict !== "pass") {
           difficultyFlag = {
             code: `difficulty_${j.verdict}`,
-            severity: "fail",
+            severity: "warn",
             message: j.needs_review_reason,
             details: {
               avg_score: j.average_score,

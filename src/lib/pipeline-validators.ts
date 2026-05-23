@@ -822,13 +822,40 @@ export async function validateFinalGame(
     }
   }
 
+  // V10 (2026-05-23) — INFORMATIONAL ISSUES that should NOT trigger
+  // needs_review (= no client-blocking email). They are audit-logged
+  // in review_reason but the game ships normally.
+  //
+  // Rationale per user mandate :
+  //   "Les judges doivent être informatifs pas bloquants. Email
+  //    needs_review doit être TRES RARE."
+  //
+  // Kept BLOCKING (real customer-impact issues) :
+  //   - twin_stops (player visits same place twice — bad UX)
+  //   - below_floor (< 6 stops — game too short for price)
+  //   - roman_date_drift (incoherent dates between riddle + answer)
+  //   - duplicate_indice / weak_indice / fake_indice (broken riddles)
+  //   - weak_final / fake_final / missing_final_explanation
+  //   - gps_cross_check_drift (>300m drift — real GPS issue)
+  const INFORMATIONAL_CODES = new Set<ValidationIssue["code"]>([
+    "ar_diversity_low",       // cosmetic, doesn't break gameplay
+    "sources_thin",           // audit field, no player-facing impact
+    "promised_landmarks_absent", // false positive on theme concepts
+    "audio_coverage_mismatch",// browser TTS fallback covers missing slots
+    "translation_incomplete", // same — auto-fallback to EN
+    "gps_out_of_cluster",     // existing safety net (no real impact)
+  ]);
+  const blockingIssues = issues.filter((i) => !INFORMATIONAL_CODES.has(i.code));
+
   const reviewReason =
     issues.length === 0
       ? ""
       : issues.map((i) => `[${i.code}] ${i.message}`).join(" | ");
 
   return {
-    ok: issues.length === 0,
+    // ok = TRUE if no BLOCKING issues. Info issues are logged but don't
+    // trigger needs_review email — game ships to customer automatically.
+    ok: blockingIssues.length === 0,
     issues,
     reviewReason,
   };
