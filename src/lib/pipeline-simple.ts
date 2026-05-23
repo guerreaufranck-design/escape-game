@@ -187,28 +187,67 @@ DON'T PROPOSE — GOOGLE PLACES BLIND SPOTS
      "Casa de los Picos"), named squares with own Google entry.
 
 ═══════════════════════════════════════════════════════════
-TIER + SCORE — for each proposal (city-first scoring)
+SCORING FORMULA — patrimoine base + theme bonus
 ═══════════════════════════════════════════════════════════
 
-  TIER 1, score 7-10 — TOP city landmark + theme-tied (best of both)
-      A must-see monument AND documented connection to the theme
-      Ex: Tour de Constance for "Huguenot prison 1572"
+  themeScore = base_patrimoine + theme_bonus  (capped 0-10)
 
-  TIER 2, score 4-6 — TOP city landmark, theme-flexible
-      A must-see monument of the city, era-compatible or atmospheric
-      Ex: Roman amphitheater on a medieval theme (great visit, narrator
-      weaves : "these stones predate even the crusade")
+  BASE PATRIMOINE (the LANDMARK QUALITY itself, theme-agnostic) :
+    9  THE iconic landmark of the city (Notre-Dame Paris, Casas
+       Colgadas Cuenca, Cathédrale Saint-Nazaire Béziers)
+    7-8 TOP monuments of the city (must-see for any visitor :
+        major churches, named towers, Roman ruins, famous bridges,
+        historic squares with own Google entry)
+    5-6 NOTABLE heritage (smaller churches, secondary museums,
+        named historic streets)
+    3-4 Decent stop (named buildings, parks with character)
+    0-2 Generic/forgettable (modern offices, anonymous parks,
+        shops). REJECT these.
 
-  TIER 3, score 1-3 — SECONDARY landmark, off-theme
-      Still worth visiting but lower priority. Include only if Tier 1+2
-      give < 8.
+  THEME BONUS (added on top of base) :
+    +2  Documented event / figure / era explicit tie
+        (Cathédrale Saint-Nazaire = 1209 massacre refuge → +2)
+    +1  Era-compatible OR existed during the theme period
+        (Arènes Romaines built 1st c. → still standing during
+         1209 Cathar crusade → +1, NOT -5 ! Cathares walked past
+         them daily. Same for Romanesque churches in any
+         post-medieval theme.)
+     0  Anachronistic but acceptable narrator-weave
+        (a 19th-c park in a medieval theme — narrator says
+         "where this park stands now, the medieval refugees
+         once fled the burning city")
 
-  ⚠️ A LOW theme score (Tier 2 or 3) is NOT a reason to reject. Only
-     reject if the place is :
-       - not a real Google Places entry
-       - a hotel/parking/event (already filtered)
-       - completely unmemorable / not worth a stop
-     Otherwise INCLUDE — the narrator weaves the theme on top.
+═══════════════════════════════════════════════════════════
+🚨 CRITICAL HISTORICAL REASONING
+═══════════════════════════════════════════════════════════
+
+  Don't be dogmatic about "wrong era" :
+    - Roman ruins EXISTED during medieval times (and Renaissance,
+      and modern times). The Cathares of 1209 saw the Arènes
+      Romaines every day — they were already 1100 years old.
+      → Score them HIGH (great patrimoine + existed then = 7-8)
+    - Medieval churches survive into the present. A 12th-c church
+      seen on a 19th-c theme = still relevant patrimoine.
+      → Score them based on tourism value, not strict era-match.
+    - Only score 0-3 if the building is GENUINELY post-theme :
+      a 1990s mall on a 1209 theme = 1/10, justified.
+
+  Mental model :
+    "What would a knowledgeable tourist guide of this city say is
+     worth visiting ? Now, for each : how strongly does the theme
+     connect ? The visit list comes FIRST, theme bonus AFTER."
+
+═══════════════════════════════════════════════════════════
+TIER ASSIGNMENT (derived from themeScore)
+═══════════════════════════════════════════════════════════
+
+  TIER 1 = themeScore 8-10
+  TIER 2 = themeScore 5-7
+  TIER 3 = themeScore 3-4 (acceptable filler)
+  Below 3 = REJECT (not in proposal list)
+
+  ⚠️ NEVER reject a great tourist landmark because it's "wrong era".
+     Apply the formula above, accept the score, move on.
 
 ═══════════════════════════════════════════════════════════
 REAL FIGURES + EVENTS (when known)

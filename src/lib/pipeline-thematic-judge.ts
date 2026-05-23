@@ -90,31 +90,61 @@ export interface JudgeInput {
   }>;
 }
 
-const SYSTEM_PROMPT = `You are a STRICT thematic-fit judge for outdoor escape-game stops.
+const SYSTEM_PROMPT = `You are a CITY-FIRST themed-tour judge for outdoor escape-game stops.
 
-Your job : given a game's theme + description, rate how well each proposed
-stop fits the theme, on a 0-10 scale.
+🎯 GUIDING PRINCIPLE :
+   Customers buy a CITY VISIT first, theme second. A great tourist
+   landmark is GOOD even if its theme connection is loose — the
+   narrator will weave the theme on top via creative storytelling.
 
-SCORING SCALE (be calibrated, not generous) :
-  10  Stop is THE iconic landmark for this theme
-       (Tour de Constance for "Huguenot prison")
-  7-9 Direct, documented connection to the theme
-       (same person, event, era, place explicitly tied to themeDescription)
-  4-6 Partial connection — right region or era, but link is atmospheric
-       rather than specific (a square central to the era's life, a building
-       from the right century but not tied to the specific event)
-  1-3 Tenuous — right area but theme link is weak (could be in any game
-       about that city, no specific tie to the theme's narrative)
-  0   No thematic connection (wrong era / wrong topic / wrong region /
-       generic tourist attraction unrelated to the theme)
+Your job : given a game's theme + description, rate each stop on a
+0-10 scale using : base patrimoine + theme bonus.
 
-CALIBRATION REMINDERS (lean strict, not generous) :
-- An aquarium has score 0 for ANY historical theme.
-- A modern art museum has score 0 for ANY pre-1900 historical theme.
-- A church from the wrong century scores 2-3 (right type, wrong era).
-- A landmark from the right era but no specific link to the theme scores 4-5.
-- A landmark documented in academic sources as tied to the theme scores 7-9.
-- THE landmark inseparable from the theme's main protagonist scores 10.
+SCORING FORMULA :
+  fit_score = base_patrimoine (1-9) + theme_bonus (-1 to +1)  (cap 0-10)
+
+  BASE PATRIMOINE (visitor-value of the landmark itself) :
+    9  Iconic landmark of the city, must-see for any visitor
+       (Cathédrale, Casas Colgadas, Tour Eiffel)
+    7-8 Top tourist patrimoine (named churches, towers, Roman ruins,
+        named bridges, historic squares with own Google entry)
+    5-6 Notable heritage (secondary churches, smaller museums in
+        historic buildings, named historic streets)
+    3-4 Decent stop (named buildings, atmospheric parks)
+    1-2 Generic (random promenade, anonymous park, parking)
+    0   Anti-patrimoine (gas station, fast-food, modern mall)
+
+  THEME BONUS :
+    +1  Documented connection to theme (specific event/figure/era)
+    0   Era-flexible (existed during theme period OR atmospherically
+        compatible — DEFAULT for most heritage stops)
+    -1  Genuinely post-theme construction (e.g., 19th-c park on a
+        1209 medieval theme — still acceptable, narrator weaves)
+
+CRITICAL HISTORICAL REASONING (don't be dogmatic) :
+  - Roman ruins EXISTED during medieval times. The Cathares of 1209
+    walked past the Arènes Romaines every day. Score Arènes :
+    base 7 (top patrimoine) + theme_bonus 0 (existed in 1209) = 7,
+    NOT 2 (wrong era). Cathares used the structure for shelter.
+  - Same logic for any pre-theme structure that was still standing :
+    a 12th-c church on a 16th-c theme = base 7 + bonus 0 = 7.
+  - Only score genuinely POST-theme constructions lower : a 1990s
+    shopping mall on a medieval theme = base 1 = 1.
+
+  Mental model :
+    "Would a knowledgeable tourist guide of this city say this is
+     worth visiting ?" → that's the base score.
+    "Does it have documented theme tie ?" → +1.
+
+OBVIOUS REJECTS (score 0) :
+  - Aquariums (never fit historical themes)
+  - Modern shopping malls
+  - Hotels/parking/transport stations
+  - Events/temporary shows ("Spectacle Son & Lumière 2024")
+
+CHURCH FROM WRONG CENTURY :
+  - If well-known church in old town : base 6 + bonus 0 = 6 (not 2-3)
+  - The OLD prompt downgraded these incorrectly.
 
 OUTPUT : strict JSON, no markdown, no commentary.
 {
@@ -129,9 +159,12 @@ OUTPUT : strict JSON, no markdown, no commentary.
 }
 
 VERDICT RULES (compute yourself, don't deviate) :
-  - "pass" : average_score >= 6.5 AND min_score >= 3
-  - "weak" : average_score >= 5.0 AND min_score >= 1
-  - "fail" : average_score < 5.0 OR min_score = 0`;
+  - "pass" : average_score >= 5.5 AND min_score >= 3
+  - "weak" : average_score >= 4.0 AND min_score >= 1
+  - "fail" : average_score < 4.0 OR min_score = 0
+  (V11 — thresholds lowered because new scoring is base-patrimoine
+   inclusive : Tier 2 stops realistically score 5-7 not 3-5, so
+   the pass bar shifts down to match)`;
 
 function buildUserPrompt(input: JudgeInput): string {
   const stopsBlock = input.stops
@@ -229,8 +262,11 @@ export async function judgeThematicRelevance(
 
   // Recompute verdict ourselves (model verdict is double-check)
   let verdict: ThematicVerdict;
-  if (average >= 6.5 && min >= 3) verdict = "pass";
-  else if (average >= 5.0 && min >= 1) verdict = "weak";
+  // V11 (2026-05-23) thresholds lowered to match new city-first scoring
+  // formula (base patrimoine + theme bonus). Tier 2 stops legitimately
+  // score 5-7 now, so the pass bar shifts down.
+  if (average >= 5.5 && min >= 3) verdict = "pass";
+  else if (average >= 4.0 && min >= 1) verdict = "weak";
   else verdict = "fail";
 
   const summary =
