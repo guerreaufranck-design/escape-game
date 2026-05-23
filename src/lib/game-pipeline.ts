@@ -1310,19 +1310,52 @@ export async function runPipelinePhase1Discovery(
     // Aucun de ces 3 cas n'a besoin d'un needs_review — tous précis.
     void startPointAutoCorrected; // toujours null désormais
 
-    // V13 (2026-05-23) — pipeline-simple low-quality flag :
-    // Only trigger needs_review if average score < 4.0 (CATASTROPHIC).
-    // Avg 4.0-5.5 is INFORMATIONAL only (log to review_reason but
-    // do NOT block release — narrator weaves the theme on top).
-    if (simpleResult.diagnostics.averageScore < 4.0 && !simpleResult.diagnostics.fallbackUsed) {
+    // V14.1 (2026-05-23) — judge thématique très peu bloquant pour
+    // Funbooker night-sales. Contexte : avec V14 city-first qui force
+    // l'inclusion de landmarks iconiques (Château des Ducs, Cathédrale,
+    // etc.) indépendamment du thème, un avg theme_score 3-5 devient
+    // ATTENDU pour des thèmes narrow (Jules Verne sur Nantes a flaggé
+    // avg=3.89). Si on bloque à 4.0 le client achète à 3h du matin et
+    // ne reçoit pas son code → review 1★ Funbooker.
+    //
+    // Nouveau comportement :
+    //   - avg < 2.5  → BLOQUANT (vraiment hors-sujet : 8 stops dans
+    //                  une zone industrielle pour un thème médiéval)
+    //   - avg < 4.0  → INFO seulement SI le pipeline a sélectionné
+    //                  ≥ 2 landmarks city-first (T1 ≥ 1 OU T1+T2 ≥ 3).
+    //                  Sinon BLOQUANT.
+    //   - avg ≥ 4.0  → toujours INFO (sans changement vs V13)
+    //
+    // Le review_reason reste loggé pour audit dans tous les cas.
+    const avgScore = simpleResult.diagnostics.averageScore;
+    const t1 = simpleResult.diagnostics.tier1Count;
+    const t2 = simpleResult.diagnostics.tier2Count;
+    const cityFirstStrong = t1 >= 1 || t1 + t2 >= 3;
+
+    if (avgScore < 2.5 && !simpleResult.diagnostics.fallbackUsed) {
+      // Catastrophic : pas de city-first iconique ET theme score nul
       needsReview = true;
-      const lowScoreReason = `Pipeline-simple final stops average theme score ${simpleResult.diagnostics.averageScore}/10 (T1=${simpleResult.diagnostics.tier1Count}, T2=${simpleResult.diagnostics.tier2Count}, T3=${simpleResult.diagnostics.tier3Count}). Catastrophic theme mismatch — operator must inspect.`;
+      const lowScoreReason = `Pipeline-simple final stops average theme score ${avgScore}/10 (T1=${t1}, T2=${t2}, T3=${simpleResult.diagnostics.tier3Count}). CATASTROPHIC theme + no city-first iconic landmarks — operator must inspect.`;
       reviewReason = reviewReason
         ? `${reviewReason} | ${lowScoreReason}`
         : lowScoreReason;
-    } else if (simpleResult.diagnostics.averageScore < 5.5) {
-      // 4.0-5.5 : log as info only, no needs_review trigger
-      const infoReason = `[INFO] Pipeline-simple avg theme score ${simpleResult.diagnostics.averageScore}/10 (T1=${simpleResult.diagnostics.tier1Count}, T2=${simpleResult.diagnostics.tier2Count}, T3=${simpleResult.diagnostics.tier3Count}). Theme moderate, narrator weaves on top.`;
+    } else if (avgScore < 4.0 && !cityFirstStrong && !simpleResult.diagnostics.fallbackUsed) {
+      // Low theme + no city-first iconic = inspect manually
+      needsReview = true;
+      const lowScoreReason = `Pipeline-simple avg ${avgScore}/10 with weak city-first (T1=${t1}, T2=${t2}). Operator should inspect.`;
+      reviewReason = reviewReason
+        ? `${reviewReason} | ${lowScoreReason}`
+        : lowScoreReason;
+    } else if (avgScore < 4.0 && cityFirstStrong) {
+      // Low theme BUT city-first iconic present (Château + Cathédrale type)
+      // → INFO only (Funbooker safe — narrator weaves theme on top).
+      const infoReason = `[INFO] Avg theme score ${avgScore}/10 BUT city-first delivered (T1=${t1}, T2=${t2}). Narrator weaves theme on top of iconic landmarks. Non-blocking.`;
+      reviewReason = reviewReason
+        ? `${reviewReason} | ${infoReason}`
+        : infoReason;
+    } else if (avgScore < 5.5) {
+      // 4.0-5.5 : info only (was non-blocking even before V14.1)
+      const infoReason = `[INFO] Pipeline-simple avg theme score ${avgScore}/10 (T1=${t1}, T2=${t2}, T3=${simpleResult.diagnostics.tier3Count}). Theme moderate, narrator weaves on top.`;
       reviewReason = reviewReason
         ? `${reviewReason} | ${infoReason}`
         : infoReason;
