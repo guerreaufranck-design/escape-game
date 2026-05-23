@@ -82,6 +82,27 @@ export const buildGameDurable = inngest.createFunction(
      * function killed mid-execution).
      */
     retries: 1,
+    /**
+     * PIPELINE V2 (2026-05-23) — kill the race-condition we observed
+     * in V1 (OddballTrip dispatching the same event 3-5× → 3-5×
+     * Perplexity DR calls in parallel, wasting $1-2 / build).
+     * Concurrency cap=1 per slug : if a second event for the same
+     * slug arrives while the first is running, Inngest queues it
+     * behind. Combined with the idempotency key below, duplicate
+     * events within the dedup window become NO-OPs.
+     */
+    concurrency: [
+      {
+        key: "event.data.slug",
+        limit: 1,
+      },
+    ],
+    /**
+     * Idempotency : dedupe events with the same slug within 24h.
+     * OddballTrip's retry storms (observed 2026-05-23 V5-bis : same
+     * slug dispatched 5× in 20s) now become a single function run.
+     */
+    idempotency: "event.data.slug",
   },
   async ({ event, step, logger }) => {
     const data = event.data;

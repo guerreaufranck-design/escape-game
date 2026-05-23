@@ -88,6 +88,9 @@ import {
   deepResearchTheme,
   type VerifiedThemeContext,
 } from "./perplexity";
+// Pipeline V2 (2026-05-23) — replaces Perplexity DR + discoverParcours
+import { extractThemeFacts as extractThemeFactsV2 } from "./pipeline-v2-facts";
+import { discoverParcoursV2 } from "./pipeline-v2-discovery";
 // prepareGamePackage + validateFinalGame + attemptAutoRepair moved to
 // Lambda 2 (pipeline-finalize.ts + /api/internal/finalize-game route)
 // for proper Vercel maxDuration handling. Cf. CHAINED PIPELINE block below.
@@ -746,22 +749,26 @@ export interface Phase2bResult {
 export async function runPipelinePhase1aDeepResearch(
   template: GameTemplate,
 ): Promise<VerifiedThemeContext> {
+  // PIPELINE V2 (2026-05-23) — Perplexity DR replaced by Claude Haiku
+  // facts extractor. Same output shape (VerifiedThemeContext), 40×
+  // cheaper ($0.40 → $0.005), 60× faster (2-5 min → 3-8s), no
+  // upstream instability (Perplexity sonar-deep-research returned
+  // empty on Béziers V6 22/05 — Claude has not).
   const t0 = Date.now();
   console.log(
-    `[Pipeline 1a] Deep Research START for theme="${template.theme}" in ${template.city}`,
+    `[Pipeline 1a V2] Facts extraction START for theme="${template.theme}" in ${template.city}`,
   );
-  const ctx = await deepResearchTheme({
+  const ctx = await extractThemeFactsV2({
     city: template.city,
     country: template.country,
     theme: template.theme,
     themeDescription: template.themeDescription,
     narrative: template.narrative,
-    // Sprint 6.2ter (2026-05-22) — rich grounding text
     productDescription: template.productDescription,
   });
   const ms = Date.now() - t0;
   console.log(
-    `[Pipeline 1a] Deep Research DONE in ${Math.round(ms / 1000)}s — ${ctx.iconicSites.length} iconic sites, ${ctx.realFigures.length} figures, ${ctx.events.length} events`,
+    `[Pipeline 1a V2] Facts extraction DONE in ${Math.round(ms / 1000)}s — ${ctx.iconicSites.length} iconic sites, ${ctx.realFigures.length} figures, ${ctx.events.length} events`,
   );
   return ctx;
 }
@@ -983,98 +990,77 @@ export async function runPipelinePhase1Discovery(
       `[Pipeline] Mode=${template.mode ?? "city_game"} → stopCount=${stopCount} (ceiling=${stopCeiling}, default=${defaultStops})`,
     );
 
-    // ============================================
-    // STEP 1 : Discovery avec WIDENING progressif
-    // ============================================
-    // Si la zone est sparse au radius standard, on retry avec un radius
-    // + max-hop élargis. 3 niveaux : 1× → 1.5× → 2.5×. Le seul rejet
-    // possible est si même à 2.5× on a < 5 walkables (zone vraiment
-    // impossible — auquel cas oddballtrip doit reframer la fiche).
-    //
-    // Quand le widening kick in, on auto-bumpe la difficulty publiée à
-    // 5/5 ("parcours costaud, longues marches") pour ne pas surprendre
-    // le joueur en lui vendant un facile dans une zone difficile.
+    // ════════════════════════════════════════════════════════════════
+    // STEP 1 : Discovery — PIPELINE V2 (2026-05-23)
+    // ════════════════════════════════════════════════════════════════
+    // V1's widening retry loop (1× → 1.5× → 2.5×) is REMOVED. V2 starts
+    // from CANONICAL thematic anchors (Claude historian) and fills with
+    // era-compatible heritage. No need for progressive widening :
+    //   - If V2 finds ≥ 5 anchors+heritage in walking radius, ship.
+    //   - If not, ABORT cleanly (zone editorially unsuitable).
+    // The clean abort avoids the cascade of "fill with arbitrary noise
+    // then need_review" that V1 produced on niche themes (Béziers
+    // Cathar 1209 V3→V6, all failed with thematic_fail).
     const researchStart = Date.now();
-    const wideningAttempts = [
-      { multiplier: 1, label: "standard" },
-      { multiplier: 1.5, label: "widened" },
-      { multiplier: 2.5, label: "wide" },
-    ];
-    const discoveryParamsBase = {
+    const v2Discovery = await discoverParcoursV2({
       city: template.city,
       country: template.country,
       theme: template.theme,
       themeDescription: template.themeDescription,
       narrative: template.narrative,
-      // (Sprint I, 2026-05-22) — propagate rich productDescription so
-      // the Claude landmark proposer can ground its proposals on the
-      // customer's promise (specific landmarks named on the product
-      // page get priority lookup).
       productDescription: template.productDescription,
-      startPoint,
       stopCount,
-      // accessibility="free" filtre les POIs payants côté Google + Claude.
-      // Pas de défaut : undefined laisse parcours-discovery décider (= "any").
+      startPoint,
+      startPointText: resolvedStartPointLabel,
+      startPointSource,
       accessibility: template.accessibility,
-      // ── ROADTRIP (contrat OddballTrip 2026-05-10) ────────────────
-      // transportMode "walking" → comportement historique inchangé.
-      // "driving" / "mixed" → rayon élargi (radiusKm * 1000), seedSites
-      // passés à Claude curation comme priorités éditoriales.
       transportMode: template.transportMode,
       radiusKm: template.radiusKm,
-      roadtripSeedSites: template.roadtripSeedSites,
-      // (2026-05-21) Inject le contexte Perplexity DR pré-calculé pour
-      // sauter l'appel interne. Pas de dégradation qualité — c'est le
-      // résultat du même appel, juste exécuté dans un step Inngest amont.
       injectedVerifiedContext,
-    };
-    console.log(
-      `[Pipeline] Discovery attempt: ${wideningAttempts[0].label} (multiplier ${wideningAttempts[0].multiplier}x)${injectedVerifiedContext ? " [verifiedContext pré-injecté]" : ""}`,
-    );
-    let discovery = await discoverParcours({
-      ...discoveryParamsBase,
-      wideningMultiplier: wideningAttempts[0].multiplier,
     });
-    let usedWidening = wideningAttempts[0];
-    // 2026-05-13 v2 — Politique stopCount cible MODÉRÉE.
-    //
-    // V1 (matin) avait viseé stopCount - 1 (= 8 pour stopCount=9). Mais
-    // chaque widening retry = 1 nouveau call Perplexity DR (slow, 30-60s)
-    // + 1 nouveau call Claude curation. 2 retries = +3 min total. Combiné
-    // avec step generation (2-4 min) on dépassait le Vercel 600s timeout.
-    // Observé Béziers 13/05 11:45 → 504 Gateway Timeout.
-    //
-    // V2 : on accepte (stopCount - 3), soit 6 stops minimum pour stopCount=9.
-    // Ça correspond au plancher commercial historique. Si discovery donne
-    // 6+ stops d'un coup, on prend (pas de retry). Si < 6, widening kick in
-    // mais c'est rare et justifié.
-    //
-    // Trade-off : on garde la possibilité d'avoir 6 stops parfois, mais on
-    // ne timeout PLUS jamais. Mieux 6 stops livrés que 9 stops timeoutés.
-    const targetStopCount = Math.max(6, stopCount - 3);
-    for (const attempt of wideningAttempts.slice(1)) {
-      if (discovery.success && discovery.landmarks.length >= targetStopCount) break;
-      console.warn(
-        `[Pipeline] ${usedWidening.label} attempt yielded ${discovery.success ? discovery.landmarks.length : 0} stops (target ≥${targetStopCount}) — retrying with ${attempt.label} (multiplier ${attempt.multiplier}x)`,
-      );
-      discovery = await discoverParcours({
-        ...discoveryParamsBase,
-        wideningMultiplier: attempt.multiplier,
-      });
-      usedWidening = attempt;
-    }
 
-    // Floor absolu : 6 stops. Si même à 2.5x widening on a < 6, on FAIL
-    // (la zone est éditorialement à reframer).
-    if (!discovery.success || discovery.landmarks.length < 6) {
+    // Adapt V2 result to V1 `discovery` shape so the rest of this
+    // function (centroid check, free-access ratio, downstream mapping)
+    // works without rewriting.
+    const discovery: {
+      success: boolean;
+      landmarks: DiscoveredStop[];
+      rejected: Array<{ name: string; reason: string }>;
+      errorCode?: PipelineErrorCode;
+      error?: string;
+      verifiedContext?: VerifiedThemeContext;
+      thematicContext?: Array<{
+        placeId: string;
+        patrimonialRole: string;
+        thematicRole: string;
+        citation: string;
+        category: "patrimonial_landmark" | "thematic_anchor" | "micro_memorial";
+      }>;
+      discoverySource?: "gemini_thematic" | "google_places";
+      escalatedTransportMode?: "walking" | "mixed" | "driving";
+      allCandidates: typeof v2Discovery.allCandidates;
+    } = {
+      success: v2Discovery.success,
+      landmarks: v2Discovery.landmarks,
+      rejected: v2Discovery.rejected,
+      errorCode: v2Discovery.errorCode as PipelineErrorCode | undefined,
+      error: v2Discovery.error,
+      verifiedContext: v2Discovery.verifiedContext,
+      thematicContext: undefined,
+      discoverySource: "google_places", // V2 uses Google + Claude
+      escalatedTransportMode: v2Discovery.escalatedTransportMode,
+      allCandidates: v2Discovery.allCandidates,
+    };
+
+    if (!discovery.success) {
       const err = new Error(
         discovery.error ||
-          `All widening attempts failed — zone too sparse for ≥6 walkable stops even at 2.5× radius/maxHop. Reframe the fiche editorially.`,
+          `Pipeline V2 discovery failed — pool too thin for theme "${template.theme}" in ${template.city}. Reframe editorially.`,
       ) as Error & {
         code?: PipelineErrorCode;
         failedLandmarks?: FailedLandmark[];
       };
-      err.code = discovery.errorCode ?? "PARCOURS_TOO_DISPERSED";
+      err.code = discovery.errorCode ?? "TOO_FEW_LANDMARKS";
       err.failedLandmarks = discovery.rejected.map((r) => ({
         stopName: r.name,
         tried: [r.reason],
@@ -1084,19 +1070,14 @@ export async function runPipelinePhase1Discovery(
 
     const researchDurationMs = Date.now() - researchStart;
     console.log(
-      `[Pipeline] Discovery complete in ${Math.round(researchDurationMs / 1000)}s — ${discovery.landmarks.length} landmarks (${discovery.rejected.length} rejected) — widening=${usedWidening.label}`,
+      `[Pipeline V2] Discovery complete in ${Math.round(researchDurationMs / 1000)}s — ${discovery.landmarks.length} landmarks (${discovery.rejected.length} rejected). Pool breakdown : ${JSON.stringify(v2Discovery.poolBreakdown)}`,
     );
-
-    // Auto-bump difficulty si widening a kick in. Le joueur achète un
-    // jeu où on lui annonce des longues marches entre stops — on calibre
-    // la promesse produit pour ne pas surprendre ("difficile" attendu).
-    let effectiveDifficulty = template.difficulty;
-    if (usedWidening.multiplier > 1) {
-      effectiveDifficulty = 5;
-      console.warn(
-        `[Pipeline] Widening triggered (${usedWidening.label}, ${usedWidening.multiplier}x) — auto-bumping difficulty ${template.difficulty} → 5/5 (longues marches entre stops, parcours costaud)`,
-      );
+    for (const note of v2Discovery.notes) {
+      console.log(`  ${note}`);
     }
+
+    // V2 doesn't widen, so no auto-difficulty bump. Keep template.difficulty.
+    const effectiveDifficulty = template.difficulty;
 
     // ============================================
     // STEP 1.5 : Sanity-check cluster centroid
@@ -1258,14 +1239,14 @@ export async function runPipelinePhase1Discovery(
     // Aucun de ces 3 cas n'a besoin d'un needs_review — tous précis.
     void startPointAutoCorrected; // toujours null désormais
 
-    // Widening 2.5x = zone géographiquement extreme. La qualité des
-    // stops trouvés peut être limite — on flag pour double-check humain.
-    if (usedWidening.multiplier >= 2.5) {
-      needsReview = true;
-      const wideningReason = `Discovery widened to ${usedWidening.label} (radius/maxHop × ${usedWidening.multiplier}) to find ≥5 walkable stops. Zone is sparse — verify the parcours quality is acceptable before releasing.`;
+    // V2 doesn't widen — removed widening flag. V2 either succeeds at
+    // standard radius or aborts cleanly upstream (no degraded ship).
+    // Tag V2 notes in the review_reason for operator audit instead.
+    if (v2Discovery.notes.length > 0) {
+      const v2Trace = `[V2_PIPELINE] ${v2Discovery.notes.slice(-3).join(" | ")}`;
       reviewReason = reviewReason
-        ? `${reviewReason} | ${wideningReason}`
-        : wideningReason;
+        ? `${reviewReason} | ${v2Trace}`
+        : v2Trace;
     }
 
     // ============================================
