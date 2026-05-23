@@ -1,28 +1,31 @@
 /**
- * Pipeline simple (2026-05-23) — discovery + ranking en 1 fichier.
+ * Pipeline simple V2 (2026-05-23, theme-first) — discovery + ranking
+ * en 1 fichier, theme-first approach.
  *
  * ═══════════════════════════════════════════════════════════════════
- * DESIGN PRINCIPLE — the user's vision, expressed directly :
+ * USER PRINCIPLE (mandate 2026-05-23) :
  *
- *   "Une ville arrive, un thème, une narration. Pourquoi c'est si dur
- *    de trouver et classer les monuments par pertinence thématique ?"
+ *   "Au lieu de demander à Google tout autour et filtrer par thème,
+ *    on demande à Claude QUELS sont les monuments thématiques, puis
+ *    on les géocode via Google. Comme ça pas de Spectacle Son &
+ *    Lumière, pas de twin stops, pas de fillers hors-sujet."
  *
- * Réponse : ce N'EST PAS dur. La pipeline V1 a empilé 10 sprints de
- * patches. Ce module fait CE qui est nécessaire, rien de plus :
+ * Architecture :
  *
- *   1. Google Places nearbysearch (~30-60 POIs autour du startPoint)
- *   2. Filtre stricte de types (kick out hotels/stations/parkings/etc.)
- *   3. UN seul appel Claude Haiku : score chaque POI 0-10 vs thème
- *      + extrait personnage/event réel si Claude en connaît un
- *   4. Trie par score, prend top N (5-8), seuil flexible si pool fin
- *   5. NN reorder + walkability check
- *   6. Output : DiscoveredStop[] prêt pour narration
+ *   1. Claude Haiku — pour [theme + city] propose 10-12 monuments
+ *      named (avec tier/themeScore/rationale/realFigure/realEvent)
+ *   2. Google findPlaceFromText pour chaque → vrais GPS + place_id
+ *   3. Filtre : reject events/dates, reject hotels/stations, in radius
+ *   4. Si ≥ 5 monuments → SUCCESS, on continue
+ *   5. Si < 5 → FALLBACK : Google nearbysearch top-rating heritage
+ *   6. selectStopsByGeometry avec min-distance 150m → top N
+ *   7. NN reorder
  *
- * Fail-safe : si Google returns 0, ou Claude scoring fail, on tombe
- * sur un fallback simple (top rating Google) avec needs_review forcé.
+ * Output : DiscoveredStop[] avec metadata thématique (tier, rationale,
+ * realFigure, realEvent) prête pour la narration phase 2a.
  *
- * Coût : ~$0.01 par build (1 Claude Haiku + Google Places).
- * Temps : ~10-20s (parallèle).
+ * Cible 8 stops, floor commercial 5, walking radius 1.75km (3.5km
+ * diameter). Tous configurables via input params.
  * ═══════════════════════════════════════════════════════════════════
  */
 import Anthropic from "@anthropic-ai/sdk";
@@ -32,27 +35,26 @@ import {
   type NearbyCandidate,
 } from "./geocode";
 import type { DiscoveredStop } from "./parcours-discovery";
+import { selectStopsByGeometry } from "./parcours-selection";
 
 // ═══════════════════════════════════════════════════════════════════
-// CONFIG — minimaliste, transparent
+// CONFIG (mandate user 2026-05-23)
 // ═══════════════════════════════════════════════════════════════════
 
-/** Walking radius around startPoint. Generous-but-realistic 2.5km. */
-const WALKING_RADIUS_M = 2_500;
+const DEFAULT_WALKING_RADIUS_M = 1_750; // 3.5km diameter
+const DEFAULT_TARGET_STOPS = 8;
+const DEFAULT_MIN_STOPS = 5;
+const MIN_INTER_STOP_M = 150; // Anti twin stops (= 2 min de marche)
+/** Rendez-vous gap : start point ≠ stop 1. Le joueur arrive au RDV
+ *  (entrée d'un café, panneau, etc.) puis MARCHE vers le 1er stop —
+ *  c'est ce qui donne l'impression que "le jeu commence". Sans gap,
+ *  stop 1 est sur le RDV et le joueur valide en 13 secondes. */
+const RENDEZVOUS_GAP_M = 150;
 
-/** Google Places types we SEARCH for (multiple narrow queries). */
-const HERITAGE_SEARCH_TYPES = [
-  "tourist_attraction",
-  "church",
-  "museum",
-  "place_of_worship",
-  "historical_landmark",
-  "city_hall",
-  "park",
-];
+// ═══════════════════════════════════════════════════════════════════
+// FILTERS — types et noms à reject
+// ═══════════════════════════════════════════════════════════════════
 
-/** Types we HARD REJECT in post-filter (zero-narrative-value or
- *  anxiogenic for an outdoor escape-game). */
 const REJECT_TYPES = new Set([
   "lodging", "gas_station", "convenience_store", "supermarket",
   "shopping_mall", "parking", "atm", "bank", "real_estate_agency",
@@ -66,131 +68,147 @@ const REJECT_TYPES = new Set([
   "store", "clothing_store", "electronics_store", "furniture_store",
 ]);
 
-function isAcceptable(types: string[]): boolean {
+function isAcceptableType(types: string[]): boolean {
   if (!types || types.length === 0) return false;
   for (const t of types) if (REJECT_TYPES.has(t)) return false;
   return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════
-// CLAUDE SCORING — single batch call
-// ═══════════════════════════════════════════════════════════════════
+/**
+ * Reject candidate names matching event/temporary-show patterns.
+ *
+ * Pattern catches :
+ *   - "Spectacle", "Festival", "Concert", "Exposition"
+ *   - "Son & Lumière" / "Son et Lumière"
+ *   - "Visite Guidée"
+ *   - Year markers : "2024", "2025"
+ *   - Date ranges : "du X au Y"
+ */
+const EVENT_NAME_REGEX =
+  /\b(spectacle|festival|concert|exposition|son\s*&?\s*et?\s*lumi[èe]re|show|visite\s+guid[ée]e?|événement|evenement)\b|\b20\d{2}\b|\bdu\s+\d{1,2}\s+\w+\s+au\s+\d{1,2}/i;
 
-interface ScoredCandidate {
-  /** index into the pool array (0-based) */
-  index: number;
-  /** 0-10, higher = better thematic match */
-  themeScore: number;
-  /** one sentence : why this score */
-  rationale: string;
-  /** real historical figure tied to this place, if Claude knows one */
-  realFigure?: { name: string; role: string; lifespan?: string };
-  /** real historical event tied to this place, if Claude knows one */
-  realEvent?: { date: string; description: string };
-  /** "Tier" 1 (canonical) / 2 (heritage compatible) / 3 (era-OK) */
-  tier: 1 | 2 | 3;
+function isEventName(name: string): boolean {
+  return EVENT_NAME_REGEX.test(name);
 }
 
-const SCORER_SYSTEM = `You are a heritage historian scoring outdoor escape-game candidate stops.
+// ═══════════════════════════════════════════════════════════════════
+// CLAUDE — propose + score en 1 appel
+// ═══════════════════════════════════════════════════════════════════
 
-For each candidate POI in the pool, decide :
-  1. How well does it fit the THEME ? (0-10 score, see scale below)
-  2. What TIER is it ? (1 = canonical-for-theme, 2 = era-compatible heritage, 3 = generic-era-OK)
-  3. Is there a REAL named figure tied to it ? (if you know one)
-  4. Is there a REAL dated event tied to it ? (if you know one)
+interface ProposedLandmark {
+  name: string;
+  tier: 1 | 2 | 3;
+  themeScore: number;
+  rationale: string;
+  realFigure?: { name: string; role: string; lifespan?: string };
+  realEvent?: { date: string; description: string };
+}
+
+const PROPOSER_SYSTEM = `You are a heritage historian designing the perfect outdoor escape-game.
+
+For a given THEME + CITY, propose 10-12 PHYSICAL, NAMED, STILL-STANDING landmarks that would make the BEST stops for this theme in this specific city.
 
 ═══════════════════════════════════════════════════════════
-SCORE SCALE (0-10)
+HARD RULES — PROPOSE
 ═══════════════════════════════════════════════════════════
-  10  THE iconic landmark for this theme
+
+  ✅ FULL geocodable name on Google Maps :
+       "Cathédrale Saint-Nazaire de Béziers" (NOT "the cathedral")
+       "Église de la Madeleine, Béziers"
+       "Casa Zavala" (good, if unique name)
+       "San Pablo Bridge, Cuenca"
+  ✅ Use proper diacritics + accents
+  ✅ Prefer OUTDOOR/façade-visible heritage (escape-game UX)
+  ✅ Mix Tier 1 (canonical) + Tier 2 (era-fit) for variety
+  ✅ Walking-distance scope (assume 1.75km radius around city center)
+
+═══════════════════════════════════════════════════════════
+DON'T PROPOSE
+═══════════════════════════════════════════════════════════
+
+  ❌ Generic categories ("a medieval church")
+  ❌ Events / temporary shows ("Spectacle Son & Lumière", "Festival X")
+  ❌ Modern reconstructions / replicas
+  ❌ Hotels, restaurants, shopping, transport stations
+  ❌ Two slightly-different names for the SAME building
+       (e.g., "Cathédrale Saint-Nazaire" AND "Ancien Palais épiscopal -
+        Saint-Nazaire" — pick ONE, they're 50m apart)
+  ❌ Hallucinated/imaginary sites — only what you KNOW exists
+
+═══════════════════════════════════════════════════════════
+TIER + SCORE — for each proposal
+═══════════════════════════════════════════════════════════
+
+  TIER 1, score 7-10 — CANONICAL for this theme
+      Documented connection (same person/event/era explicitly named)
       Ex: Tour de Constance for "Huguenot prison 1572"
-  7-9 Directly tied to theme : same person/event/era documented
-  4-6 Era-compatible heritage, atmospheric fit
-      Ex: 12th-c church in town for a Cathar massacre 1209 theme
-  1-3 Right city wrong era OR irrelevant theme
-      Ex: 19th-c park for a 1209 medieval theme
-  0   Anti-thematic / breaks the period feel
-      Ex: aquarium for a historical theme
+
+  TIER 2, score 4-6 — ERA-COMPATIBLE heritage
+      Right period, right city, no specific documented tie
+      Ex: 12th-c church for a 1209 Cathar theme
+
+  TIER 3, score 1-3 — ACCEPTABLE last resort
+      Right area, wrong era OR generic
+      Use sparingly, only if Tier 1+2 give < 8
 
 ═══════════════════════════════════════════════════════════
-TIER PRIORITY
+REAL FIGURES + EVENTS (when known)
 ═══════════════════════════════════════════════════════════
-  TIER 1 — Score 7-10 — canonical theme anchor
-  TIER 2 — Score 4-6 — era-compatible heritage
-  TIER 3 — Score 1-3 — generic / wrong era
+
+  Add "realFigure" field if you KNOW a documented historical figure
+  tied to this landmark (with lifespan if confident). Skip if uncertain.
+
+  Add "realEvent" field if you KNOW a documented dated event tied
+  to it. Skip if uncertain. Don't fabricate dates.
 
 ═══════════════════════════════════════════════════════════
-REAL FIGURES / EVENTS
+OUTPUT — strict JSON, no markdown, no preamble
 ═══════════════════════════════════════════════════════════
-Only cite if you are CONFIDENT (Wikipedia-grade fact). If uncertain,
-omit. Never fabricate.
 
-  - realFigure : { name, role, lifespan? }
-    Ex: { name: "Dom Antoine de Besse", role: "last abbot of Cluny",
-          lifespan: "1731-1812" }
-  - realEvent : { date, description }
-    Ex: { date: "1209-07-22", description: "Crusader sack of Béziers" }
-
-═══════════════════════════════════════════════════════════
-OUTPUT — strict JSON
-═══════════════════════════════════════════════════════════
 {
-  "candidates": [
+  "landmarks": [
     {
-      "index": 0,
-      "themeScore": 8,
-      "rationale": "12th-c basilica in old town, era-fit for Cathar narrative",
-      "tier": 2,
-      "realFigure": { "name": "...", "role": "...", "lifespan": "..." }, // optional
-      "realEvent": { "date": "...", "description": "..." } // optional
+      "name": "<full geocodable name>",
+      "tier": 1 | 2 | 3,
+      "themeScore": <0..10>,
+      "rationale": "<one sentence : why this site for this theme>",
+      "realFigure": { "name": "...", "role": "...", "lifespan": "..." },
+      "realEvent": { "date": "YYYY-MM-DD or YYYY", "description": "..." }
     },
-    ... one entry PER candidate (no skips)
+    ... 10-12 entries TOTAL, sorted by tier asc then themeScore desc
   ]
 }
 
-NEVER skip a candidate — even bad ones score 0-3. Output JSON ONLY,
-no markdown, no preamble.`;
+If you genuinely don't know the city well, return an empty landmarks
+array — downstream has a fallback. Don't fabricate.`;
 
-function buildScorerPrompt(input: {
+function buildProposerPrompt(input: {
   theme: string;
   themeDescription: string;
   productDescription?: string;
   city: string;
   country: string;
-  pool: NearbyCandidate[];
 }): string {
   const pdBlock =
     input.productDescription && input.productDescription.length > 50
-      ? `\nPRODUCT DESCRIPTION (customer's promise, rich context) :\n"""${input.productDescription.trim().slice(0, 1500)}"""\n`
+      ? `\nPRODUCT DESCRIPTION (rich context — what the customer wants to experience) :\n"""${input.productDescription.trim().slice(0, 1500)}"""\n`
       : "";
-
-  const candidates = input.pool
-    .map(
-      (c, i) =>
-        `[${i}] ${c.name} | types=[${c.types.slice(0, 4).join(",")}] | rating=${c.rating ?? "?"}(${c.userRatingsTotal ?? "?"}) | distance=${Math.round(c.distanceM)}m`,
-    )
-    .join("\n");
-
   return `THEME : ${input.theme}
 THEME DESCRIPTION : ${input.themeDescription}
 CITY : ${input.city}, ${input.country}
 ${pdBlock}
-CANDIDATES (${input.pool.length}) :
-${candidates}
-
-Score each candidate. Return JSON only.`;
+Propose 10-12 canonical landmarks for this theme in this city. JSON only.`;
 }
 
-async function scoreViaClaud(input: {
+export async function proposeLandmarksViaClaude(input: {
   theme: string;
   themeDescription: string;
   productDescription?: string;
   city: string;
   country: string;
-  pool: NearbyCandidate[];
-}): Promise<ScoredCandidate[]> {
+}): Promise<ProposedLandmark[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey || input.pool.length === 0) return [];
+  if (!apiKey) return [];
   const client = new Anthropic({ apiKey });
   let text = "";
   try {
@@ -198,9 +216,9 @@ async function scoreViaClaud(input: {
       {
         model: "claude-haiku-4-5",
         max_tokens: 4096,
-        temperature: 0,
-        system: SCORER_SYSTEM,
-        messages: [{ role: "user", content: buildScorerPrompt(input) }],
+        temperature: 0.1,
+        system: PROPOSER_SYSTEM,
+        messages: [{ role: "user", content: buildProposerPrompt(input) }],
       },
       { timeout: 45_000 },
     );
@@ -211,7 +229,7 @@ async function scoreViaClaud(input: {
       .trim();
   } catch (err) {
     console.warn(
-      `[simple] Claude scoring call failed: ${err instanceof Error ? err.message : err}`,
+      `[simple] Claude proposer failed: ${err instanceof Error ? err.message : err}`,
     );
     return [];
   }
@@ -220,20 +238,29 @@ async function scoreViaClaud(input: {
     .replace(/\s*```$/i, "")
     .trim();
   try {
-    const parsed = JSON.parse(jsonText) as { candidates?: unknown };
-    if (!Array.isArray(parsed.candidates)) return [];
-    const scored: ScoredCandidate[] = [];
-    for (const c of parsed.candidates) {
-      const r = (c ?? {}) as Record<string, unknown>;
-      const idx = typeof r.index === "number" ? r.index : -1;
-      if (idx < 0 || idx >= input.pool.length) continue;
+    const parsed = JSON.parse(jsonText) as { landmarks?: unknown };
+    if (!Array.isArray(parsed.landmarks)) return [];
+    const out: ProposedLandmark[] = [];
+    const seen = new Set<string>();
+    for (const item of parsed.landmarks) {
+      const r = (item ?? {}) as Record<string, unknown>;
+      const name = typeof r.name === "string" ? r.name.trim() : "";
+      if (name.length < 5) continue;
+      if (isEventName(name)) {
+        console.log(`[simple] Claude proposed an event name, rejecting : "${name}"`);
+        continue;
+      }
+      const lower = name.toLowerCase();
+      if (seen.has(lower)) continue;
+      seen.add(lower);
+      const tierRaw = typeof r.tier === "number" ? r.tier : 2;
+      const tier: 1 | 2 | 3 = tierRaw === 1 ? 1 : tierRaw === 3 ? 3 : 2;
       const themeScore = Math.max(
         0,
         Math.min(10, typeof r.themeScore === "number" ? r.themeScore : 0),
       );
-      const tierRaw = typeof r.tier === "number" ? r.tier : 2;
-      const tier: 1 | 2 | 3 = tierRaw === 1 ? 1 : tierRaw === 3 ? 3 : 2;
-      const rationale = typeof r.rationale === "string" ? r.rationale : "";
+      const rationale =
+        typeof r.rationale === "string" ? r.rationale : "";
       const figureRaw = r.realFigure as Record<string, unknown> | undefined;
       const realFigure =
         figureRaw && typeof figureRaw.name === "string"
@@ -257,22 +284,177 @@ async function scoreViaClaud(input: {
                   : "",
             }
           : undefined;
-      scored.push({
-        index: idx,
-        themeScore,
-        rationale,
-        tier,
-        realFigure,
-        realEvent,
-      });
+      out.push({ name, tier, themeScore, rationale, realFigure, realEvent });
     }
-    return scored;
+    return out;
   } catch (err) {
     console.warn(
-      `[simple] Claude JSON parse failed: ${err instanceof Error ? err.message : err}. Body: ${text.slice(0, 200)}`,
+      `[simple] Claude proposer JSON parse failed: ${err instanceof Error ? err.message : err}. Body: ${text.slice(0, 200)}`,
     );
     return [];
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// GOOGLE — findPlaceFromText for each proposed landmark
+// ═══════════════════════════════════════════════════════════════════
+
+interface GeocodedLandmark extends NearbyCandidate {
+  tier: 1 | 2 | 3;
+  themeScore: number;
+  rationale: string;
+  realFigure?: { name: string; role: string; lifespan?: string };
+  realEvent?: { date: string; description: string };
+  proposedName: string; // original Claude name (before Google rename)
+}
+
+async function geocodeOne(
+  proposed: ProposedLandmark,
+  city: string,
+  country: string,
+  startPoint: { lat: number; lon: number },
+  maxDistanceM: number,
+  apiKey: string,
+): Promise<GeocodedLandmark | null> {
+  const query = `${proposed.name}, ${city}, ${country}`;
+  const url = new URL(
+    "https://maps.googleapis.com/maps/api/place/findplacefromtext/json",
+  );
+  url.searchParams.set("input", query);
+  url.searchParams.set("inputtype", "textquery");
+  url.searchParams.set(
+    "fields",
+    "name,geometry,place_id,formatted_address,types,rating,user_ratings_total",
+  );
+  url.searchParams.set("key", apiKey);
+  url.searchParams.set(
+    "locationbias",
+    `circle:${Math.round(maxDistanceM)}@${startPoint.lat},${startPoint.lon}`,
+  );
+
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), 8_000);
+  try {
+    const res = await fetch(url.toString(), { signal: ac.signal });
+    if (!res.ok) return null;
+    const data = (await res.json()) as {
+      status: string;
+      candidates?: Array<{
+        name: string;
+        formatted_address?: string;
+        place_id: string;
+        geometry?: { location: { lat: number; lng: number } };
+        types?: string[];
+        rating?: number;
+        user_ratings_total?: number;
+      }>;
+    };
+    if (data.status !== "OK" || !data.candidates?.length) return null;
+
+    for (const c of data.candidates) {
+      if (!c.geometry?.location || !c.place_id) continue;
+      const types = c.types ?? [];
+      if (!isAcceptableType(types)) continue;
+      if (isEventName(c.name)) continue;
+      const distanceM = haversineMeters(
+        { lat: c.geometry.location.lat, lon: c.geometry.location.lng },
+        startPoint,
+      );
+      if (distanceM > maxDistanceM) continue;
+      return {
+        name: c.name,
+        lat: c.geometry.location.lat,
+        lon: c.geometry.location.lng,
+        placeId: c.place_id,
+        types,
+        address: c.formatted_address,
+        rating: c.rating,
+        userRatingsTotal: c.user_ratings_total,
+        distanceM,
+        tier: proposed.tier,
+        themeScore: proposed.themeScore,
+        rationale: proposed.rationale,
+        realFigure: proposed.realFigure,
+        realEvent: proposed.realEvent,
+        proposedName: proposed.name,
+      };
+    }
+    return null;
+  } catch (err) {
+    console.warn(
+      `[simple] geocode "${proposed.name}" failed: ${err instanceof Error ? err.message : err}`,
+    );
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function geocodeAll(
+  proposals: ProposedLandmark[],
+  city: string,
+  country: string,
+  startPoint: { lat: number; lon: number },
+  maxDistanceM: number,
+): Promise<GeocodedLandmark[]> {
+  const apiKey = process.env.GOOGLE_MAPS_API_KEY;
+  if (!apiKey || proposals.length === 0) return [];
+  const results = await Promise.allSettled(
+    proposals.map((p) =>
+      geocodeOne(p, city, country, startPoint, maxDistanceM, apiKey),
+    ),
+  );
+  const out: GeocodedLandmark[] = [];
+  const seenPlaceIds = new Set<string>();
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value) {
+      if (!seenPlaceIds.has(r.value.placeId)) {
+        seenPlaceIds.add(r.value.placeId);
+        out.push(r.value);
+      }
+    }
+  }
+  return out;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// FALLBACK — Google nearbysearch top-rating (if Claude knows nothing)
+// ═══════════════════════════════════════════════════════════════════
+
+async function fallbackNearbysearch(
+  startPoint: { lat: number; lon: number },
+  radiusM: number,
+): Promise<GeocodedLandmark[]> {
+  let raw: NearbyCandidate[];
+  try {
+    raw = await discoverNearbyLandmarks(startPoint, {
+      radiusM,
+      limit: 60,
+      types: [
+        "tourist_attraction",
+        "church",
+        "museum",
+        "place_of_worship",
+        "historical_landmark",
+        "city_hall",
+        "park",
+      ],
+    });
+  } catch (err) {
+    console.warn(`[simple] fallback nearbysearch failed: ${err instanceof Error ? err.message : err}`);
+    return [];
+  }
+  const filtered = raw
+    .filter((c) => isAcceptableType(c.types))
+    .filter((c) => !isEventName(c.name))
+    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0));
+  return filtered.slice(0, 20).map((c) => ({
+    ...c,
+    tier: 3 as const, // fallback = no theme verification
+    themeScore: 0, // unknown
+    rationale: "Fallback (Google top-rating, no theme verification)",
+    proposedName: c.name,
+  }));
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -291,10 +473,10 @@ function greedyNN(
     let bestIdx = 0;
     let bestD = Infinity;
     for (let i = 0; i < remaining.length; i++) {
-      const d = haversineMeters(
-        cur,
-        { lat: remaining[i].lat, lon: remaining[i].lon },
-      );
+      const d = haversineMeters(cur, {
+        lat: remaining[i].lat,
+        lon: remaining[i].lon,
+      });
       if (d < bestD) {
         bestD = d;
         bestIdx = i;
@@ -318,17 +500,13 @@ export interface SimpleDiscoveryInput {
   themeDescription: string;
   productDescription?: string;
   startPoint: { lat: number; lon: number };
-  /** Target number of stops (default 7). */
   targetStopCount?: number;
-  /** Floor commercial (default 5). Pipeline ABORTS below this. */
   minStopCount?: number;
-  /** Override walking radius. Default 2500m. */
   walkingRadiusM?: number;
 }
 
 export interface SimpleDiscoveryResult {
   success: boolean;
-  /** Final stops, NN-ordered. */
   stops: Array<
     DiscoveredStop & {
       themeScore: number;
@@ -338,244 +516,186 @@ export interface SimpleDiscoveryResult {
       realEvent?: { date: string; description: string };
     }
   >;
-  /** Diagnostic info for review_reason / logs. */
   diagnostics: {
-    rawPoolCount: number;
-    afterTypeFilter: number;
-    scoredCount: number;
+    proposedCount: number;
+    geocodedCount: number;
+    fallbackUsed: boolean;
     tier1Count: number;
     tier2Count: number;
     tier3Count: number;
     averageScore: number;
     minScoreInFinal: number;
-    fallbackUsed: boolean;
     notes: string[];
   };
   errorMessage?: string;
 }
 
 /**
- * Simple, reliable discovery + ranking pipeline.
+ * Run the theme-first discovery pipeline.
  *
- * Steps :
- *   1. Google nearbysearch with heritage types
- *   2. Hard type filter (reject hotels/stations/etc.)
- *   3. Claude Haiku scores each candidate vs theme (single batch call)
- *   4. Sort by score desc, take top N (or floor)
- *   5. NN reorder
- *   6. Return DiscoveredStop[] + diagnostics
+ * Phases :
+ *   1. Claude proposes 10-12 landmarks for [theme + city]
+ *   2. Google geocodes each in parallel
+ *   3. Filter (event names, REJECT_TYPES, distance)
+ *   4. If < minStopCount survive → fallback to Google nearbysearch
+ *   5. Select top N with min-distance enforcement
+ *   6. NN reorder + return DiscoveredStop[]
  *
- * Never throws. Always returns a result. Fail modes :
- *   - Google empty → fallback to top-rating candidates with note
- *   - Claude scoring fails → fallback to top-rating, score=0 each
- *   - Pool < minStopCount → success=false with clear errorMessage
+ * Never throws. Returns success=false with errorMessage on failure.
  */
 export async function runSimpleDiscovery(
   input: SimpleDiscoveryInput,
 ): Promise<SimpleDiscoveryResult> {
-  const target = input.targetStopCount ?? 7;
-  const minStops = input.minStopCount ?? 5;
-  const radiusM = input.walkingRadiusM ?? WALKING_RADIUS_M;
+  const target = input.targetStopCount ?? DEFAULT_TARGET_STOPS;
+  const minStops = input.minStopCount ?? DEFAULT_MIN_STOPS;
+  const radiusM = input.walkingRadiusM ?? DEFAULT_WALKING_RADIUS_M;
   const notes: string[] = [];
   notes.push(
     `start=${input.startPoint.lat.toFixed(4)},${input.startPoint.lon.toFixed(4)} radius=${radiusM}m target=${target} floor=${minStops}`,
   );
 
-  // ── 1. Google nearbysearch ────────────────────────────────────
-  let rawPool: NearbyCandidate[];
-  try {
-    rawPool = await discoverNearbyLandmarks(input.startPoint, {
-      radiusM,
-      limit: 60,
-      types: HERITAGE_SEARCH_TYPES,
-    });
-  } catch (err) {
-    notes.push(
-      `Google nearbysearch failed: ${err instanceof Error ? err.message : err}`,
-    );
-    return {
-      success: false,
-      stops: [],
-      diagnostics: {
-        rawPoolCount: 0,
-        afterTypeFilter: 0,
-        scoredCount: 0,
-        tier1Count: 0,
-        tier2Count: 0,
-        tier3Count: 0,
-        averageScore: 0,
-        minScoreInFinal: 0,
-        fallbackUsed: false,
-        notes,
-      },
-      errorMessage: "Google Places API unavailable",
-    };
-  }
-  notes.push(`raw pool from Google : ${rawPool.length} candidates`);
-
-  // ── 2. Hard type filter ───────────────────────────────────────
-  const filteredPool = rawPool.filter((c) => isAcceptable(c.types));
-  notes.push(
-    `after type filter (kick lodging/stations/etc.) : ${filteredPool.length} candidates`,
-  );
-
-  if (filteredPool.length < minStops) {
-    notes.push(
-      `pool < minStops=${minStops} after filter. Cannot publish themed game.`,
-    );
-    return {
-      success: false,
-      stops: [],
-      diagnostics: {
-        rawPoolCount: rawPool.length,
-        afterTypeFilter: filteredPool.length,
-        scoredCount: 0,
-        tier1Count: 0,
-        tier2Count: 0,
-        tier3Count: 0,
-        averageScore: 0,
-        minScoreInFinal: 0,
-        fallbackUsed: false,
-        notes,
-      },
-      errorMessage: `Walkable heritage pool too thin (${filteredPool.length} after type filter) for "${input.theme}" in ${input.city}. Reframe or change city.`,
-    };
-  }
-
-  // ── 3. Claude scoring (single batch call) ────────────────────
-  const scored = await scoreViaClaud({
+  // ── PHASE 1 : Claude proposer ──────────────────────────────────
+  const proposals = await proposeLandmarksViaClaude({
     theme: input.theme,
     themeDescription: input.themeDescription,
     productDescription: input.productDescription,
     city: input.city,
     country: input.country,
-    pool: filteredPool,
   });
-  notes.push(`Claude scored ${scored.length}/${filteredPool.length} candidates`);
+  notes.push(`Claude proposed ${proposals.length} landmarks`);
 
-  let fallbackUsed = false;
-  // ── 4. Sort + select ─────────────────────────────────────────
-  // Build a merged list : each pool candidate gets a score (Claude's
-  // or 0 if not scored). Sort by tier asc, then score desc.
-  const enriched = filteredPool.map((c, i) => {
-    const s = scored.find((x) => x.index === i);
-    return {
-      candidate: c,
-      themeScore: s?.themeScore ?? 0,
-      tier: (s?.tier ?? 3) as 1 | 2 | 3,
-      rationale: s?.rationale ?? "(not scored)",
-      realFigure: s?.realFigure,
-      realEvent: s?.realEvent,
-    };
-  });
-
-  if (scored.length === 0) {
-    notes.push(`Claude scoring returned nothing — fallback to top-rating`);
-    fallbackUsed = true;
-    // Fallback : sort by Google rating × log(reviews)
-    enriched.sort((a, b) => {
-      const sa =
-        (a.candidate.rating ?? 0) *
-        Math.log10((a.candidate.userRatingsTotal ?? 0) + 1);
-      const sb =
-        (b.candidate.rating ?? 0) *
-        Math.log10((b.candidate.userRatingsTotal ?? 0) + 1);
-      return sb - sa;
-    });
-  } else {
-    // Themed sort : Tier asc, score desc (Claude's intent)
-    enriched.sort((a, b) => {
-      if (a.tier !== b.tier) return a.tier - b.tier;
-      return b.themeScore - a.themeScore;
-    });
-  }
-
-  const selected = enriched.slice(0, target);
+  // ── PHASE 2 : Google geocode parallèle ────────────────────────
+  const geocodedRaw = await geocodeAll(
+    proposals,
+    input.city,
+    input.country,
+    input.startPoint,
+    radiusM,
+  );
   notes.push(
-    `selected top ${selected.length} : tier1=${selected.filter((s) => s.tier === 1).length} tier2=${selected.filter((s) => s.tier === 2).length} tier3=${selected.filter((s) => s.tier === 3).length}`,
+    `Geocoded ${geocodedRaw.length}/${proposals.length} (filtered events, REJECT_TYPES, within ${radiusM}m)`,
   );
 
-  if (selected.length < minStops) {
-    notes.push(
-      `selected ${selected.length} < minStops=${minStops}. Aborting.`,
-    );
+  // ── PHASE 2.5 : Rendez-vous gap (start point ≠ stop 1) ───────
+  // Drop landmarks too close to startPoint — the player arrives at
+  // the RDV, then walks to stop 1. Without this, stop 1 sits ON the
+  // startPoint and the player validates in 13s.
+  const geocoded = geocodedRaw.filter((c) => {
+    if (c.distanceM < RENDEZVOUS_GAP_M) {
+      notes.push(`  rejected "${c.name}" (${Math.round(c.distanceM)}m < ${RENDEZVOUS_GAP_M}m rendez-vous gap)`);
+      return false;
+    }
+    return true;
+  });
+  if (geocoded.length < geocodedRaw.length) {
+    notes.push(`After rendez-vous gap ${RENDEZVOUS_GAP_M}m : ${geocoded.length}/${geocodedRaw.length} survived`);
+  }
+
+  // ── PHASE 3 : Fallback si trop peu ──────────────────────────
+  let pool = geocoded;
+  let fallbackUsed = false;
+  if (pool.length < minStops) {
+    notes.push(`Pool ${pool.length} < minStops=${minStops} — triggering Google nearbysearch fallback`);
+    const fallback = await fallbackNearbysearch(input.startPoint, radiusM);
+    notes.push(`Fallback returned ${fallback.length} candidates`);
+    // Merge : keep themed first, fillers second
+    const existingIds = new Set(pool.map((c) => c.placeId));
+    const newOnes = fallback.filter((c) => !existingIds.has(c.placeId));
+    pool = [...pool, ...newOnes];
+    fallbackUsed = true;
+  }
+
+  if (pool.length < minStops) {
+    notes.push(`Pool still ${pool.length} < minStops=${minStops} after fallback. ABORT.`);
     return {
       success: false,
       stops: [],
       diagnostics: {
-        rawPoolCount: rawPool.length,
-        afterTypeFilter: filteredPool.length,
-        scoredCount: scored.length,
+        proposedCount: proposals.length,
+        geocodedCount: geocoded.length,
+        fallbackUsed,
         tier1Count: 0,
         tier2Count: 0,
         tier3Count: 0,
         averageScore: 0,
         minScoreInFinal: 0,
-        fallbackUsed,
         notes,
       },
-      errorMessage: `Selection yielded ${selected.length} stops, below floor ${minStops}.`,
+      errorMessage: `Pool too thin (${pool.length}) for "${input.theme}" in ${input.city}. Reframe editorially.`,
     };
   }
 
-  // ── 5. NN reorder ─────────────────────────────────────────────
-  const candidatesOnly = selected.map((s) => s.candidate);
-  const ordered = greedyNN(candidatesOnly, input.startPoint);
-  // Re-attach metadata from selected[] in the new NN order
-  const orderedSelected = ordered.map((c) => {
-    const found = selected.find((s) => s.candidate.placeId === c.placeId);
-    return found!;
+  // ── PHASE 4 : Sort + min-distance selection ───────────────────
+  pool.sort((a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    return b.themeScore - a.themeScore;
   });
 
-  // ── 6. Map to DiscoveredStop[] + return ──────────────────────
-  const finalStops = orderedSelected.map((s) => {
-    const figureNote = s.realFigure
-      ? ` [REAL FIGURE: ${s.realFigure.name} (${s.realFigure.lifespan ?? "?"}) — ${s.realFigure.role}]`
+  const sel = selectStopsByGeometry({
+    candidates: pool,
+    targetN: Math.min(target, pool.length),
+    minN: Math.min(minStops, pool.length),
+    minDistanceM: MIN_INTER_STOP_M,
+  });
+  notes.push(
+    `min-distance selection : ${sel.selected.length}/${target} (min_pair=${Math.round(sel.actualMinPairDistanceM)}m, relaxed to ${sel.finalMinDistanceUsedM}m)`,
+  );
+
+  // Re-attach metadata from pool
+  const selectedWithMeta = sel.selected.map((c) => pool.find((p) => p.placeId === c.placeId)!);
+
+  // ── PHASE 5 : NN reorder ─────────────────────────────────────
+  const ordered = greedyNN(selectedWithMeta, input.startPoint);
+
+  // ── PHASE 6 : Map to DiscoveredStop[] ────────────────────────
+  const finalStops = ordered.map((c) => {
+    const enriched = c as GeocodedLandmark;
+    const figureNote = enriched.realFigure
+      ? ` [FIGURE: ${enriched.realFigure.name}${enriched.realFigure.lifespan ? ` (${enriched.realFigure.lifespan})` : ""} — ${enriched.realFigure.role}]`
       : "";
-    const eventNote = s.realEvent
-      ? ` [REAL EVENT: ${s.realEvent.date} — ${s.realEvent.description}]`
+    const eventNote = enriched.realEvent
+      ? ` [EVENT: ${enriched.realEvent.date} — ${enriched.realEvent.description}]`
       : "";
     return {
-      name: s.candidate.name,
-      description: `${s.rationale}${figureNote}${eventNote}`,
-      source: "pipeline-simple",
-      lat: s.candidate.lat,
-      lon: s.candidate.lon,
-      placeId: s.candidate.placeId,
-      distanceFromStartM: s.candidate.distanceM,
+      name: enriched.name,
+      description: `${enriched.rationale}${figureNote}${eventNote}`,
+      source: "pipeline-simple-theme-first",
+      lat: enriched.lat,
+      lon: enriched.lon,
+      placeId: enriched.placeId,
+      distanceFromStartM: enriched.distanceM,
       stopMode: "radar" as const,
       navigationHint: undefined,
-      types: s.candidate.types,
-      rating: s.candidate.rating,
-      themeScore: s.themeScore,
-      tier: s.tier,
-      rationale: s.rationale,
-      realFigure: s.realFigure,
-      realEvent: s.realEvent,
+      types: enriched.types,
+      rating: enriched.rating,
+      themeScore: enriched.themeScore,
+      tier: enriched.tier,
+      rationale: enriched.rationale,
+      realFigure: enriched.realFigure,
+      realEvent: enriched.realEvent,
     };
   });
 
   const averageScore =
-    finalStops.reduce((sum, s) => sum + s.themeScore, 0) / finalStops.length;
-  const minScoreInFinal = Math.min(...finalStops.map((s) => s.themeScore));
+    finalStops.reduce((s, c) => s + c.themeScore, 0) / finalStops.length;
+  const minScoreInFinal = Math.min(...finalStops.map((c) => c.themeScore));
 
   notes.push(
-    `final : ${finalStops.length} stops, avg_score=${averageScore.toFixed(2)}, min_score=${minScoreInFinal}`,
+    `FINAL : ${finalStops.length} stops, avg=${averageScore.toFixed(2)}/10, min=${minScoreInFinal}, T1=${finalStops.filter((s) => s.tier === 1).length} T2=${finalStops.filter((s) => s.tier === 2).length} T3=${finalStops.filter((s) => s.tier === 3).length}`,
   );
 
   return {
     success: true,
     stops: finalStops,
     diagnostics: {
-      rawPoolCount: rawPool.length,
-      afterTypeFilter: filteredPool.length,
-      scoredCount: scored.length,
+      proposedCount: proposals.length,
+      geocodedCount: geocoded.length,
+      fallbackUsed,
       tier1Count: finalStops.filter((s) => s.tier === 1).length,
       tier2Count: finalStops.filter((s) => s.tier === 2).length,
       tier3Count: finalStops.filter((s) => s.tier === 3).length,
       averageScore: Number(averageScore.toFixed(2)),
       minScoreInFinal,
-      fallbackUsed,
       notes,
     },
   };
