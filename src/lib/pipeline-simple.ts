@@ -236,6 +236,48 @@ SCORING FORMULA — patrimoine base + theme bonus
   If NO → don't propose it. Better return 6 great sites than 12
   with 4 fillers. The pipeline floor is 6, that's enough.
 
+═══════════════════════════════════════════════════════════
+✅ MANDATORY CATEGORY CHECKLIST — check each box for the city
+═══════════════════════════════════════════════════════════
+
+  Before finalizing your list, ask yourself : does this city have
+  examples in each category below ? If YES, INCLUDE THEM (don't
+  forget them just because they're not "thematic") :
+
+    ☐ MAIN CATHEDRAL / primary religious building of the city
+    ☐ OTHER major historic churches / basilicas (Cathédrale +
+      typically 1-2 more old churches)
+    ☐ ROMAN RUINS — amphitheater, baths, walls, gates, aqueducts.
+      Even SMALL ruins count (Béziers has small Arènes Romaines,
+      include them ! Roman ruins in any French/Spanish/Italian
+      historic city are top-must-see, period.)
+    ☐ MEDIEVAL RAMPARTS / city gates / towers (named ones)
+    ☐ HISTORIC BRIDGES — "Pont Vieux", "Pont Saint-Esprit",
+      bridges with names. Always must-see if walking through.
+    ☐ OLD HÔTELS PARTICULIERS / palaces (named, with own Google
+      entry)
+    ☐ MARKETS in historic halls
+    ☐ ABBEYS / monasteries
+    ☐ FAMOUS NAMED SQUARES / promenades (Allées Paul Riquet for
+      Béziers, Place du Capitole for Toulouse — INCLUDE if iconic
+      of the city)
+
+  This checklist is your GROUND TRUTH. Don't propose a forgettable
+  19c theatre or specialty museum INSTEAD of a Roman amphitheater
+  or a historic bridge.
+
+  FAILURE MODE TO AVOID :
+    BAD : Cathédrale + Madeleine + Saint-Aphrodise + Musée Fayet +
+          Musée Taurin + Théâtre Variétés + Église Saint-Jacques +
+          Église Pénitents Bleus
+          → too many lesser churches/museums, missing the Roman
+            amphitheater, missing the Pont Vieux, missing the
+            ramparts/Allées
+    GOOD: Cathédrale + Madeleine + Saint-Aphrodise + Arènes
+          Romaines + Pont Vieux + Allées Paul Riquet + Porte de
+          Narbonne + Tour Pépézuc
+          → all top must-see categories represented
+
   CHRONIC OFFENDERS to AVOID (base 2-3 + nothing-worth-visiting) :
     ❌ Small modern theatres ("Théâtre des Variétés", "Théâtre
        Municipal" — UNLESS iconic like Comédie-Française)
