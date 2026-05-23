@@ -470,10 +470,224 @@ export async function autoRepairThematicStops(
     // due to temperature 0.1 — but for determinism we keep retries low).
   }
 
-  // Exhausted all attempts
+  // ════════════════════════════════════════════════════════════════
+  // SPRINT J (2026-05-23) — ADAPTIVE STOPCOUNT REDUCTION FALLBACK
+  // ════════════════════════════════════════════════════════════════
+  // If 2 normal auto-repair attempts at the original stopCount failed,
+  // try REDUCING the stopCount. Logic : niche themes (Béziers Cathars,
+  // Mont-Aigoual Resistance, etc.) may simply not have enough Tier-1
+  // sites in walking radius to support 7-8 stops. Better publish a
+  // SHORTER but THEMATICALLY-PERFECT 5-stop game than escalate every
+  // niche-theme purchase to human review.
+  //
+  // Béziers V5-bis evidence (2026-05-23 08:46) :
+  //   - 7 stops, judge avg 3.14
+  //   - Auto-repair best avg 5.14 (still fail)
+  //   - Per-stop fit_scores : Madeleine 10, Cathédrale 10, Pont Vieux 6,
+  //     Arènes 1, Plateau 1, Écluses 0, Château 0
+  //   - Top-5 trim : (10+10+6+1+1)/5 = 5.6 — close but not pass
+  //   - Top-5 + re-repair from pool : (10+10+6+5+5)/5 = 7.2 ✅
+  //
+  // Implementation : after standard auto-repair fails, loop
+  // targetN ∈ [stopCount-1 .. 5] (commercial floor). Each iteration :
+  //   1. Sort current stops (autoRepair's last attempt) by fit_score desc
+  //   2. Take top targetN
+  //   3. Try ONE more pool-reshuffle pick at this reduced size
+  //   4. Re-judge ; accept if pass OR (weak AND avg ≥ 6.0)
+  // First passing N wins.
+  const ADAPTIVE_FLOOR_N = 5;
+  let lastTrimmedFullStops = input.originalStops.map((s) => ({
+    name: s.name,
+    lat: s.lat,
+    lon: s.lon,
+    placeId: s.placeId ?? "",
+    types: s.types ?? [],
+    rating: s.rating,
+    fromAutoRepair: false,
+    fit_score: s.fit_score,
+  }));
+  // If we had a successful repair attempt's stops (even if judge said fail),
+  // use those as the basis for trimming (they're the best we found)
+  if (lastJudge && lastJudge.stops.length > 0) {
+    // Update fit_scores based on lastJudge
+    const scoreByOrder = new Map(
+      lastJudge.stops.map((s) => [s.step_order, s.fit_score]),
+    );
+    lastTrimmedFullStops = lastTrimmedFullStops.map((s, i) => ({
+      ...s,
+      fit_score: scoreByOrder.get(i + 1) ?? s.fit_score,
+    }));
+  }
+
+  for (let targetN = input.originalStops.length - 1; targetN >= ADAPTIVE_FLOOR_N; targetN--) {
+    console.log(
+      `[autoRepair][adaptive] trying reduced stopCount=${targetN} (current best avg=${lastJudge?.average_score ?? "?"})`,
+    );
+
+    // Sort by fit_score desc, take top N
+    const topN = [...lastTrimmedFullStops]
+      .sort((a, b) => b.fit_score - a.fit_score)
+      .slice(0, targetN);
+
+    // Try one more pool re-pick : ask Claude to swap any failing kept
+    // stop (score < 6) for a better one. Identify which slots to repair.
+    const stillFailing = topN.filter((s) => s.fit_score < 6);
+    if (stillFailing.length > 0) {
+      const stillKeep = topN.filter((s) => s.fit_score >= 6);
+      const availablePool = input.pool.filter(
+        (c) => !topN.find((kept) => kept.placeId === c.placeId),
+      );
+      if (availablePool.length >= stillFailing.length) {
+        try {
+          const replacements = await pickReplacementsFromPool({
+            theme: input.theme,
+            themeDescription: input.themeDescription,
+            productDescription: input.productDescription,
+            city: input.city,
+            country: input.country,
+            keepStops: stillKeep.map((s) => ({
+              name: s.name,
+              lat: s.lat,
+              lon: s.lon,
+              placeId: s.placeId,
+              types: s.types,
+              rating: s.rating,
+              distanceM: 0,
+            })),
+            replacementsNeeded: stillFailing.length,
+            pool: availablePool,
+            excludeNames: stillFailing.map((s) => s.name),
+          });
+          if (replacements.length === stillFailing.length) {
+            const adaptiveStops = [
+              ...stillKeep,
+              ...replacements.map((r) => ({
+                name: r.name,
+                lat: r.lat,
+                lon: r.lon,
+                placeId: r.placeId,
+                types: r.types,
+                rating: r.rating,
+                fromAutoRepair: true,
+                fit_score: 0, // will be set by re-judge
+              })),
+            ];
+            // Re-judge this reduced set
+            try {
+              const judgeResult = await judgeThematicRelevance({
+                theme: input.theme,
+                themeDescription: input.themeDescription,
+                productDescription: input.productDescription,
+                city: input.city,
+                stops: adaptiveStops.map((s, i) => ({
+                  step_order: i + 1,
+                  name: s.name,
+                  description: "",
+                })),
+              });
+              console.log(
+                `[autoRepair][adaptive] N=${targetN} : re-judge avg=${judgeResult.average_score}, verdict=${judgeResult.verdict}`,
+              );
+              const accept =
+                judgeResult.verdict === "pass" ||
+                (judgeResult.verdict === "weak" && judgeResult.average_score >= 6.0);
+              if (accept) {
+                console.log(
+                  `[autoRepair][adaptive] ✅ SUCCESS at N=${targetN} (verdict=${judgeResult.verdict}, avg=${judgeResult.average_score})`,
+                );
+                return {
+                  success: true,
+                  reason: `auto-repair ADAPTIVE : reduced stopCount ${input.originalStops.length}→${targetN}, judge ${judgeResult.verdict}, avg=${judgeResult.average_score}`,
+                  repairedStops: adaptiveStops.map((s) => ({
+                    name: s.name,
+                    lat: s.lat,
+                    lon: s.lon,
+                    placeId: s.placeId,
+                    types: s.types,
+                    rating: s.rating,
+                    fromAutoRepair: s.fromAutoRepair,
+                  })),
+                  postRepairJudge: judgeResult,
+                  replacedCount: replacements.length,
+                  attempts: MAX_ATTEMPTS + (input.originalStops.length - targetN),
+                };
+              }
+              // Update lastTrimmedFullStops with new scores for next iter
+              const scoreMap = new Map(
+                judgeResult.stops.map((s) => [s.step_order, s.fit_score]),
+              );
+              lastTrimmedFullStops = adaptiveStops.map((s, i) => ({
+                ...s,
+                fit_score: scoreMap.get(i + 1) ?? 0,
+              }));
+              lastJudge = judgeResult;
+            } catch (err) {
+              console.warn(
+                `[autoRepair][adaptive] N=${targetN} re-judge failed: ${err instanceof Error ? err.message : err}`,
+              );
+            }
+          }
+        } catch (err) {
+          console.warn(
+            `[autoRepair][adaptive] N=${targetN} pool re-pick failed: ${err instanceof Error ? err.message : err}`,
+          );
+        }
+      }
+    } else {
+      // All N kept stops already score >= 6, just re-judge to confirm
+      const adaptiveStops = topN;
+      try {
+        const judgeResult = await judgeThematicRelevance({
+          theme: input.theme,
+          themeDescription: input.themeDescription,
+          productDescription: input.productDescription,
+          city: input.city,
+          stops: adaptiveStops.map((s, i) => ({
+            step_order: i + 1,
+            name: s.name,
+            description: "",
+          })),
+        });
+        console.log(
+          `[autoRepair][adaptive] N=${targetN} (top-fit-only) : re-judge avg=${judgeResult.average_score}, verdict=${judgeResult.verdict}`,
+        );
+        const accept =
+          judgeResult.verdict === "pass" ||
+          (judgeResult.verdict === "weak" && judgeResult.average_score >= 6.0);
+        if (accept) {
+          console.log(
+            `[autoRepair][adaptive] ✅ SUCCESS at N=${targetN} (top-fit trim only)`,
+          );
+          return {
+            success: true,
+            reason: `auto-repair ADAPTIVE : trimmed to top-${targetN} stops, judge ${judgeResult.verdict}, avg=${judgeResult.average_score}`,
+            repairedStops: adaptiveStops.map((s) => ({
+              name: s.name,
+              lat: s.lat,
+              lon: s.lon,
+              placeId: s.placeId,
+              types: s.types,
+              rating: s.rating,
+              fromAutoRepair: s.fromAutoRepair,
+            })),
+            postRepairJudge: judgeResult,
+            replacedCount: 0,
+            attempts: MAX_ATTEMPTS + (input.originalStops.length - targetN),
+          };
+        }
+        lastJudge = judgeResult;
+      } catch (err) {
+        console.warn(
+          `[autoRepair][adaptive] N=${targetN} top-fit re-judge failed: ${err instanceof Error ? err.message : err}`,
+        );
+      }
+    }
+  }
+
+  // Exhausted all attempts AND adaptive reductions
   return {
     success: false,
-    reason: `auto-repair exhausted ${MAX_ATTEMPTS} attempts ; last judge avg=${lastJudge?.average_score ?? "?"} verdict=${lastJudge?.verdict ?? "?"}. Escalating to human review.`,
+    reason: `auto-repair exhausted ${MAX_ATTEMPTS} normal attempts + adaptive reduction from ${input.originalStops.length} down to ${ADAPTIVE_FLOOR_N} stops ; last judge avg=${lastJudge?.average_score ?? "?"} verdict=${lastJudge?.verdict ?? "?"}. Escalating to human review.`,
     repairedStops: [],
     postRepairJudge: lastJudge,
     replacedCount: 0,
