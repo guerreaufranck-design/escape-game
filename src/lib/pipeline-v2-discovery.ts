@@ -181,11 +181,6 @@ export interface DiscoverV2Params {
   transportMode?: "walking" | "driving" | "mixed";
   /** Radius for roadtrip mode in km. Used when transportMode != walking. */
   radiusKm?: number;
-  /** Pre-computed VerifiedThemeContext from Inngest's upstream
-   *  phase1a-deep-research step. When supplied, V2 SKIPS the
-   *  facts extraction call internally (same pattern as V1's
-   *  injectedVerifiedContext). */
-  injectedVerifiedContext?: VerifiedThemeContext;
 }
 
 export interface DiscoverV2Result {
@@ -246,21 +241,17 @@ export async function discoverParcoursV2(
   );
 
   // ──────────────────────────────────────────────────────────
-  // STEP 2 : Parallel — facts extraction (skipped if injected) +
-  //           anchor discovery
+  // STEP 2 : Parallel — facts extraction + anchor discovery
   // ──────────────────────────────────────────────────────────
-  const factsPromise = params.injectedVerifiedContext
-    ? Promise.resolve(params.injectedVerifiedContext)
-    : extractThemeFacts({
-        theme: params.theme,
-        themeDescription: params.themeDescription,
-        productDescription: params.productDescription,
-        city: params.city,
-        country: params.country,
-        narrative: params.narrative,
-      });
   const [factsRes, anchorsRes] = await Promise.allSettled([
-    factsPromise,
+    extractThemeFacts({
+      theme: params.theme,
+      themeDescription: params.themeDescription,
+      productDescription: params.productDescription,
+      city: params.city,
+      country: params.country,
+      narrative: params.narrative,
+    }),
     discoverAnchors({
       theme: params.theme,
       themeDescription: params.themeDescription,
