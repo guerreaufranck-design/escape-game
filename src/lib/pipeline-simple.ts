@@ -394,7 +394,89 @@ ${pdBlock}
 Propose 10-12 canonical landmarks for this theme in this city. JSON only.`;
 }
 
+/**
+ * V13.3 (2026-05-23) — Perplexity sonar-pro replaces Claude Haiku for
+ * landmark proposing. Reason : Claude works from training-data recall
+ * and is inconsistent (forgets Arènes Romaines, Pont Vieux for Béziers
+ * even though they're top-must-see). Perplexity does live web search
+ * → finds the actual top-monuments lists published online.
+ *
+ * Output format identical (JSON landmarks array), so downstream code
+ * unchanged.
+ */
 export async function proposeLandmarksViaClaude(input: {
+  theme: string;
+  themeDescription: string;
+  productDescription?: string;
+  city: string;
+  country: string;
+}): Promise<ProposedLandmark[]> {
+  // (Name kept for backward compat — actually uses Perplexity now)
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) {
+    console.warn("[simple] PERPLEXITY_API_KEY missing, falling back to Claude Haiku");
+    return proposeLandmarksViaClaudeHaiku(input);
+  }
+  const systemMsg = PROPOSER_SYSTEM;
+  const userMsg = buildProposerPrompt(input);
+
+  let text = "";
+  try {
+    const ac = new AbortController();
+    // deep-research can take 2-5 min. 5min timeout = 300_000ms.
+    const timer = setTimeout(() => ac.abort(), 300_000);
+    try {
+      const res = await fetch("https://api.perplexity.ai/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+        },
+        body: JSON.stringify({
+          // User mandate 2026-05-23 : deep-research, not sonar-pro.
+          // sonar-deep-research does extensive web search → more
+          // accurate "top monuments of city" lists.
+          // Cost : ~$0.40/call. Time : 2-5 min. Accepted trade-off.
+          model: "sonar-deep-research",
+          messages: [
+            { role: "system", content: systemMsg },
+            { role: "user", content: userMsg },
+          ],
+          temperature: 0.1,
+        }),
+        signal: ac.signal,
+      });
+      if (!res.ok) {
+        const errText = await res.text();
+        console.warn(`[simple] Perplexity API error ${res.status}: ${errText.slice(0, 300)}`);
+        return proposeLandmarksViaClaudeHaiku(input); // fallback
+      }
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>;
+      };
+      text = data.choices?.[0]?.message?.content?.trim() ?? "";
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch (err) {
+    console.warn(
+      `[simple] Perplexity proposer failed: ${err instanceof Error ? err.message : err} — falling back to Claude Haiku`,
+    );
+    return proposeLandmarksViaClaudeHaiku(input);
+  }
+  if (!text) {
+    console.warn("[simple] Perplexity returned empty — falling back to Claude Haiku");
+    return proposeLandmarksViaClaudeHaiku(input);
+  }
+  console.log(`[simple] Perplexity proposer responded (${text.length} chars)`);
+  return parseProposedLandmarks(text);
+}
+
+/**
+ * Original Claude Haiku proposer kept as FALLBACK when Perplexity is
+ * unavailable (no API key, API down, empty response).
+ */
+async function proposeLandmarksViaClaudeHaiku(input: {
   theme: string;
   themeDescription: string;
   productDescription?: string;
@@ -423,14 +505,30 @@ export async function proposeLandmarksViaClaude(input: {
       .trim();
   } catch (err) {
     console.warn(
-      `[simple] Claude proposer failed: ${err instanceof Error ? err.message : err}`,
+      `[simple] Claude Haiku fallback proposer failed: ${err instanceof Error ? err.message : err}`,
     );
     return [];
   }
-  const jsonText = text
+  return parseProposedLandmarks(text);
+}
+
+/**
+ * Shared JSON parser for proposer output (Perplexity OR Claude).
+ * Strips markdown fences, parses JSON, validates entries, filters
+ * out event-names and duplicates.
+ */
+function parseProposedLandmarks(text: string): ProposedLandmark[] {
+  // Perplexity sometimes wraps JSON in extra prose. Extract the JSON
+  // object via the FIRST {...} match.
+  let jsonText = text
     .replace(/^```(?:json)?\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
+  // If still surrounded by extra prose, extract the {...} substring
+  if (!jsonText.startsWith("{")) {
+    const m = text.match(/\{[\s\S]*\}/);
+    if (m) jsonText = m[0];
+  }
   try {
     const parsed = JSON.parse(jsonText) as { landmarks?: unknown };
     if (!Array.isArray(parsed.landmarks)) return [];
@@ -441,7 +539,7 @@ export async function proposeLandmarksViaClaude(input: {
       const name = typeof r.name === "string" ? r.name.trim() : "";
       if (name.length < 5) continue;
       if (isEventName(name)) {
-        console.log(`[simple] Claude proposed an event name, rejecting : "${name}"`);
+        console.log(`[simple] proposer returned event name, rejecting : "${name}"`);
         continue;
       }
       const lower = name.toLowerCase();
@@ -483,7 +581,7 @@ export async function proposeLandmarksViaClaude(input: {
     return out;
   } catch (err) {
     console.warn(
-      `[simple] Claude proposer JSON parse failed: ${err instanceof Error ? err.message : err}. Body: ${text.slice(0, 200)}`,
+      `[simple] Proposer JSON parse failed: ${err instanceof Error ? err.message : err}. Body: ${text.slice(0, 200)}`,
     );
     return [];
   }
