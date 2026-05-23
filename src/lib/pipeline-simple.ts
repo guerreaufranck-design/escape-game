@@ -196,17 +196,67 @@ SCORING FORMULA — patrimoine base + theme bonus
 
   themeScore = base_patrimoine + theme_bonus  (capped 0-10)
 
-  BASE PATRIMOINE (the LANDMARK QUALITY itself, theme-agnostic) :
+  🚨 CRITICAL : SCORE THE BUILDING ITSELF, NOT THE LABEL
+     A "museum" tag means nothing. Judge by :
+       - Is the BUILDING itself architecturally iconic/historic ?
+       - Is it on a notable/scenic street ?
+       - Would a tourist guide point it out ?
+
+  BASE PATRIMOINE (judge the BUILDING + STREET, not the function) :
     9  THE iconic landmark of the city (Notre-Dame Paris, Casas
        Colgadas Cuenca, Cathédrale Saint-Nazaire Béziers)
     7-8 TOP monuments of the city (must-see for any visitor :
         major churches, named towers, Roman ruins, famous bridges,
-        historic squares with own Google entry)
-    5-6 NOTABLE heritage (smaller churches, secondary museums,
-        named historic streets)
-    3-4 Decent stop (named buildings, parks with character)
-    0-2 Generic/forgettable (modern offices, anonymous parks,
-        shops). REJECT these.
+        historic squares with own Google entry, iconic palaces)
+    5-6 NOTABLE heritage : SIGNIFICANT historic buildings (a 12-13c
+        church, a renowned palace converted to museum, a historic
+        bridge, a major hôtel particulier). Mid-tier but still
+        memorable for a visitor.
+    3-4 Decent stop : SMALL named building with some character, but
+        not a must-see. Includes most "lesser" museums housed in
+        ORDINARY 19th-c townhouses (e.g., "Musée Taurin" in a
+        forgettable mid-19c building on a non-iconic street).
+    1-2 Generic and forgettable (anonymous parks, modern offices,
+        random shops, unmemorable streets). DO NOT propose these.
+    0   Anti-patrimoine (gas station, fast-food, mall, parking).
+
+  ❌ WRONG (V12 mistake) : "any museum = base 5"
+  ✅ RIGHT : "Musée Taurin in an ordinary 19c house on a
+             nondescript street → base 2-3"
+  ✅ RIGHT : "Casa Zavala IS one of the Casas Colgadas (iconic
+             building, then museum) → base 9"
+
+═══════════════════════════════════════════════════════════
+🚨 MUST-SEE FILTER — be conservative, not exhaustive
+═══════════════════════════════════════════════════════════
+
+  Imagine you're writing a "Top monuments to see in [city]" Lonely
+  Planet article. Would this site be in your TOP 12 ?
+
+  If NO → don't propose it. Better return 6 great sites than 12
+  with 4 fillers. The pipeline floor is 6, that's enough.
+
+  CHRONIC OFFENDERS to AVOID (base 2-3 + nothing-worth-visiting) :
+    ❌ Small modern theatres ("Théâtre des Variétés", "Théâtre
+       Municipal" — UNLESS iconic like Comédie-Française)
+    ❌ Small specialty museums in ordinary 19th-c townhouses
+       ("Musée Taurin", "Musée du Bonbon", "Musée de la Carte
+       Postale" — UNLESS in a historic building like a palais)
+    ❌ Small "cultural centers", art galleries, "Maisons de la
+       Culture" — usually modern, forgettable
+    ❌ Anonymous public gardens / promenades (unless famous like
+       Tuileries, Allées Paul Riquet for Béziers)
+    ❌ Random named streets without specific tourist interest
+
+  WHAT TO PROPOSE INSTEAD :
+    ✅ Cathedrals, named historic churches, basilicas
+    ✅ Famous towers, gates, ramparts (named ones)
+    ✅ Historic bridges, named squares (with own Google entry)
+    ✅ Palaces, castles, fortresses
+    ✅ Roman ruins / classical antiquity sites
+    ✅ Famous hôtels particuliers (named ones)
+    ✅ Iconic markets, halls (e.g., Les Halles Cuenca)
+    ✅ Pilgrimage sites, abbeys, monasteries
 
   THEME BONUS (added on top of base) :
     +2  Documented event / figure / era explicit tie

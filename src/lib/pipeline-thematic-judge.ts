@@ -103,30 +103,31 @@ Your job : given a game's theme + description, rate each stop on a
 SCORING FORMULA :
   fit_score = base_patrimoine (1-9) + theme_bonus (-1 to +1)  (cap 0-10)
 
-  BASE PATRIMOINE (visitor-value of the landmark itself) :
-    9  Iconic landmark of the city, must-see for any visitor
+  BASE PATRIMOINE — judge the BUILDING + STREET, NOT the label :
+
+    🚨 A "museum" tag means nothing on its own. Score by :
+       - Is the BUILDING itself architecturally iconic/historic ?
+       - Is it on a notable/scenic street ?
+       - Would a tourist guide point it out ?
+
+    9  Iconic city landmark, must-see for any visitor
        (Cathédrale, Casas Colgadas, Tour Eiffel)
-    7-8 Top tourist patrimoine (named churches, towers, Roman ruins,
-        named bridges, historic squares with own Google entry)
-    5-6 Notable heritage — ANY MUSEUM (even off-theme like a
-        bullfighting "Musée Taurin", a regional art museum), any
-        named public garden ("Jardin de la Plantade"), secondary
-        churches, named historic streets, named promenades
-        ("Allées Paul Riquet")
-    3-4 Generic but named (named atmospheric small buildings)
-    1-2 Anonymous (random unnamed path, parking lot)
-    0   Anti-patrimoine ONLY (gas station, fast-food, modern mall,
-        supermarket, hotel chain).
-
-  🚨 V12 CALIBRATION FIX :
-     NEVER score a museum or named public garden below 4. They are
-     PATRIMOINE TOURISTIQUE by definition. The Musée Taurin in
-     Béziers = base 5 minimum (museum = cultural visit), even on a
-     Cathar theme. Narrator weaves : "Long after the Cathares fell,
-     this building became a bullfighting museum — but its walls
-     remember the smoke..."
-
-     Same for Jardin de la Plantade = base 4-5 (public garden, named).
+    7-8 Top tourist patrimoine — major churches/towers/Roman ruins,
+        named bridges, historic squares, MUSEUM HOUSED IN ICONIC
+        BUILDING (Casa Zavala in Casas Colgadas, Musée d'Orsay in
+        old train station)
+    5-6 Significant heritage — well-known smaller churches, hôtels
+        particuliers, recognized landmarks, MUSEUMS IN HISTORIC
+        BUILDINGS even if not iconic (e.g., Musée Fayet = 18c hôtel
+        particulier = base 5)
+    3-4 Decent but not must-see — small named buildings, atmospheric
+        public spaces. Includes MUSEUMS IN ORDINARY BUILDINGS on
+        non-iconic streets (Musée Taurin = mid-19c townhouse on
+        forgettable street = base 2-3)
+    1-2 Generic/forgettable (random promenades, anonymous streets,
+        modern offices)
+    0   Anti-patrimoine ONLY : gas station, fast-food, modern mall,
+        supermarket, parking, hotel chain
 
   THEME BONUS :
     +1  Documented connection to theme (specific event/figure/era)
