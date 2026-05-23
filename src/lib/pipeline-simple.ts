@@ -104,9 +104,33 @@ interface ProposedLandmark {
   realEvent?: { date: string; description: string };
 }
 
-const PROPOSER_SYSTEM = `You are a heritage historian designing the perfect outdoor escape-game.
+const PROPOSER_SYSTEM = `You are a TOURIST GUIDE designing the perfect 8-stop city walking tour.
 
-For a given THEME + CITY, propose 10-12 PHYSICAL, NAMED, STILL-STANDING landmarks that would make the BEST stops for this theme in this specific city.
+═══════════════════════════════════════════════════════════
+🎯 CORE PRINCIPLE (read twice — overrides any other heuristic)
+═══════════════════════════════════════════════════════════
+
+  The customer buys a CITY VISIT FIRST, theme second.
+
+  Players want to discover the city's BEST monuments. The "theme"
+  is just a NARRATIVE THREAD a guide will weave on top of the
+  visit. Even if a site has NO documented theme connection (e.g.,
+  Roman ruins on a medieval Cathar theme), it stays if it's a
+  top-tourist landmark of the city. The narration will explain :
+  "history left no Cathar trace here, but these ruins stood when
+  the crusaders arrived..."
+
+  THEREFORE :
+
+  ✅ PRIMARY : pick the BEST tourist/heritage landmarks of the city
+     (high rating, famous, era-compatible OR architecturally iconic)
+  ✅ SECONDARY : if equal quality, prefer the theme-tied one
+  ❌ NEVER drop a top monument because it doesn't fit the theme
+     strictly — the narrator will weave it in
+
+For a given THEME + CITY, propose 10-12 PHYSICAL, NAMED, STILL-STANDING
+landmarks that form the BEST CITY-VISIT WALK in this city. The theme
+will be applied as a narrative layer downstream.
 
 ═══════════════════════════════════════════════════════════
 HARD RULES — PROPOSE
@@ -163,20 +187,28 @@ DON'T PROPOSE — GOOGLE PLACES BLIND SPOTS
      "Casa de los Picos"), named squares with own Google entry.
 
 ═══════════════════════════════════════════════════════════
-TIER + SCORE — for each proposal
+TIER + SCORE — for each proposal (city-first scoring)
 ═══════════════════════════════════════════════════════════
 
-  TIER 1, score 7-10 — CANONICAL for this theme
-      Documented connection (same person/event/era explicitly named)
+  TIER 1, score 7-10 — TOP city landmark + theme-tied (best of both)
+      A must-see monument AND documented connection to the theme
       Ex: Tour de Constance for "Huguenot prison 1572"
 
-  TIER 2, score 4-6 — ERA-COMPATIBLE heritage
-      Right period, right city, no specific documented tie
-      Ex: 12th-c church for a 1209 Cathar theme
+  TIER 2, score 4-6 — TOP city landmark, theme-flexible
+      A must-see monument of the city, era-compatible or atmospheric
+      Ex: Roman amphitheater on a medieval theme (great visit, narrator
+      weaves : "these stones predate even the crusade")
 
-  TIER 3, score 1-3 — ACCEPTABLE last resort
-      Right area, wrong era OR generic
-      Use sparingly, only if Tier 1+2 give < 8
+  TIER 3, score 1-3 — SECONDARY landmark, off-theme
+      Still worth visiting but lower priority. Include only if Tier 1+2
+      give < 8.
+
+  ⚠️ A LOW theme score (Tier 2 or 3) is NOT a reason to reject. Only
+     reject if the place is :
+       - not a real Google Places entry
+       - a hotel/parking/event (already filtered)
+       - completely unmemorable / not worth a stop
+     Otherwise INCLUDE — the narrator weaves the theme on top.
 
 ═══════════════════════════════════════════════════════════
 REAL FIGURES + EVENTS (when known)

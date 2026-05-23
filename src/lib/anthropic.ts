@@ -373,6 +373,29 @@ from "we sent the player to a hotel with an invented Resistance story".
 
   const prompt = `${genreOverlay}${verifiedFactsBlock}${thematicAnchorsBlock}You are an expert AR-tour designer. The product is half escape-game, half audio-guided heritage walk: the player physically walks between historical locations in ${city}, ${country}, and at each stop their phone reveals — IN AUGMENTED REALITY — a magical short answer painted on the facade. Solving the game = walking the city + reading what only the AR can show.
 
+═══════════════════════════════════════════════════════════════════════
+🎯 CORE PRINCIPLE — the customer bought A CITY VISIT FIRST, theme second
+═══════════════════════════════════════════════════════════════════════
+
+  Players buy this product to DISCOVER THE CITY. The theme is a
+  NARRATIVE THREAD you weave on top — not a strict filter.
+
+  Some stops below may have ONLY tangential connection to the theme
+  (e.g., Roman amphitheater on a medieval Cathar theme). DO NOT
+  discard them or rush through. Embrace them via the SPÉCULATIF
+  storytelling mode (see Rule 4 below) :
+
+      "Here at the Arènes Romaines, the stones predate even the
+       1209 crusade by a thousand years. As you stand in the arena,
+       imagine the day the Pope's emissaries first read the crusade
+       proclamation here — these ancient stones absorbing the
+       sentence that would condemn Béziers..."
+
+  The opening guide explicitly tells the player : "history may have
+  erased traces, but we visit the city through narration". You honor
+  that contract — every stop deserves a vivid narrative, even when
+  the documented theme link is thin.
+
 I am giving you ${locations.length} researched locations. Your job is to select the best ${stepCount} that form a SAFE WALKING ROUTE (no major roads to cross, all stops within ~10 minutes' walk of each other, ideally a coherent neighbourhood) and craft a single coherent narrative around them.
 
 ═══════════════════════════════════════════════════════════════════════
