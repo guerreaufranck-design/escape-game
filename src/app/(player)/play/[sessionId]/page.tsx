@@ -5,8 +5,10 @@ import { useParams, useRouter } from "next/navigation";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useGpsTrace } from "@/hooks/useGpsTrace";
 import { useArEventLogger } from "@/hooks/useArEventLogger";
+import { useSupportMessages } from "@/hooks/useSupportMessages";
 import { useTimer } from "@/hooks/useTimer";
 import { useDistance } from "@/hooks/useDistance";
+import { SupportMessageOverlay } from "@/components/player/SupportMessageOverlay";
 import { useGameStore } from "@/stores/game-store";
 import { useLocale } from "@/components/player/LocaleSelector";
 import { formatTime } from "@/lib/scoring";
@@ -100,6 +102,12 @@ export default function PlayPage() {
   // pour pouvoir reconstituer "le joueur a-t-il vu le magic word ?"
   // côté admin sans avoir à interroger le joueur.
   const logAr = useArEventLogger(sessionId);
+  // Support messages — admin peut envoyer un message au joueur depuis
+  // /admin/sessions/[id]. Le joueur le voit en overlay temps (réel-ish, polling 15s).
+  const supportMessages = useSupportMessages(
+    sessionId,
+    gameState?.status === "active",
+  );
   const timer = useTimer(gameState?.startedAt ?? null);
   const { distance } = useDistance({
     playerLat: geo.latitude,
@@ -1168,6 +1176,17 @@ export default function PlayPage() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-white">
+      {/* Support message overlay (post-Bibinouze, 2026-05-23) — affiché
+          au-dessus de TOUT le reste (AR cam, modals, etc.) parce que
+          c'est un message en temps réel de l'admin pour aider le joueur
+          perdu. Polling 15s côté hook. Le joueur tape "Compris" pour
+          l'acquitter (POST read endpoint). Si queue > 1, on affiche le
+          plus ancien — les suivants prennent le relais au dismiss. */}
+      <SupportMessageOverlay
+        message={supportMessages.queue[0] ?? null}
+        onDismiss={supportMessages.dismiss}
+      />
+
       {/* Guide narration overlay — plein écran pendant les blocs majeurs
           (intro_speech, landmark_history, final_riddle). Affiche le
           guide + le texte pendant que l'audio joue, se ferme tout seul

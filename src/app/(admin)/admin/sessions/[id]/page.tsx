@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import dynamic from "next/dynamic";
 import Link from "next/link";
+import { SupportMessageBox } from "@/components/admin/SupportMessageBox";
 
 const SessionTraceMap = dynamic(
   () => import("@/components/admin/SessionTraceMapInner"),
@@ -212,6 +213,13 @@ export default function AdminSessionDetailPage() {
           <p className="text-lg font-bold text-zinc-100">{trace.length}</p>
         </div>
       </div>
+
+      {/* Support message box (admin → joueur) — tout en haut pour
+          y accéder vite quand le joueur est perdu. */}
+      <SupportMessageBox
+        sessionId={sessionId}
+        sessionActive={session.status === "active"}
+      />
 
       <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
         <h2 className="text-sm font-bold text-zinc-300 mb-3">
