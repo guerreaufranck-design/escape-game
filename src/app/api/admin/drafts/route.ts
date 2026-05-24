@@ -72,6 +72,11 @@ interface DraftInput {
   startPointLon?: number;
   mode?: string;
   targetStopCount?: number;
+  // (2026-05-24) For mixed/driving roadtrip games, walking_radius must
+  // be widened (30 km vs 1.75 km default). The pipeline-simple module
+  // accepts walkingRadiusM directly, but we expose 2 friendlier fields :
+  transportMode?: "walking" | "mixed" | "driving";
+  radiusKm?: number;
 }
 
 export async function POST(request: NextRequest) {
@@ -189,9 +194,16 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // Run pre-validation
+    // Compute walkingRadiusM based on transport_mode (mixed/driving = wider)
+    const walkingRadiusM =
+      (d.transportMode === "driving" || d.transportMode === "mixed")
+        ? Math.round((d.radiusKm ?? 30) * 1000)
+        : undefined; // pipeline-simple uses default 1750m for walking
+
+    // Run pre-validation (with 1 retry if Perplexity returns 0 landmarks —
+    // observed on Versailles, presumably ambiguity)
     try {
-      const sr = await runSimpleDiscovery({
+      let sr = await runSimpleDiscovery({
         city: d.city,
         country: d.country ?? "France",
         theme: d.theme,
@@ -200,7 +212,24 @@ export async function POST(request: NextRequest) {
         startPoint: { lat: startLat, lon: startLon },
         targetStopCount: d.targetStopCount ?? 8,
         minStopCount: 5,
+        walkingRadiusM,
       });
+      // Retry once if Perplexity returned 0 landmarks (fallback Google works
+      // but quality suffers — retry often gets Perplexity to wake up)
+      if (sr.diagnostics?.notes?.some((n) => n.includes("proposed 0 landmarks") || n.includes("Claude proposed 0"))) {
+        console.log(`[admin/drafts] Perplexity returned 0 for slug=${d.slug}, retrying once...`);
+        sr = await runSimpleDiscovery({
+          city: d.city,
+          country: d.country ?? "France",
+          theme: d.theme,
+          themeDescription: d.themeDescription ?? d.theme,
+          productDescription: d.productDescription,
+          startPoint: { lat: startLat, lon: startLon },
+          targetStopCount: d.targetStopCount ?? 8,
+          minStopCount: 5,
+          walkingRadiusM,
+        });
+      }
       if (!sr.success || (sr.stops?.length ?? 0) < 5) {
         await supabase
           .from("game_drafts")
