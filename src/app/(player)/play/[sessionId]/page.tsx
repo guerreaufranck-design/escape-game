@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useGeolocation } from "@/hooks/useGeolocation";
+import { useGpsTrace } from "@/hooks/useGpsTrace";
 import { useTimer } from "@/hooks/useTimer";
 import { useDistance } from "@/hooks/useDistance";
 import { useGameStore } from "@/stores/game-store";
@@ -80,6 +81,20 @@ export default function PlayPage() {
   const { gameState, setGameState, setLoading, isLoading, error, setError } =
     useGameStore();
   const geo = useGeolocation(true);
+  // GPS tracking (2026-05-23) — capture la trajectoire du joueur pendant
+  // la partie pour audit litiges + assistance live. Lié au session_id
+  // pseudonymisé, conservé 30 jours puis auto-purgé. Disclosure dans le
+  // briefing (intro_speech). Activé UNIQUEMENT pendant les sessions actives.
+  useGpsTrace({
+    sessionId,
+    enabled: gameState?.status === "active",
+    latitude: geo.latitude,
+    longitude: geo.longitude,
+    accuracy: geo.accuracy,
+    heading: geo.heading,
+    speed: geo.speed,
+    currentStep: gameState?.currentStep ?? null,
+  });
   const timer = useTimer(gameState?.startedAt ?? null);
   const { distance } = useDistance({
     playerLat: geo.latitude,
@@ -1084,6 +1099,24 @@ export default function PlayPage() {
               </p>
             </CardContent>
           </Card>
+
+          {/* RGPD GPS tracking disclosure (2026-05-23 — post-Bibinouze).
+              On informe le joueur que sa position GPS est enregistrée
+              pendant la partie pour pouvoir :
+                1. l'aider en direct s'il est perdu (assistance live)
+                2. analyser les difficultés pour améliorer le jeu
+                3. répondre objectivement en cas de litige
+              Auto-purge 30 jours. Aucune donnée perso liée. Conforme
+              RGPD Art. 6.1.f (intérêt légitime + amélioration service). */}
+          <details className="rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-2 text-xs text-slate-400">
+            <summary className="cursor-pointer hover:text-slate-200 transition-colors">
+              📍 {tt('play.gpsTrackingTitle', locale) || "Suivi GPS du parcours — confidentialité"}
+            </summary>
+            <p className="mt-2 leading-relaxed text-slate-400/90">
+              {tt('play.gpsTrackingDesc', locale) ||
+                "Pour vous aider en direct si vous êtes perdu et améliorer le jeu, votre position GPS est enregistrée pendant la partie (toutes les 30 sec). Les données sont liées uniquement à votre session anonyme (aucun nom, aucun email), conservées 30 jours puis automatiquement supprimées. Conforme RGPD."}
+            </p>
+          </details>
 
           {/* Start button — starts the timer via API */}
           <Button

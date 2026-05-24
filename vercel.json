@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/recompute-pipeline-thresholds",
       "schedule": "0 3 * * 1"
+    },
+    {
+      "path": "/api/cron/purge-gps-traces",
+      "schedule": "0 4 * * *"
     }
   ]
 }

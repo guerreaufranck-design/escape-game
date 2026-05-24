@@ -429,6 +429,21 @@ export const ui: Translations = {
     es: 'Abrir en Maps',
     it: 'Apri in Maps',
   },
+  // ── GPS tracking disclosure (2026-05-23, post-Bibinouze) ──
+  'play.gpsTrackingTitle': {
+    fr: 'Suivi GPS du parcours — confidentialite',
+    en: 'GPS route tracking — privacy',
+    de: 'GPS-Routenverfolgung — Datenschutz',
+    es: 'Seguimiento GPS del recorrido — privacidad',
+    it: 'Tracciamento GPS del percorso — privacy',
+  },
+  'play.gpsTrackingDesc': {
+    fr: 'Pour vous aider en direct si vous etes perdu et ameliorer le jeu, votre position GPS est enregistree pendant la partie (toutes les 30 sec). Les donnees sont liees uniquement a votre session anonyme (aucun nom, aucun email), conservees 30 jours puis automatiquement supprimees. Conforme RGPD.',
+    en: 'To help you live if you are lost and improve the game, your GPS position is recorded during the game (every 30 sec). Data is linked only to your anonymous session (no name, no email), kept 30 days then automatically deleted. GDPR compliant.',
+    de: 'Um Ihnen live zu helfen, wenn Sie verloren gehen, und das Spiel zu verbessern, wird Ihre GPS-Position wahrend des Spiels (alle 30 Sek.) aufgezeichnet. Die Daten sind nur mit Ihrer anonymen Sitzung verknupft (kein Name, keine E-Mail), werden 30 Tage aufbewahrt und dann automatisch geloscht. DSGVO-konform.',
+    es: 'Para ayudarte en vivo si te pierdes y mejorar el juego, tu posicion GPS se registra durante la partida (cada 30 seg). Los datos solo se vinculan a tu sesion anonima (sin nombre, sin email), se conservan 30 dias y luego se eliminan automaticamente. Conforme al RGPD.',
+    it: 'Per aiutarti in diretta se ti perdi e migliorare il gioco, la tua posizione GPS viene registrata durante la partita (ogni 30 sec). I dati sono collegati solo alla tua sessione anonima (nessun nome, nessuna email), conservati 30 giorni e poi automaticamente eliminati. Conforme al GDPR.',
+  },
   'ar.label': {
     fr: 'Realite augmentee', en: 'Augmented reality', de: 'Augmented Reality', es: 'Realidad aumentada', it: 'Realta aumentata',
   },
