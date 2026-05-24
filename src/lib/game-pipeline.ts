@@ -1002,7 +1002,55 @@ export async function runPipelinePhase1Discovery(
     //   des Poètes, 9 Écluses, Château de Raissac) scored 0-2 = excluded.
     // Cost : ~$0.01 per build. Time : ~15-20s.
     const researchStart = Date.now();
-    const simpleResult = await runSimpleDiscovery({
+
+    // ════════════════════════════════════════════════════════════════
+    // PHASE 0 (2026-05-24) — DRAFT LOOKUP
+    // ════════════════════════════════════════════════════════════════
+    // Si un draft pré-validé existe pour ce slug, on saute totalement
+    // la phase discovery (Perplexity 5min + Google Places $0.95) et on
+    // utilise directement les stops sauvegardés. Économie par vente :
+    // ~5 min + $1. Stratégie validée pour catalogue Funbooker.
+    // Helper : essaie de charger un draft pré-validé pour ce slug
+    type SimpleResultT = Awaited<ReturnType<typeof runSimpleDiscovery>>;
+    async function loadDraftSimpleResult(): Promise<SimpleResultT | null> {
+      if (!template.slug) return null;
+      const _supabase = createAdminClient();
+      const { data: draft } = await _supabase
+        .from("game_drafts")
+        .select("id, stops, diagnostics")
+        .eq("slug", template.slug)
+        .eq("status", "validated")
+        .maybeSingle();
+      if (!draft?.stops || !Array.isArray(draft.stops) || draft.stops.length < 5) {
+        return null;
+      }
+      console.log(
+        `[Pipeline] 🚀 DRAFT FOUND for slug="${template.slug}" — skipping Phase 1 discovery (${draft.stops.length} pre-validated stops)`,
+      );
+      // Lock against concurrent sales
+      await _supabase
+        .from("game_drafts")
+        .update({ status: "fulfilling", updated_at: new Date().toISOString() })
+        .eq("id", draft.id);
+      return {
+        success: true,
+        stops: draft.stops as SimpleResultT["stops"],
+        diagnostics: (draft.diagnostics as SimpleResultT["diagnostics"]) ?? {
+          proposedCount: draft.stops.length,
+          geocodedCount: draft.stops.length,
+          fallbackUsed: false,
+          tier1Count: 0,
+          tier2Count: 0,
+          tier3Count: 0,
+          averageScore: 5,
+          minScoreInFinal: 5,
+          notes: [`Using pre-validated draft for slug=${template.slug}`],
+        },
+      };
+    }
+
+    const draftResult = await loadDraftSimpleResult();
+    const simpleResult: SimpleResultT = draftResult ?? await runSimpleDiscovery({
       city: template.city,
       country: template.country,
       theme: template.theme,
@@ -1015,6 +1063,7 @@ export async function runPipelinePhase1Discovery(
         ? Math.round((template.radiusKm ?? 30) * 1000)
         : undefined,
     });
+    void draftResult; // (used only as discriminant above)
 
     // Adapt simple result to V1 `discovery` shape (legacy downstream).
     const discovery: {
@@ -2383,6 +2432,33 @@ export async function runPipelinePhase2cInsert(
       originalPayload,
     );
     console.log(`[Pipeline] Game created with ID: ${gameId}`);
+
+    // (2026-05-24) Si un draft était "fulfilling" pour ce slug, marker fulfilled.
+    // Resilience : on re-query au lieu de propager usedDraft via la chaîne.
+    if (template.slug) {
+      const _supabase = createAdminClient();
+      const { data: existingDraft } = await _supabase
+        .from("game_drafts")
+        .select("id, status")
+        .eq("slug", template.slug)
+        .maybeSingle();
+      if (existingDraft && existingDraft.status === "fulfilling") {
+        const { error: dErr } = await _supabase
+          .from("game_drafts")
+          .update({
+            status: "fulfilled",
+            fulfilled_at: new Date().toISOString(),
+            fulfilled_game_id: gameId,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", existingDraft.id);
+        if (dErr) {
+          console.warn(`[Pipeline] draft fulfill marker failed: ${dErr.message}`);
+        } else {
+          console.log(`[Pipeline] ✓ draft "${template.slug}" marked fulfilled → game ${gameId}`);
+        }
+      }
+    }
 
     // C3 (2026-05-17) — Fetch landmark photos in PARALLEL after insert.
     // Each photo : 1 Place Details + 1 Place Photo = ~$0.024. For 8 stops

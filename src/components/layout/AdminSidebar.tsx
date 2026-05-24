@@ -15,6 +15,7 @@ import {
   AlertTriangle,
   Sparkles,
   Activity,
+  Layers,
   LogOut,
   Menu,
   X,
@@ -23,6 +24,10 @@ import {
 const navItems = [
   { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
   { href: "/admin/games", label: "Jeux", icon: Gamepad2 },
+  // (2026-05-24) Pré-validation catalogue. Drafts = jeux dont la zone
+  // de friction (landmarks + GPS) est pré-validée. La narration / audio
+  // restent vides, générées à la vente uniquement. Économie ~$1/vente.
+  { href: "/admin/drafts", label: "Drafts", icon: Layers },
   { href: "/admin/generate", label: "Generator", icon: Sparkles },
   { href: "/admin/codes", label: "Codes", icon: KeyRound },
   { href: "/admin/sessions", label: "Sessions", icon: Users },
