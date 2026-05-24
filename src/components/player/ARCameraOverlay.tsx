@@ -61,8 +61,21 @@ interface ARCameraOverlayProps {
    *  to read the golden letters that materialised on the facade). The
    *  host should call validateStep with the known answer — this is the
    *  AR-first auto-validation that replaces a manual "Validate" button.
-   *  Fires AT MOST ONCE per stepKey. */
-  onAutoValidate?: () => void;
+   *  Fires AT MOST ONCE per stepKey.
+   *  `source` permet à l'host de distinguer auto-1.5s vs clic manuel
+   *  "Valider quand même" pour la télémétrie AR. */
+  onAutoValidate?: (source: "auto" | "manual") => void;
+  // ── AR event logging (2026-05-23) ────────────────────────────────────
+  // Callbacks optionnels fired aux moments clés du flow AR. Permet à
+  // l'host (page.tsx) d'enregistrer la télémétrie via useArEventLogger
+  // sans coupler le composant à un store ou un fetch. Tous optionnels.
+  onCameraReady?: () => void;
+  onCameraDenied?: () => void;
+  onCompassGranted?: () => void;
+  onCompassDenied?: () => void;
+  onLockOn?: (meta: { distance: number; angleDeg?: number }) => void;
+  onFacadeRevealed?: () => void;
+  onCharacterSpeak?: () => void;
   // Legacy props — kept for backwards compatibility with the play page,
   // but these layers were removed from the AR scene to reduce clutter.
   // The treasure reward is now shown in the post-validation success modal.
@@ -106,6 +119,13 @@ export function ARCameraOverlay({
   skipLoading = false,
   latestHint = null,
   onAutoValidate,
+  onCameraReady,
+  onCameraDenied,
+  onCompassGranted,
+  onCompassDenied,
+  onLockOn,
+  onFacadeRevealed,
+  onCharacterSpeak,
 }: ARCameraOverlayProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -137,9 +157,11 @@ export function ARCameraOverlay({
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
           setCameraReady(true);
+          onCameraReady?.();
         }
       } catch {
         setCameraError(tt("ar.cameraError", locale));
+        onCameraDenied?.();
       }
     }
     start();
@@ -259,10 +281,51 @@ export function ARCameraOverlay({
           /* vibration can fail silently on desktops or strict modes */
         }
       }
+      // Log lock_on event with distance + angle for diagnostics
+      onLockOn?.({
+        distance: distance ?? -1,
+        angleDeg: orientation.hasCompass ? Math.round(absH) : undefined,
+      });
     } else if (!onTarget) {
       vibratedRef.current = false;
     }
-  }, [absH, distance, hasGps, orientation.hasCompass]);
+  }, [absH, distance, hasGps, orientation.hasCompass, onLockOn]);
+
+  // Compass permission events — fire once when state transitions
+  const compassReportedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const state = orientation.permissionState;
+    if (!state || state === "unsupported") return;
+    if (compassReportedRef.current === state) return;
+    compassReportedRef.current = state;
+    if (state === "granted") onCompassGranted?.();
+    else if (state === "denied") onCompassDenied?.();
+  }, [orientation.permissionState, onCompassGranted, onCompassDenied]);
+
+  // Facade text reveal — fired when the magic word is about to render
+  // (lockedOn + facadeText defined + camera ready). One-shot per stepKey.
+  const facadeRevealedRef = useRef<string | null>(null);
+  useEffect(() => {
+    facadeRevealedRef.current = null;
+  }, [stepKey]);
+  useEffect(() => {
+    if (!lockedOn || !facadeText || !cameraReady) return;
+    if (facadeRevealedRef.current === stepKey) return;
+    facadeRevealedRef.current = stepKey ?? "_";
+    onFacadeRevealed?.();
+  }, [lockedOn, facadeText, cameraReady, stepKey, onFacadeRevealed]);
+
+  // Character speak — fired when character dialogue starts (lockedOn + character)
+  const characterSpokeRef = useRef<string | null>(null);
+  useEffect(() => {
+    characterSpokeRef.current = null;
+  }, [stepKey]);
+  useEffect(() => {
+    if (!lockedOn || !character) return;
+    if (characterSpokeRef.current === stepKey) return;
+    characterSpokeRef.current = stepKey ?? "_";
+    onCharacterSpeak?.();
+  }, [lockedOn, character, stepKey, onCharacterSpeak]);
 
   // --- Auto-validate when lockedOn for long enough ---------------------
   // The "AR-first" model: if the player is on-site, facing the right
@@ -285,7 +348,7 @@ export function ARCameraOverlay({
       // Re-check we're STILL locked (player might have moved away).
       if (autoValidatedRef.current !== stepKey) {
         autoValidatedRef.current = stepKey;
-        onAutoValidate();
+        onAutoValidate("auto");
       }
     }, 1500); // Reduced from 3500ms — field test showed players
               // often left the lock-on zone before the 3.5s timer
@@ -648,7 +711,7 @@ export function ARCameraOverlay({
               onClick={() => {
                 if (autoValidatedRef.current === stepKey) return;
                 autoValidatedRef.current = stepKey;
-                onAutoValidate();
+                onAutoValidate("manual");
               }}
               className="flex flex-col items-center gap-1 rounded-2xl border-2 border-emerald-400/70 bg-emerald-950/90 px-5 py-3 text-sm font-bold uppercase tracking-wider text-emerald-100 shadow-2xl backdrop-blur-md hover:bg-emerald-900/90 active:scale-95 transition-all"
             >

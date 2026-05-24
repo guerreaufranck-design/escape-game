@@ -53,6 +53,25 @@ interface TraceData {
   }>;
 }
 
+interface ArEventsData {
+  events: Array<{
+    event_type: string;
+    step_order: number | null;
+    metadata: Record<string, unknown> | null;
+    captured_at: string;
+  }>;
+  summary: {
+    opens_per_step: Record<number, number>;
+    lock_ons_per_step: Record<number, number>;
+    facade_reveals_per_step: Record<number, number>;
+    auto_validates: number;
+    manual_validates: number;
+    camera_denied: number;
+    compass_denied: number;
+    total_events: number;
+  };
+}
+
 function formatDuration(s: number | null | undefined): string {
   if (!s) return "—";
   if (s < 60) return `${s}s`;
@@ -66,18 +85,24 @@ export default function AdminSessionDetailPage() {
   const params = useParams();
   const sessionId = params.id as string;
   const [data, setData] = useState<TraceData | null>(null);
+  const [arData, setArData] = useState<ArEventsData | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
   const fetchData = async () => {
     try {
-      const res = await fetch(`/api/admin/sessions/${sessionId}/trace`, {
-        cache: "no-store",
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const d = await res.json();
+      const [tRes, arRes] = await Promise.all([
+        fetch(`/api/admin/sessions/${sessionId}/trace`, { cache: "no-store" }),
+        fetch(`/api/admin/sessions/${sessionId}/ar-events`, { cache: "no-store" }),
+      ]);
+      if (!tRes.ok) throw new Error(`HTTP trace ${tRes.status}`);
+      const d = await tRes.json();
       setData(d);
+      if (arRes.ok) {
+        const ar = await arRes.json();
+        setArData(ar);
+      }
       setLastRefresh(new Date());
       setErr(null);
     } catch (e) {
@@ -239,10 +264,20 @@ export default function AdminSessionDetailPage() {
             {stops.map((s) => {
               const done = completions.find((c) => c.step === s.step);
               const current = s.step === session.current_step;
+              const opens = arData?.summary.opens_per_step[s.step] ?? 0;
+              const lockOns = arData?.summary.lock_ons_per_step[s.step] ?? 0;
+              const reveals = arData?.summary.facade_reveals_per_step[s.step] ?? 0;
               return (
                 <tr key={s.step} className="border-t border-zinc-800/60">
                   <td className="py-2 font-mono text-zinc-500">{s.step}</td>
-                  <td className="py-2 text-zinc-200">{s.name}</td>
+                  <td className="py-2 text-zinc-200">
+                    {s.name}
+                    {arData && (
+                      <span className="ml-2 text-[10px] text-zinc-500">
+                        AR : {opens}× ouvert · {lockOns}× lock · {reveals}× révélé
+                      </span>
+                    )}
+                  </td>
                   <td className="py-2 text-right font-mono text-zinc-500">
                     {s.lat.toFixed(5)}, {s.lon.toFixed(5)}
                   </td>
@@ -264,6 +299,80 @@ export default function AdminSessionDetailPage() {
           </tbody>
         </table>
       </div>
+
+      {/* AR events timeline (post-Bibinouze tracking) */}
+      {arData && arData.events.length > 0 && (
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-4">
+          <h2 className="text-sm font-bold text-zinc-300 mb-3">
+            📷 Activité Réalité Augmentée ({arData.events.length} events)
+          </h2>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-3 text-xs">
+            <div className="rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+              <span className="text-zinc-500">Auto-validés :</span>{" "}
+              <span className="text-emerald-300 font-bold">{arData.summary.auto_validates}</span>
+            </div>
+            <div className="rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+              <span className="text-zinc-500">Manual-validés :</span>{" "}
+              <span className="text-amber-300 font-bold">{arData.summary.manual_validates}</span>
+            </div>
+            <div className="rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+              <span className="text-zinc-500">Caméra refusée :</span>{" "}
+              <span className={arData.summary.camera_denied > 0 ? "text-red-300 font-bold" : "text-zinc-600"}>
+                {arData.summary.camera_denied}
+              </span>
+            </div>
+            <div className="rounded border border-zinc-800 bg-zinc-900/40 px-2 py-1">
+              <span className="text-zinc-500">Compass refusé :</span>{" "}
+              <span className={arData.summary.compass_denied > 0 ? "text-orange-300 font-bold" : "text-zinc-600"}>
+                {arData.summary.compass_denied}
+              </span>
+            </div>
+          </div>
+          <div className="max-h-[400px] overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead className="sticky top-0 bg-zinc-950 text-zinc-500">
+                <tr>
+                  <th className="text-left py-1.5">Time</th>
+                  <th className="text-left py-1.5">Step</th>
+                  <th className="text-left py-1.5">Event</th>
+                  <th className="text-left py-1.5">Meta</th>
+                </tr>
+              </thead>
+              <tbody>
+                {arData.events.map((e, i) => {
+                  const colorMap: Record<string, string> = {
+                    ar_open: "text-cyan-300",
+                    ar_camera_ready: "text-emerald-400",
+                    ar_camera_denied: "text-red-400",
+                    ar_compass_granted: "text-emerald-400",
+                    ar_compass_denied: "text-orange-400",
+                    ar_lock_on: "text-yellow-300",
+                    ar_facade_revealed: "text-fuchsia-300",
+                    ar_character_speak: "text-violet-300",
+                    ar_auto_validated: "text-emerald-300 font-bold",
+                    ar_manual_validated: "text-amber-300 font-bold",
+                    ar_close: "text-zinc-500",
+                  };
+                  return (
+                    <tr key={i} className="border-t border-zinc-800/40">
+                      <td className="py-1 font-mono text-zinc-500">
+                        {new Date(e.captured_at).toLocaleTimeString()}
+                      </td>
+                      <td className="py-1 text-zinc-400">{e.step_order ?? "—"}</td>
+                      <td className={`py-1 ${colorMap[e.event_type] ?? "text-zinc-300"}`}>
+                        {e.event_type}
+                      </td>
+                      <td className="py-1 text-zinc-500 font-mono text-[10px]">
+                        {e.metadata ? JSON.stringify(e.metadata) : ""}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

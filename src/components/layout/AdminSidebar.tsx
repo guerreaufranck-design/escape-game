@@ -10,6 +10,7 @@ import {
   Gamepad2,
   KeyRound,
   Users,
+  Radio,
   Trophy,
   AlertTriangle,
   Sparkles,
@@ -25,6 +26,9 @@ const navItems = [
   { href: "/admin/generate", label: "Generator", icon: Sparkles },
   { href: "/admin/codes", label: "Codes", icon: KeyRound },
   { href: "/admin/sessions", label: "Sessions", icon: Users },
+  // (2026-05-23) Live tracking — sessions actives avec GPS en direct.
+  // Permet l'assistance support live + audit post-mortem litiges.
+  { href: "/admin/sessions/live", label: "Live", icon: Radio },
   { href: "/leaderboard", label: "Classement", icon: Trophy },
   { href: "/admin/reports", label: "Signalements", icon: AlertTriangle },
   // (2026-05-21, Sprint 4.3) Pipeline self-managing observability.

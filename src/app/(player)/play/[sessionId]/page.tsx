@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useGpsTrace } from "@/hooks/useGpsTrace";
+import { useArEventLogger } from "@/hooks/useArEventLogger";
 import { useTimer } from "@/hooks/useTimer";
 import { useDistance } from "@/hooks/useDistance";
 import { useGameStore } from "@/stores/game-store";
@@ -95,6 +96,10 @@ export default function PlayPage() {
     speed: geo.speed,
     currentStep: gameState?.currentStep ?? null,
   });
+  // AR event logger — instrumente les moments clés de l'expérience AR
+  // pour pouvoir reconstituer "le joueur a-t-il vu le magic word ?"
+  // côté admin sans avoir à interroger le joueur.
+  const logAr = useArEventLogger(sessionId);
   const timer = useTimer(gameState?.startedAt ?? null);
   const { distance } = useDistance({
     playerLat: geo.latitude,
@@ -221,6 +226,10 @@ export default function PlayPage() {
     if (autoOpenedArRef.current === gameState.currentStepId) return;
     autoOpenedArRef.current = gameState.currentStepId ?? "_";
     setArOpen(true);
+    logAr("ar_open", {
+      step: gameState.currentStep,
+      meta: { trigger: "auto", distance, radius: gameState.validationRadius },
+    });
   }, [
     distance,
     gameState,
@@ -229,6 +238,7 @@ export default function PlayPage() {
     showIntro,
     stepSuccess,
     showFinalCode,
+    logAr,
   ]);
   const [startingGame, setStartingGame] = useState(false);
   const [gpsTooFarDistance, setGpsTooFarDistance] = useState<number>(0);
@@ -1783,7 +1793,13 @@ export default function PlayPage() {
               <Button
                 size="lg"
                 className="w-full bg-gradient-to-br from-fuchsia-600 to-violet-700 hover:from-fuchsia-500 hover:to-violet-600 text-white font-bold h-14 rounded-xl text-base shadow-lg shadow-fuchsia-900/40"
-                onClick={() => setArOpen(true)}
+                onClick={() => {
+                  setArOpen(true);
+                  logAr("ar_open", {
+                    step: gameState.currentStep,
+                    meta: { trigger: "manual_button", distance },
+                  });
+                }}
               >
                 <Sparkles className="h-5 w-5 mr-2" />
                 {tt('play.arMode', locale) || 'Mode AR'}
@@ -2168,7 +2184,17 @@ export default function PlayPage() {
           targetLon={gameState.approximateTarget?.longitude ?? null}
           distance={distance}
           locale={locale}
-          onClose={() => setArOpen(false)}
+          onClose={() => {
+            setArOpen(false);
+            logAr("ar_close", { step: gameState.currentStep });
+          }}
+          onCameraReady={() => logAr("ar_camera_ready", { step: gameState.currentStep })}
+          onCameraDenied={() => logAr("ar_camera_denied", { step: gameState.currentStep })}
+          onCompassGranted={() => logAr("ar_compass_granted", { step: gameState.currentStep })}
+          onCompassDenied={() => logAr("ar_compass_denied", { step: gameState.currentStep })}
+          onLockOn={(meta) => logAr("ar_lock_on", { step: gameState.currentStep, meta })}
+          onFacadeRevealed={() => logAr("ar_facade_revealed", { step: gameState.currentStep })}
+          onCharacterSpeak={() => logAr("ar_character_speak", { step: gameState.currentStep })}
           facadeText={gameState.arFacadeText ?? null}
           facadeTextIsAnswer={gameState.currentRiddle?.answerSource === "virtual_ar"}
           treasureReward={gameState.arTreasureReward ?? null}
@@ -2185,7 +2211,7 @@ export default function PlayPage() {
               : undefined
           }
           latestHint={hints[hints.length - 1]?.text || null}
-          onAutoValidate={() => {
+          onAutoValidate={(source) => {
             // The AR overlay confirms the player has been on-site
             // long enough to read the magical letters. Validate
             // server-side using the EXACT answer Claude generated
@@ -2194,6 +2220,12 @@ export default function PlayPage() {
               gameState.arFacadeText ||
               gameState.currentRiddle?.text ||
               "";
+            // Log avant de fermer (l'overlay nous dit si c'est auto-1.5s
+            // ou clic manuel "Valider quand même")
+            logAr(source === "manual" ? "ar_manual_validated" : "ar_auto_validated", {
+              step: gameState.currentStep,
+              meta: { distance },
+            });
             // Close AR before opening the success modal so the
             // celebration takes over the screen.
             setArOpen(false);

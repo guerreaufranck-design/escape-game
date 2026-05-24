@@ -21,21 +21,36 @@ export async function GET() {
     const supabase = createAdminClient();
     const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    const { error, count } = await supabase
-      .from("gps_traces")
-      .delete({ count: "exact" })
-      .lt("received_at", cutoff);
+    const [gpsRes, arRes] = await Promise.all([
+      supabase
+        .from("gps_traces")
+        .delete({ count: "exact" })
+        .lt("received_at", cutoff),
+      supabase
+        .from("ar_events")
+        .delete({ count: "exact" })
+        .lt("received_at", cutoff),
+    ]);
 
-    if (error) {
-      console.error(`[cron/purge-gps-traces] failed: ${error.message}`);
+    if (gpsRes.error || arRes.error) {
+      console.error(
+        `[cron/purge-gps-traces] failed: gps=${gpsRes.error?.message ?? "ok"}, ar=${arRes.error?.message ?? "ok"}`,
+      );
       return NextResponse.json(
-        { ok: false, error: error.message },
+        { ok: false, gps_error: gpsRes.error?.message, ar_error: arRes.error?.message },
         { status: 500 },
       );
     }
 
-    console.log(`[cron/purge-gps-traces] purged ${count ?? 0} traces older than ${cutoff}`);
-    return NextResponse.json({ ok: true, purged: count ?? 0, cutoff });
+    console.log(
+      `[cron/purge-gps-traces] purged ${gpsRes.count ?? 0} gps + ${arRes.count ?? 0} ar events older than ${cutoff}`,
+    );
+    return NextResponse.json({
+      ok: true,
+      gps_purged: gpsRes.count ?? 0,
+      ar_events_purged: arRes.count ?? 0,
+      cutoff,
+    });
   } catch (err) {
     const msg = err instanceof Error ? err.message : "unknown";
     console.error(`[cron/purge-gps-traces] exception: ${msg}`);

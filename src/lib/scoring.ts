@@ -1,4 +1,10 @@
-const BASE_SCORE = 10000;
+// V2 (2026-05-23) — augmenté de 10000 à 50000 pour corriger le bug
+// où tout jeu > 83 min affichait score = 0 (10000/2 = 5000 sec = 83 min).
+// Les jeux annoncés "1h30-3h30" ont besoin d'un BASE qui supporte 3h30.
+// Avec 50000 + rate=2 : 100 min = 38000, 3h30 = 24800. Récompense
+// claire de la rapidité (48800 en 10 min vs 24800 en 3h30 = 2× écart).
+// Cas Aigues-Mortes "Les stars" 100 min : 0 → 38000.
+const BASE_SCORE = 50000;
 const TIME_PENALTY_RATE = 2; // points lost per second
 
 export interface ScoreInput {
