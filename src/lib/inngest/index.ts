@@ -12,6 +12,7 @@ import { handleGenerateGameFailure } from "./dead-letter";
 import { recoverStuckGames } from "./heartbeat";
 import { buildGameDurable } from "./build-game";
 import { classifyAndRectifyErrorReport } from "./classify-and-rectify";
+import { validateDraft } from "./validate-draft";
 import { allTestFunctions } from "./functions-test";
 
 export {
@@ -20,6 +21,7 @@ export {
   recoverStuckGames,
   buildGameDurable,
   classifyAndRectifyErrorReport,
+  validateDraft,
 };
 
 /** Toutes les fonctions Inngest actives en production. */
@@ -38,6 +40,10 @@ export const allInngestFunctions = [
   // → auto-rectify audio OR admin queue.
   // Consume "player/error-report.submitted"
   classifyAndRectifyErrorReport,
+  // (2026-05-24) Pré-validation drafts en background (Vercel 300s
+  // impossible en sync car Perplexity = 5-10 min)
+  // Consume "draft/validate.requested"
+  validateDraft,
   // Sanity check end-to-end (à supprimer après stabilisation J+14)
   ...allTestFunctions,
 ];

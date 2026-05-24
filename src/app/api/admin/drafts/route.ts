@@ -35,7 +35,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient as createServerClient } from "@/lib/supabase/server";
 import { validateApiKey } from "@/lib/external-auth";
-import { runSimpleDiscovery } from "@/lib/pipeline-simple";
+import { inngest } from "@/lib/inngest-client";
 
 async function isAuthorized(request: NextRequest): Promise<boolean> {
   if (validateApiKey(request)) return true;
@@ -56,8 +56,8 @@ async function isAuthorized(request: NextRequest): Promise<boolean> {
 }
 
 export const dynamic = "force-dynamic";
-// Pre-val pipeline can take 5+ minutes per game.
-export const maxDuration = 600; // Vercel timeout 10 min (Hobby max 60s, Pro 900s)
+// V2 (2026-05-24) — l'endpoint enqueue maintenant un event Inngest et
+// return immédiatement (~1s). Plus de besoin de maxDuration long.
 
 interface DraftInput {
   slug?: string;
@@ -95,9 +95,9 @@ export async function POST(request: NextRequest) {
       { status: 400 },
     );
   }
-  if (body.drafts.length > 10) {
+  if (body.drafts.length > 100) {
     return NextResponse.json(
-      { error: "Max 10 drafts per request (pré-val coûte 5-10 min/jeu — batch côté caller)" },
+      { error: "Max 100 drafts per request" },
       { status: 413 },
     );
   }
@@ -194,107 +194,44 @@ export async function POST(request: NextRequest) {
       continue;
     }
 
-    // Compute walkingRadiusM based on transport_mode (mixed/driving = wider)
-    const walkingRadiusM =
-      (d.transportMode === "driving" || d.transportMode === "mixed")
-        ? Math.round((d.radiusKm ?? 30) * 1000)
-        : undefined; // pipeline-simple uses default 1750m for walking
+    // Update draft with resolved startPoint (before queuing the event)
+    await supabase
+      .from("game_drafts")
+      .update({
+        start_point_lat: startLat,
+        start_point_lon: startLon,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("slug", d.slug);
 
-    // Run pre-validation (with 1 retry if Perplexity returns 0 landmarks —
-    // observed on Versailles, presumably ambiguity)
+    // (2026-05-24) Emit Inngest event for ASYNC validation.
+    // Perplexity deep-research = 5-10 min → Vercel timeout 300s impossible.
+    // Inngest function runs without timeout, retries handled.
     try {
-      let sr = await runSimpleDiscovery({
-        city: d.city,
-        country: d.country ?? "France",
-        theme: d.theme,
-        themeDescription: d.themeDescription ?? d.theme,
-        productDescription: d.productDescription,
-        startPoint: { lat: startLat, lon: startLon },
-        targetStopCount: d.targetStopCount ?? 8,
-        minStopCount: 5,
-        walkingRadiusM,
-      });
-      // Retry once if Perplexity returned 0 landmarks (fallback Google works
-      // but quality suffers — retry often gets Perplexity to wake up)
-      if (sr.diagnostics?.notes?.some((n) => n.includes("proposed 0 landmarks") || n.includes("Claude proposed 0"))) {
-        console.log(`[admin/drafts] Perplexity returned 0 for slug=${d.slug}, retrying once...`);
-        sr = await runSimpleDiscovery({
+      await inngest.send({
+        name: "draft/validate.requested",
+        data: {
+          slug: d.slug,
           city: d.city,
           country: d.country ?? "France",
           theme: d.theme,
           themeDescription: d.themeDescription ?? d.theme,
           productDescription: d.productDescription,
-          startPoint: { lat: startLat, lon: startLon },
+          startPointLat: startLat,
+          startPointLon: startLon,
           targetStopCount: d.targetStopCount ?? 8,
-          minStopCount: 5,
-          walkingRadiusM,
-        });
-      }
-      if (!sr.success || (sr.stops?.length ?? 0) < 5) {
-        await supabase
-          .from("game_drafts")
-          .update({
-            status: "pending",
-            validation_error: sr.errorMessage ?? `only ${sr.stops?.length ?? 0} stops`,
-            diagnostics: sr.diagnostics,
-            start_point_lat: startLat,
-            start_point_lon: startLon,
-            updated_at: new Date().toISOString(),
-          })
-          .eq("slug", d.slug);
-        results.push({
-          slug: d.slug,
-          status: "error",
-          error: sr.errorMessage ?? `only ${sr.stops?.length ?? 0} stops`,
-          diagnostics: sr.diagnostics,
-        });
-        continue;
-      }
-
-      // Adapt stops to the exact shape needed at fulfill time
-      const cleanStops = sr.stops.map((s, i) => ({
-        step_order: i + 1,
-        name: s.name,
-        description: s.description ?? "",
-        lat: s.lat,
-        lon: s.lon,
-        placeId: s.placeId,
-        distanceFromStartM: s.distanceFromStartM,
-        types: s.types,
-        rating: s.rating,
-        themeScore: s.themeScore,
-        tier: s.tier,
-        rationale: s.rationale,
-        realFigure: s.realFigure,
-        realEvent: s.realEvent,
-      }));
-
-      await supabase
-        .from("game_drafts")
-        .update({
-          status: "validated",
-          stops: cleanStops,
-          diagnostics: sr.diagnostics,
-          validated_at: new Date().toISOString(),
-          start_point_lat: startLat,
-          start_point_lon: startLon,
-          validation_error: null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("slug", d.slug);
-
-      results.push({
-        slug: d.slug,
-        status: "ok",
-        diagnostics: sr.diagnostics,
+          transportMode: d.transportMode,
+          radiusKm: d.radiusKm,
+        },
       });
+      results.push({ slug: d.slug, status: "ok" });
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown";
       await supabase
         .from("game_drafts")
         .update({
           status: "pending",
-          validation_error: msg,
+          validation_error: `Inngest send failed: ${msg}`,
           updated_at: new Date().toISOString(),
         })
         .eq("slug", d.slug);

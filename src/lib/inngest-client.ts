@@ -202,6 +202,33 @@ export const pipelineHeartbeatCheck = eventType(
  *   3. Routes to auto-rectifier OR admin queue based on confidence,
  *      quorum, and category disposition (see CATEGORY_AUTORECTIFIABLE).
  */
+/**
+ * DRAFT VALIDATION event (2026-05-24) — pré-validation catalogue Funbooker.
+ *
+ * Émis par POST /api/admin/drafts. Au lieu d'attendre runSimpleDiscovery
+ * 5-10 min synchronously (Vercel timeout à 300s), l'endpoint insert le
+ * draft pending + emit cet event + return 200 immédiatement.
+ *
+ * La fonction `validateDraft` consume l'event et run runSimpleDiscovery
+ * en background, puis update le draft à status='validated' (ou 'pending'
+ * + validation_error si fail).
+ */
+export const draftValidateRequested = eventType("draft/validate.requested", {
+  schema: staticSchema<{
+    slug: string;
+    city: string;
+    country: string;
+    theme: string;
+    themeDescription: string;
+    productDescription?: string;
+    startPointLat: number;
+    startPointLon: number;
+    targetStopCount: number;
+    transportMode?: "walking" | "mixed" | "driving";
+    radiusKm?: number;
+  }>(),
+});
+
 export const errorReportSubmitted = eventType("player/error-report.submitted", {
   schema: staticSchema<{
     /** UUID of the error_reports row just inserted. */
