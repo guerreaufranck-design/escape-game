@@ -60,6 +60,14 @@ ${warningBlock}
 
 ${stopsList}
 
+## CRITICAL — Narrative weaving philosophy
+
+This is a CITY-TOUR played with a thematic narrative on top. Some landmarks above were chosen for their CITY-TOUR value (major heritage sites) even if they don't directly fit the theme. Your job is to **weave the thematic narrative AROUND each landmark**, no matter what it is.
+
+Example : if the theme is "Arsène Lupin" and a stop is "Falaise d'Aval" (a geological landmark, no Lupin link historically), you write a riddle/anecdote that connects the cliffs to Lupin's mystery (e.g. "Maurice Leblanc was inspired by these cliffs to write...", "Look at the arch — Lupin used such formations to hide..."). You DO NOT skip or replace the landmark. You make it work narratively.
+
+This is essential : the customer must see the famous landmarks of the city AND feel the theme connects them.
+
 ## Your task
 
 For EACH landmark above (in the order given), write :

@@ -49,11 +49,11 @@ export function buildDiscoveryPrompt(input: PipelineInput): string {
   const radiusKm = computeRadiusKm(input);
   const mode = input.transportMode ?? "walking";
 
-  return `I'm designing an outdoor escape game in ${input.city}${
+  return `I'm designing an outdoor experience in ${input.city}${
     input.country ? `, ${input.country}` : ""
-  }.
+  } — a CITY-TOUR played with a narrative theme layered on top.
 
-**Theme**: ${input.theme}
+**Theme (narrative overlay)**: ${input.theme}
 ${input.themeDescription ? `**Brief**: ${input.themeDescription}` : ""}
 ${input.productDescription ? `**Role-play context**: ${input.productDescription}` : ""}
 ${input.narrative ? `**Narrative direction**: ${input.narrative}` : ""}
@@ -62,15 +62,30 @@ ${input.narrative ? `**Narrative direction**: ${input.narrative}` : ""}
 **Transport mode**: ${mode}
 **Constraint**: every landmark must be within a ${radiusKm} km radius of the start point (diameter ${radiusKm * 2} km).
 
-## Your task
+## CRITICAL — what to include
 
-List the MAXIMUM number of landmarks you can find (no upper limit) in this zone that are relevant to the scenario. Include monuments, historic sites, squares, bridges, statues, museums, churches, gardens, viewpoints, memorials, commemorative plaques, local curiosities — anything visitable from outside that could fit the theme.
+This product is FIRST a city tour, SECOND a thematic game. The customer pays to discover the city's MAJOR heritage while playing — the theme is a narrative thread woven on top.
 
-Don't pre-select. Don't reduce. Give me EVERY candidate you find. Selection of the best 8 will happen in a second pass.
+**List the MAJOR landmarks of the city within the radius**, even if they have no direct link to the theme or scenario.
+
+Include the city's **major sites only** :
+- Historic monuments and significant buildings
+- Major churches, cathedrals, abbeys
+- Castles, fortresses, ramparts
+- Famous squares, iconic bridges
+- Major museums
+- Notable viewpoints, beaches, cliffs (if cultural/touristic significance)
+- Important memorials
+
+**Exclude** : small commerce, minor curiosities, generic gardens, ordinary public buildings (post offices, schools), commemorative plaques unless famous.
+
+A great viewpoint, a famous bridge, the main cathedral — these ALL belong in the list, even if they have no direct link to the theme. Claude will weave the thematic narrative around them in a later step.
+
+**Do NOT pre-filter on theme relevance**. The thematic selection happens in a second pass.
 
 For each landmark provide:
 - **Exact name** as it appears on Google Maps / official sources
-- **Why it could fit the scenario** (1 sentence)
+- **Brief description** (1 sentence about what it is)
 - **Source** (Wikipedia, tourist board, OSM, news, archive — anything reliable)
 
 ## Format

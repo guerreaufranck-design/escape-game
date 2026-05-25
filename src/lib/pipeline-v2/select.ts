@@ -69,17 +69,28 @@ Each landmark below has been geocoded by Google Maps. The GPS coordinates are re
 
 ${pool}
 
+## CRITICAL — Selection philosophy
+
+This is a CITY-TOUR played with a thematic narrative on top. The customer pays first to discover the city's MAJOR heritage, second to enjoy the theme.
+
+**Therefore, prioritize city-tour quality**, NOT strict thematic fit. Major landmarks belong in the selection even if they don't tie directly to the theme — the theme is a narrative layer that Claude will weave around them in the next step.
+
+Examples :
+- If the theme is "Arsène Lupin" in Étretat : pick the iconic cliffs and the Aiguille (even though they're geological, not Lupin-specific) — the famous cliffs ARE the experience of Étretat.
+- If the theme is "WWII Resistance" in Vaduz : include the main castle, the cathedral, the National Museum (even if they have no resistance angle) — they're the main landmarks of Vaduz.
+
 ## Your task
 
-1. **Select 8 landmarks** (5 minimum if you really can't find 8). Pick based on :
-   - Strongest thematic fit with the scenario
-   - Geographic coherence (a logical walking/driving route, no zigzag)
-   - Variety (mix iconic + lesser-known if appropriate)
-   - Realistic distance for the transport mode (${input.transportMode ?? "walking"})
+1. **Select 8 landmarks** (5 minimum). Prioritize :
+   - **City-tour quality** : pick the major landmarks of the zone, the ones a visitor MUST see
+   - **Geographic coherence** : a logical walking/driving route (no zigzag)
+   - **Variety** : mix iconic + lesser-known
+   - **Transport coherence** : respect the mode (${input.transportMode ?? "walking"})
+   - **Thematic relevance** : a secondary criterion, not a filter. Use it as a tiebreaker.
 
 2. **Order them** in the visit sequence (start near the start point, build narrative momentum, climax near the end).
 
-3. **Reject** any candidate from the pool that doesn't fit the scenario, has wrong coordinates (Google misnamed), or duplicates another.
+3. **Reject only** candidates with obviously wrong coordinates (Google misnamed something far off) or exact duplicates.
 
 ## Output format (strict)
 
