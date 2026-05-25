@@ -45,13 +45,19 @@ export function useSupportMessages(
       const res = await fetch(url, { cache: "no-store" });
       if (!res.ok) return;
       const data = (await res.json()) as { messages: SupportMessage[] };
-      const fresh = (data.messages ?? []).filter(
+      // Track ALL message ids (even joueur replies) pour avancer le since_id,
+      // mais ne queue QUE les messages admin pour overlay (le joueur ne voit
+      // pas ses propres réponses re-poppées en overlay — ce serait du bruit).
+      const newOnes = (data.messages ?? []).filter(
         (m) => !knownIdsRef.current.has(m.id),
       );
-      if (fresh.length > 0) {
-        for (const m of fresh) knownIdsRef.current.add(m.id);
-        lastSeenIdRef.current = fresh[fresh.length - 1].id;
-        setQueue((prev) => [...prev, ...fresh]);
+      const adminFresh = newOnes.filter((m) => m.from_admin);
+      if (newOnes.length > 0) {
+        for (const m of newOnes) knownIdsRef.current.add(m.id);
+        lastSeenIdRef.current = newOnes[newOnes.length - 1].id;
+      }
+      if (adminFresh.length > 0) {
+        setQueue((prev) => [...prev, ...adminFresh]);
         // Vibration douce pour signaler la réception (si supporté)
         if (typeof navigator !== "undefined" && "vibrate" in navigator) {
           try {

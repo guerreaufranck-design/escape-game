@@ -139,36 +139,56 @@ export function SupportMessageBox({ sessionId, sessionActive }: Props) {
         </>
       )}
 
-      {/* History */}
+      {/* Conversation history (les 2 directions) */}
       {history.length > 0 && (
         <div className="space-y-1.5 pt-2 border-t border-zinc-800">
           <p className="text-[10px] uppercase tracking-wider text-zinc-500">
-            Historique ({history.length})
+            Conversation ({history.length})
           </p>
-          <div className="space-y-1 max-h-[200px] overflow-y-auto">
-            {history.map((m) => (
-              <div
-                key={m.id}
-                className="rounded-lg border border-zinc-800 bg-zinc-900/50 px-3 py-2"
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <p className="text-xs text-zinc-200 flex-1">{m.text}</p>
-                  <span className="text-[10px] text-zinc-500 whitespace-nowrap">
-                    {new Date(m.created_at).toLocaleTimeString()}
-                  </span>
-                </div>
-                <p className="mt-1 text-[10px]">
-                  {m.read_at ? (
-                    <span className="text-emerald-400 inline-flex items-center gap-1">
-                      <Check className="h-2.5 w-2.5" /> lu{" "}
-                      {new Date(m.read_at).toLocaleTimeString()}
+          <div className="space-y-2 max-h-[240px] overflow-y-auto">
+            {history.map((m) => {
+              const fromAdmin = m.from_admin;
+              return (
+                <div
+                  key={m.id}
+                  className={
+                    fromAdmin
+                      ? "rounded-lg border border-amber-700/40 bg-amber-950/30 px-3 py-2"
+                      : "rounded-lg border border-sky-700/40 bg-sky-950/30 px-3 py-2 ml-6"
+                  }
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start gap-1.5 flex-1">
+                      <span
+                        className={
+                          fromAdmin
+                            ? "text-[9px] font-bold uppercase tracking-wider text-amber-300 mt-0.5"
+                            : "text-[9px] font-bold uppercase tracking-wider text-sky-300 mt-0.5"
+                        }
+                      >
+                        {fromAdmin ? "Toi" : "Joueur"}
+                      </span>
+                      <p className="text-xs text-zinc-100">{m.text}</p>
+                    </div>
+                    <span className="text-[10px] text-zinc-500 whitespace-nowrap">
+                      {new Date(m.created_at).toLocaleTimeString()}
                     </span>
-                  ) : (
-                    <span className="text-zinc-500">non lu</span>
+                  </div>
+                  {fromAdmin && (
+                    <p className="mt-1 text-[10px]">
+                      {m.read_at ? (
+                        <span className="text-emerald-400 inline-flex items-center gap-1">
+                          <Check className="h-2.5 w-2.5" /> lu{" "}
+                          {new Date(m.read_at).toLocaleTimeString()}
+                        </span>
+                      ) : (
+                        <span className="text-zinc-500">non lu</span>
+                      )}
+                    </p>
                   )}
-                </p>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

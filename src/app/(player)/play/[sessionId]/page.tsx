@@ -1184,6 +1184,7 @@ export default function PlayPage() {
           plus ancien — les suivants prennent le relais au dismiss. */}
       <SupportMessageOverlay
         message={supportMessages.queue[0] ?? null}
+        sessionId={sessionId}
         onDismiss={supportMessages.dismiss}
       />
 

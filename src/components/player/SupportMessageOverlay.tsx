@@ -1,26 +1,63 @@
 "use client";
 
-import { MessageCircle, X } from "lucide-react";
+import { useState } from "react";
+import { MessageCircle, X, Send } from "lucide-react";
 import type { SupportMessage } from "@/hooks/useSupportMessages";
 
 interface Props {
   message: SupportMessage | null;
+  sessionId: string | null | undefined;
   onDismiss: (id: string) => void;
 }
 
 /**
- * Overlay non-intrusif en haut de l'écran (au-dessus de tout le reste,
- * AR caméra incluse) qui affiche un message envoyé par le support
- * OddballTrip. Le joueur tape "Compris" pour le faire disparaître et
- * marquer comme lu.
+ * Overlay non-intrusif en haut de l'écran qui affiche un message envoyé par
+ * le support OddballTrip. Le joueur peut :
+ *   - Tapper "Compris" pour fermer (= marqué comme lu)
+ *   - Tapper "Répondre" pour ouvrir un input et envoyer une réponse
  *
- * Design intentionnel : pas de modal bloquant — le joueur peut continuer
- * à jouer. Le message reste affiché jusqu'au dismiss. Si l'admin en
- * envoie un autre, le hook les met en queue et on en affiche un à la
- * fois (le suivant remplace le précédent une fois dismissé).
+ * Contrainte (back-end) : le joueur ne peut envoyer une réponse QUE si
+ * l'admin a déjà envoyé au moins un message dans la session. Ici, ce
+ * composant ne s'affiche QUE quand on a un message admin → la contrainte
+ * est naturellement respectée.
  */
-export function SupportMessageOverlay({ message, onDismiss }: Props) {
+export function SupportMessageOverlay({ message, sessionId, onDismiss }: Props) {
+  const [showReply, setShowReply] = useState(false);
+  const [replyText, setReplyText] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
   if (!message) return null;
+  // Le hook filtre déjà : queue ne contient QUE des messages admin.
+  if (!message.from_admin) return null;
+
+  const sendReply = async () => {
+    const t = replyText.trim();
+    if (!t || !sessionId) return;
+    setSending(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/game/${sessionId}/messages`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: t }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j?.error ?? `HTTP ${res.status}`);
+      }
+      setSent(true);
+      setReplyText("");
+      // Auto-dismiss 2s après envoi réussi
+      setTimeout(() => onDismiss(message.id), 2000);
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Erreur envoi");
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
     <div className="fixed top-0 left-0 right-0 z-[10000] pointer-events-auto animate-slide-down">
       <div className="mx-auto max-w-lg p-3">
@@ -47,12 +84,60 @@ export function SupportMessageOverlay({ message, onDismiss }: Props) {
               <X className="h-4 w-4 text-amber-300" />
             </button>
           </div>
-          <button
-            onClick={() => onDismiss(message.id)}
-            className="mt-3 w-full rounded-lg bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-amber-100 transition-colors"
-          >
-            Compris, merci
-          </button>
+
+          {/* Reply input (toggleable) */}
+          {showReply && (
+            <div className="mt-3 space-y-2">
+              <textarea
+                value={replyText}
+                onChange={(e) => setReplyText(e.target.value)}
+                placeholder="Ta réponse au support..."
+                rows={2}
+                maxLength={500}
+                disabled={sending || sent}
+                className="w-full rounded-lg border border-amber-400/40 bg-amber-950/50 px-3 py-2 text-sm text-amber-50 placeholder-amber-300/40 focus:outline-none focus:border-amber-300 disabled:opacity-50"
+                autoFocus
+              />
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] text-amber-300/60">
+                  {replyText.length}/500
+                </span>
+                <button
+                  onClick={sendReply}
+                  disabled={!replyText.trim() || sending || sent}
+                  className="inline-flex items-center gap-1.5 rounded-md bg-amber-400 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-amber-950 hover:bg-amber-300 disabled:opacity-50"
+                >
+                  <Send className="h-3 w-3" />
+                  {sent ? "Envoyé !" : sending ? "Envoi..." : "Envoyer"}
+                </button>
+              </div>
+              {err && <p className="text-xs text-red-300">{err}</p>}
+            </div>
+          )}
+
+          {/* Action buttons */}
+          {!sent && (
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              {!showReply && (
+                <button
+                  onClick={() => setShowReply(true)}
+                  className="rounded-lg bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-amber-200 transition-colors"
+                >
+                  Répondre
+                </button>
+              )}
+              <button
+                onClick={() => onDismiss(message.id)}
+                className={
+                  showReply
+                    ? "col-span-2 rounded-lg bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-amber-100 transition-colors"
+                    : "rounded-lg bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-amber-100 transition-colors"
+                }
+              >
+                Compris, merci
+              </button>
+            </div>
+          )}
         </div>
       </div>
       <style jsx>{`
