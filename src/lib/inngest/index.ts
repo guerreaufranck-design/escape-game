@@ -11,6 +11,7 @@ import { generateGame } from "./generate-game";
 import { handleGenerateGameFailure } from "./dead-letter";
 import { recoverStuckGames } from "./heartbeat";
 import { buildGameDurable } from "./build-game";
+import { buildGameV2 } from "./build-game-v2";
 import { classifyAndRectifyErrorReport } from "./classify-and-rectify";
 import { validateDraft } from "./validate-draft";
 import { allTestFunctions } from "./functions-test";
@@ -20,6 +21,7 @@ export {
   handleGenerateGameFailure,
   recoverStuckGames,
   buildGameDurable,
+  buildGameV2,
   classifyAndRectifyErrorReport,
   validateDraft,
 };
@@ -27,12 +29,17 @@ export {
 /** Toutes les fonctions Inngest actives en production. */
 export const allInngestFunctions = [
   // Pipeline de génération
-  // - buildGameDurable : pré-insert (discovery + narration + insert)
-  //                      consume "game/build.requested"
-  // - generateGame     : post-insert (translations + audio + validate
-  //                      + publish + callback OddballTrip)
+  // - buildGameDurable : v1 (legacy) — discovery via Perplexity sonar-deep-research
+  //                      consume "game/build.requested" SI pipelineVersion!=v2
+  // - buildGameV2      : v2 (2026-05-25) — Perplexity sonar standard, FR-first,
+  //                      respect du buyer payload, Google Places anti-bias,
+  //                      Quality Gate + needs_review humain in loop
+  //                      consume "game/build.requested" SI pipelineVersion=v2
+  // - generateGame     : post-insert legacy (translations + audio + validate
+  //                      + publish + callback OddballTrip) — utilisé par v1 only
   //                      consume "game/generate.requested"
   buildGameDurable,
+  buildGameV2,
   generateGame,
   handleGenerateGameFailure,
   recoverStuckGames,

@@ -85,6 +85,17 @@ export const buildGameDurable = inngest.createFunction(
   },
   async ({ event, step, logger }) => {
     const data = event.data;
+
+    // Guard v1 : si le payload demande explicitement la v2 (ou env globale),
+    // on skip — buildGameV2 prend le relais. Évite double processing du même
+    // event.
+    const wantsV2 = (data as { pipelineVersion?: string }).pipelineVersion === "v2"
+      || process.env.PIPELINE_VERSION === "v2";
+    if (wantsV2) {
+      logger.info(`[build-game v1] SKIP — pipelineVersion=v2, déléguant à buildGameV2`);
+      return { skipped: true, reason: "delegated_to_v2" };
+    }
+
     logger.info(
       `[build-game] Start for slug=${data.slug} city=${data.city} mode=${data.transportMode ?? "walking"}`,
     );

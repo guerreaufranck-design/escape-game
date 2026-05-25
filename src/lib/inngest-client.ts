@@ -159,6 +159,14 @@ export const gameBuildRequested = eventType("game/build.requested", {
      * the existing themeDescription/narrative fallback.
      */
     productDescription?: string;
+    /**
+     * (2026-05-25) Pipeline version selector :
+     *   - "v1" (default) : buildGameDurable legacy (intent-first + sonar-deep-research)
+     *   - "v2" : buildGameV2 (Perplexity-first FR, respect buyer payload,
+     *           Google Places anti-bias, Quality Gate + human-in-loop)
+     * Activable par body.pipelineVersion ou env PIPELINE_VERSION.
+     */
+    pipelineVersion?: "v1" | "v2";
   }>(),
 });
 
