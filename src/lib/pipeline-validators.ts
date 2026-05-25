@@ -216,45 +216,20 @@ export async function validateFinalGame(
     });
   }
 
-  // 3. Twin stops : SEULEMENT paires CONSÉCUTIVES < 100m
+  // 3. Twin stops : DÉSACTIVÉ 2026-05-25 sur mandat user.
   //
-  // Politique 2026-05-13 (alignée sur le repair) :
-  //   On flag UNIQUEMENT quand 2 stops consécutifs sont à moins de 100m,
-  //   parce que c'est la seule garantie que l'auto-repair peut donner
-  //   (findReorderSwap dans pipeline-auto-repair.ts ne vérifie que les
-  //   distances consécutives après swap).
+  // Historique : on flaggait les paires consécutives < 100m parce que
+  // l'auto-repair ne savait gérer que les distances consécutives. Le user
+  // a décidé que les stops collés (Landesmuseum ↔ Postmuseum, ailes d'un
+  // même château, etc.) sont LÉGITIMES — Perplexity-first choisit l'ordre,
+  // pas notre validator. On accepte tout.
   //
-  // Le cas "backtrack" (Step 1 et Step 4 au même endroit géographique
-  // mais séparés par 2 stops dans l'ordre) est ACCEPTABLE — le joueur
-  // fait un aller-retour normal, ne visite pas le même endroit en
-  // séquence directe. C'était la décision design du user.
-  //
-  // AVANT cette politique (bug observé La Rochelle 13/05) : le validator
-  // checkait toutes les paires O(N²), flaggait Step 1 ↔ Step 4 à 89m,
-  // le repair tentait des swaps qui passaient le critère consécutif
-  // mais le validator re-détectait la même paire → boucle infinie →
-  // needs_review faussement déclenché.
+  // Pour réactiver : remplacer le bloc ci-dessous par l'ancienne logique
+  // avec `if (d < SEUIL)`.
   const twins: Array<{
     a: number; b: number; distanceM: number; aName: string; bName: string;
   }> = [];
-  for (let i = 0; i < steps.length - 1; i++) {
-    const a = steps[i];
-    const b = steps[i + 1];
-    const d = haversineMeters(
-      { lat: a.latitude, lon: a.longitude },
-      { lat: b.latitude, lon: b.longitude },
-    );
-    if (d < 100) {
-      twins.push({
-        a: a.step_order,
-        b: b.step_order,
-        distanceM: Math.round(d),
-        aName: a.landmark_name,
-        bName: b.landmark_name,
-      });
-    }
-  }
-  if (twins.length > 0) {
+  if (false /* twins.length > 0 */) {
     issues.push({
       code: "twin_stops",
       message:

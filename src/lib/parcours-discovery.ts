@@ -435,7 +435,10 @@ function minInterStopFor(stopCount: number): number {
  * Prague musée pédago ↔ synagogue à 88m. Tous étaient des doublons
  * physiques restaurés à tort par le garde-fou minStops.
  */
-const ABSOLUTE_MIN_INTER_STOP_M = 100;
+// 2026-05-25 — user-mandated removal of inter-stop minimum distance constraint.
+// Operator décide. Perplexity peut proposer Landesmuseum + Postmuseum (50m
+// d'écart, même bâtiment) si pertinent. Pas de garde-fou bloquant.
+const ABSOLUTE_MIN_INTER_STOP_M = 0;
 
 export interface DiscoveredStop {
   /** Nom géocodable du landmark ("Cathédrale Notre-Dame de Rouen"). */
