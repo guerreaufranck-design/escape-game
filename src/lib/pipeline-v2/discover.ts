@@ -1,106 +1,81 @@
 /**
- * DISCOVERY — Perplexity sonar standard, prompt FR naturel et riche.
+ * DISCOVERY v3 — Perplexity sonar-deep-research, anglais natif.
  *
- * Différences clés vs v1 :
- *   - sonar (pas sonar-deep-research) → 3-5s au lieu de 5-7 min, $0.005 au
- *     lieu de $0.40
- *   - Prompt FR naturel qui forwarde TOUT le contexte buyer (themeDescription,
- *     productDescription, stops suggérés, role-play)
- *   - PAS de demande de coordonnées GPS (Google Places s'en charge,
- *     anti-hallucination)
- *   - Output : markdown structuré (intro, ordered landmarks avec énigmes,
- *     épilogue, warnings)
- *   - Parse tolérant : 6-9 landmarks acceptés, pas de throw
+ * Principe :
+ *   - Le payload OddballTrip est en EN natif (theme, themeDescription,
+ *     productDescription, narrative). On l'envoie verbatim à Perplexity.
+ *   - On demande TOUS les landmarks pertinents au scénario dans un rayon
+ *     de 1.75 km du startPoint (diamètre 3.5 km imposé par l'opérateur).
+ *   - Pas de limite de nombre — on veut un pool large que Claude triera.
+ *   - sonar-deep-research pour minimiser les hallucinations (recherche
+ *     approfondie multi-sources avec citations).
  */
 
 import type { DiscoveredLandmark, DiscoveryResult, PipelineInput } from "./types";
 
 const PERPLEXITY_ENDPOINT = "https://api.perplexity.ai/chat/completions";
+const MODEL = "sonar-deep-research";
 
-/** Compose le prompt Perplexity en français naturel avec tout le contexte. */
+/** Diamètre max du parcours (km). User mandate 2026-05-25. */
+export const MAX_DIAMETER_KM = 3.5;
+
 export function buildDiscoveryPrompt(input: PipelineInput): string {
-  const buyerStopsBlock =
-    input.buyerStops && input.buyerStops.length > 0
-      ? `\n**Landmarks suggérés par le buyer** (utilise-les en priorité si pertinents) :\n${input.buyerStops
-          .map(
-            (s, i) =>
-              `${i + 1}. ${s.landmarkName ?? s.name ?? "(sans nom)"}${
-                s.description ? ` — ${s.description.slice(0, 200)}` : ""
-              }`,
-          )
-          .join("\n")}\n`
-      : "";
+  if (!input.startPoint) {
+    throw new Error("startPoint is required for v3 discovery (rayon de 1.75 km)");
+  }
 
-  const startBlock = input.startPointText
-    ? `\n**Point de départ souhaité** : ${input.startPointText}\n`
-    : "";
+  const { lat, lon } = input.startPoint;
+  const radiusKm = MAX_DIAMETER_KM / 2;
 
-  const langName =
-    {
-      fr: "français",
-      en: "anglais",
-      de: "allemand",
-      es: "espagnol",
-      it: "italien",
-      pt: "portugais",
-      nl: "néerlandais",
-    }[input.language] ?? input.language;
+  return `I'm designing an outdoor escape game in ${input.city}${
+    input.country ? `, ${input.country}` : ""
+  }.
 
-  return `Je conçois un escape game outdoor à ${input.city}${input.country ? `, ${input.country}` : ""} sur le thème **"${input.theme}"**.
+**Theme**: ${input.theme}
+${input.themeDescription ? `**Brief**: ${input.themeDescription}` : ""}
+${input.productDescription ? `**Role-play context**: ${input.productDescription}` : ""}
+${input.narrative ? `**Narrative direction**: ${input.narrative}` : ""}
 
-**Brief court du buyer** :
-${input.themeDescription ?? "(non spécifié — invente quelque chose de cohérent avec le thème et la ville)"}
+**Start point**: ${lat}, ${lon}
+**Hard constraint**: all landmarks MUST be physically within a ${radiusKm} km radius (diameter ${MAX_DIAMETER_KM} km) of the start point. Outside this zone = not usable.
 
-**Description produit / contexte role-play** :
-${input.productDescription ?? "(non spécifié)"}
-${buyerStopsBlock}
-${startBlock}
-**Mode de transport** : ${input.transportMode ?? "walking"}
-**Durée cible** : ${input.estimatedDurationMin} minutes
-**Difficulté** : ${input.difficulty}/5
-**Mode** : ${input.mode === "city_tour" ? "audioguide enrichi sans énigme bloquante" : "escape game avec énigmes"}
-**Langue de l'output ENTIÈRE** : ${langName}. Tout le contenu doit être en ${langName}, sans exception.
+## Your task
 
-Donne-moi un parcours complet et CRÉDIBLE, en respectant le brief du buyer s'il a précisé des landmarks ou un angle particulier.
+List ALL landmarks (monuments, historic sites, squares, bridges, statues, museums, churches, gardens, viewpoints, memorials, commemorative plaques, local curiosities, anything visitable from outside) that are RELEVANT to this scenario and located within ${radiusKm} km of the start point.
 
-## Format de réponse OBLIGATOIRE (markdown structuré)
+**Do NOT limit yourself to 8 landmarks**. Give EVERYTHING that fits. The thematic selection will be done later by another step. Right now I need maximum coverage — better to have 25 candidates than 8.
 
-### Avertissement éditorial (optionnel)
-Si le thème comporte des éléments historiquement délicats, inexacts ou problématiques (ex : événement qui n'a jamais eu lieu présenté comme fait), signale-le ici en 2-3 phrases. Sinon, écris "Aucun avertissement".
+For each landmark provide:
+- **Precise name** (specific enough that Google Maps will find it unambiguously, e.g. "Cathédrale Saint-Florin de Vaduz" not just "the cathedral")
+- **Why it's relevant** to the scenario (1 sentence)
+- **Source** (Wikipedia, tourist board, OSM, news, archive — whatever you find, cite it)
 
-### Intro
-3 à 5 phrases qui posent le thème, accrochent le joueur, l'invitent à enquêter. Ton narratif immersif, deuxième personne.
+## Format
+
+Respond in clean markdown with these exact section headers :
+
+### Editorial Warning
+2-3 sentences if the scenario contains historically problematic or inaccurate angles (e.g. fictional events presented as historical fact). Write "None" if no warning.
 
 ### Landmarks
-Liste numérotée de **7 à 9 landmarks** dans l'**ORDRE OPTIMAL de visite** (parcours fluide à pied, pas de zigzag, montée narrative). Pour chaque landmark :
+Numbered list. For each landmark :
 
 \`\`\`
-N. **{Nom précis du lieu, retrouvable sur Google Maps}**
-- **Titre narratif** : {titre court qui relie au thème}
-- **Énigme** : {2-3 phrases. L'énigme doit être observable depuis l'extérieur — chiffre/date inscrit, nom gravé, nombre d'éléments comptables (colonnes, fenêtres, statues...). PAS de question abstraite.}
-- **Réponse** : {mot ou nombre, simple, validable par saisie}
-- **Indice** : {1 phrase pour débloquer si nécessaire}
-- **Anecdote** : {1-2 phrases d'anecdote historique RÉELLE liée au lieu + thème}
+N. **Precise landmark name**
+- Relevance: <1 sentence>
+- Source: <citation>
 \`\`\`
 
-Sois précis sur le nom du lieu (assez précis pour Google Maps : "Cathédrale Saint-Florin de Vaduz" et pas juste "la cathédrale"). N'invente AUCUNE coordonnée GPS, je les vérifierai séparément.
+### Suggested Order
+Just list the names in walking order, comma-separated.
 
-### Épilogue
-3 à 5 phrases qui clôturent l'enquête, donnent la résolution du mystère, laissent une touche finale émotionnelle.
-
-### Question finale
-Une question synthèse qui requiert d'avoir compris l'ensemble de l'enquête. Format : énigme finale + réponse + explication.
-- **Énigme finale** : ...
-- **Réponse finale** : ...
-- **Explication** : ...
-
----
-
-Commence directement par "### Avertissement éditorial". Ne mets PAS de préambule conversationnel.`;
+Start directly with "### Editorial Warning". No preamble.`;
 }
 
-/** Appel Perplexity sonar (model standard, pas deep research). */
-export async function callPerplexity(prompt: string): Promise<{ content: string; citations: string[] }> {
+export async function callPerplexity(prompt: string): Promise<{
+  content: string;
+  citations: string[];
+}> {
   const apiKey = process.env.PERPLEXITY_API_KEY;
   if (!apiKey) throw new Error("PERPLEXITY_API_KEY missing");
 
@@ -111,143 +86,146 @@ export async function callPerplexity(prompt: string): Promise<{ content: string;
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: "sonar",
+      model: MODEL,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.2,
-      max_tokens: 4000,
+      temperature: 0.1,
+      max_tokens: 6000,
     }),
   });
 
   const json = await res.json();
   if (!res.ok) {
-    throw new Error(`Perplexity error ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
-  }
-
-  const content: string = json.choices?.[0]?.message?.content ?? "";
-  const citations: string[] = json.citations ?? [];
-  return { content, citations };
-}
-
-/**
- * Parse le markdown structuré renvoyé par Perplexity.
- *
- * Tolérant : si certains champs manquent pour un landmark, on garde quand
- * même le landmark avec les champs vides — la phase Structure (Claude)
- * pourra reformuler. Si moins de 5 landmarks → throw (insuffisant).
- */
-export function parseDiscoveryMarkdown(markdown: string): Omit<DiscoveryResult, "citations" | "rawMarkdown"> {
-  // Sections — split sur les titres niveau 3 (###)
-  const sections = splitSections(markdown);
-
-  const warning =
-    sections["avertissement éditorial"]?.trim() ||
-    sections["avertissement"]?.trim() ||
-    undefined;
-  const warningClean = warning && !/aucun/i.test(warning) ? warning : undefined;
-
-  const intro = sections["intro"]?.trim() ?? "";
-  const epilogue = sections["épilogue"]?.trim() ?? sections["epilogue"]?.trim() ?? "";
-
-  const landmarksRaw = sections["landmarks"] ?? sections["lieux"] ?? "";
-  const landmarks = parseLandmarkBlock(landmarksRaw);
-
-  if (landmarks.length < 5) {
-    throw new Error(
-      `Discovery returned only ${landmarks.length} landmarks (need ≥5). Raw markdown preview: ${markdown.slice(0, 500)}`,
-    );
+    throw new Error(`Perplexity ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
   }
 
   return {
-    landmarks,
-    intro,
-    epilogue,
-    warning: warningClean,
+    content: json.choices?.[0]?.message?.content ?? "",
+    citations: json.citations ?? [],
   };
 }
 
-/** Découpe le markdown en sections par titre niveau 3 (###). */
-function splitSections(markdown: string): Record<string, string> {
-  const sections: Record<string, string> = {};
-  const lines = markdown.split("\n");
-  let currentKey: string | null = null;
-  let currentLines: string[] = [];
+/**
+ * Parse le markdown structuré de Perplexity.
+ * Tolérant aux variantes (## au lieu de ###, sections manquantes, etc).
+ */
+export function parseDiscoveryMarkdown(
+  markdown: string,
+): {
+  landmarks: Array<{ order: number; name: string; relevance: string; source?: string }>;
+  warning?: string;
+  suggestedOrder: string[];
+} {
+  // Sections
+  const warningMatch = markdown.match(
+    /#{2,4}\s*Editorial\s+Warning[^\n]*\n([\s\S]*?)(?=\n#{2,4}|$)/i,
+  );
+  const landmarksMatch = markdown.match(
+    /#{2,4}\s*Landmarks[^\n]*\n([\s\S]*?)(?=\n#{2,4}|$)/i,
+  );
+  const orderMatch = markdown.match(
+    /#{2,4}\s*Suggested\s+Order[^\n]*\n([\s\S]*?)(?=\n#{2,4}|$)/i,
+  );
 
-  const flush = () => {
-    if (currentKey) {
-      sections[currentKey] = currentLines.join("\n");
+  const warning = warningMatch?.[1]?.trim();
+  const cleanWarning =
+    warning && !/^none|^aucun|^no\s+/i.test(warning) ? warning : undefined;
+
+  const suggestedOrder = orderMatch?.[1]
+    ? orderMatch[1]
+        .split(/[,\n]/)
+        .map((s) => s.replace(/^\s*\d+\.\s*/, "").replace(/^\*+|\*+$/g, "").trim())
+        .filter((s) => s.length > 2)
+    : [];
+
+  const landmarks: Array<{ order: number; name: string; relevance: string; source?: string }> = [];
+  if (landmarksMatch) {
+    const body = landmarksMatch[1];
+    // Match each numbered item with its details
+    const headerRegex = /(?:^|\n)\s*(\d{1,2})\.\s+\*\*([^*\n]+)\*\*/g;
+    const positions: Array<{ index: number; order: number; name: string }> = [];
+    let m: RegExpExecArray | null;
+    while ((m = headerRegex.exec(body)) !== null) {
+      positions.push({
+        index: m.index + m[0].length,
+        order: parseInt(m[1], 10),
+        name: m[2].trim().replace(/^["'«]+|["'»]+$/g, ""),
+      });
     }
-  };
-
-  for (const line of lines) {
-    const headingMatch = line.match(/^#{2,4}\s+(.+?)\s*$/);
-    if (headingMatch) {
-      flush();
-      currentKey = headingMatch[1].toLowerCase().trim();
-      currentLines = [];
-    } else {
-      currentLines.push(line);
+    for (let i = 0; i < positions.length; i++) {
+      const start = positions[i].index;
+      const end =
+        i + 1 < positions.length
+          ? positions[i + 1].index - positions[i + 1].order.toString().length - 6
+          : body.length;
+      const subBody = body.slice(start, end);
+      const relevance = extractField(subBody, ["relevance", "pertinence", "why"]) ?? "";
+      const source = extractField(subBody, ["source", "citation"]);
+      landmarks.push({
+        order: positions[i].order,
+        name: positions[i].name,
+        relevance,
+        source,
+      });
     }
   }
-  flush();
-  return sections;
+
+  return { landmarks, warning: cleanWarning, suggestedOrder };
 }
 
-/** Parse le bloc landmarks : split par "N. **Name**" puis extrait champs. */
-function parseLandmarkBlock(text: string): DiscoveredLandmark[] {
-  const landmarks: DiscoveredLandmark[] = [];
-
-  // Trouve toutes les positions de "N. **..."
-  const headerRegex = /(?:^|\n)\s*(\d{1,2})\.\s+\*\*([^*\n]+)\*\*\s*\n/g;
-  const matches: Array<{ index: number; order: number; name: string }> = [];
-  let m: RegExpExecArray | null;
-  while ((m = headerRegex.exec(text)) !== null) {
-    matches.push({
-      index: m.index + m[0].length,
-      order: parseInt(m[1], 10),
-      name: m[2].trim().replace(/^["'«]+|["'»]+$/g, ""),
-    });
-  }
-
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].index;
-    const end = i + 1 < matches.length ? matches[i + 1].index - matches[i + 1].order.toString().length - 6 : text.length;
-    const body = text.slice(start, end);
-
-    landmarks.push({
-      order: matches[i].order,
-      name: matches[i].name,
-      narrativeTitle: extractField(body, ["titre narratif", "titre"]),
-      riddle: extractField(body, ["énigme"]) ?? "",
-      answer: extractField(body, ["réponse"]) ?? "",
-      hint: extractField(body, ["indice"]) ?? "",
-      anecdote: extractField(body, ["anecdote"]) ?? "",
-    });
-  }
-
-  return landmarks;
-}
-
-/** Cherche un champ "- **label** : ..." (ou variants) dans un body. */
 function extractField(body: string, labels: string[]): string | undefined {
   for (const label of labels) {
-    const re = new RegExp(`[-*]\\s*\\*\\*${escapeRegex(label)}\\*\\*\\s*[:\\s]+([\\s\\S]*?)(?=\\n\\s*[-*]\\s*\\*\\*|\\n\\s*\\d+\\.\\s+\\*\\*|\\n#|$)`, "i");
-    const m = body.match(re);
-    if (m) return m[1].trim();
+    const re = new RegExp(
+      `[-*]\\s*\\*\\*${label}\\*\\*\\s*[:\\s]+([\\s\\S]*?)(?=\\n\\s*[-*]\\s*\\*\\*|\\n\\s*\\d+\\.\\s+\\*\\*|\\n#|$)`,
+      "i",
+    );
+    const mm = body.match(re);
+    if (mm) return mm[1].trim();
   }
   return undefined;
 }
 
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-/** Orchestrateur de la phase Discovery. */
 export async function runDiscovery(input: PipelineInput): Promise<DiscoveryResult> {
+  if (!input.startPoint) {
+    throw new Error("startPoint missing — v3 pipeline requires explicit start point");
+  }
+
+  console.log(`[v3 discover] Calling Perplexity sonar-deep-research for ${input.city}...`);
+  const t0 = Date.now();
   const prompt = buildDiscoveryPrompt(input);
   const { content, citations } = await callPerplexity(prompt);
+  const dur = Math.round((Date.now() - t0) / 1000);
+  console.log(
+    `[v3 discover] Perplexity done in ${dur}s — ${content.length} chars, ${citations.length} citations`,
+  );
+
   const parsed = parseDiscoveryMarkdown(content);
+  console.log(
+    `[v3 discover] Parsed ${parsed.landmarks.length} landmarks, warning=${parsed.warning ? "YES" : "no"}`,
+  );
+
+  if (parsed.landmarks.length < 5) {
+    throw new Error(
+      `Discovery returned only ${parsed.landmarks.length} landmarks (need ≥5 to start). Preview: ${content.slice(0, 500)}`,
+    );
+  }
+
+  // Adapt to DiscoveredLandmark shape (riddle/answer/anecdote filled later by select.ts)
+  const landmarks: DiscoveredLandmark[] = parsed.landmarks.map((l) => ({
+    order: l.order,
+    name: l.name,
+    narrativeTitle: l.relevance,
+    riddle: "",
+    answer: "",
+    hint: "",
+    anecdote: l.relevance, // temp, replaced by select.ts
+    sources: l.source ? [l.source] : [],
+  }));
+
   return {
-    ...parsed,
+    landmarks,
+    intro: "", // generated by select.ts in EN
+    epilogue: "",
+    warning: parsed.warning,
     citations,
     rawMarkdown: content,
   };

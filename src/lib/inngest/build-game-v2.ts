@@ -105,13 +105,10 @@ export const buildGameV2 = inngest.createFunction(
         callbackSecret: data.callbackSecret,
         originalPayload: data.originalPayload ?? {},
       };
-      // (2026-05-25, mandat user) On NE génère AUCUNE traduction ni audio
-      // dans d'autres langues que celle du buyer. Si un autre client achète
-      // le même slug dans une autre langue plus tard, la traduction + audio
-      // se généreront à ce moment-là (lazy, on-demand).
-      // → translateTo=[] : pipeline ne touche que la langue source du buyer
+      // (2026-05-25, v3) L'orchestrator gère lui-même la traduction
+      // EN → langue client. Aucune autre langue n'est générée
+      // (mandat user : pas d'audio spéculatif).
       return await runPipelineV2(input, gameId, {
-        translateTo: [],
         skipAudio: false,
       });
     });
