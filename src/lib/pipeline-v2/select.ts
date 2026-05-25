@@ -1,163 +1,199 @@
 /**
- * SELECT v3 — Claude trie le pool géocodé + écrit le jeu en EN.
+ * SELECT v4 — 2e appel Perplexity (= passe de sélection).
  *
- * Le pool reçu vient de geocode.ts (déjà filtré sur similarity / radius /
- * dedup). Claude reçoit le pool + le scénario buyer + l'avertissement
- * éditorial éventuel. Il :
- *   - choisit 7-9 landmarks les plus pertinents
- *   - les ordonne en parcours fluide (pas de zigzag)
- *   - écrit riddle/answer/anecdote/AR dialogue/landmark history en EN
- *   - compose intro + epilogue + énigme finale
+ * Mandat user 2026-05-25 :
+ *   "on va remettre en sortie de geocode perplexity qui choisit les meilleurs
+ *    landmarks pour ce jeu 8 mini 5 attention le 5 est cas extrême"
  *
- * Output : StructuredGame avec sourceLanguage="en". Traduction en lang
- * client se fait à l'étape suivante (translate.ts).
+ * Reçoit :
+ *   - Le scénario complet (theme, themeDescription, productDescription, narrative)
+ *   - Le pool géocodé (sortie de geocode.ts) : nom Perplexity + nom Google +
+ *     coords GPS + distance du startPoint
+ *
+ * Perplexity (sonar-deep-research) sélectionne les 8 meilleurs landmarks
+ * pour ce scénario, en respectant le rayon, et propose un ordre de parcours.
+ *
+ * Si Perplexity en renvoie < 5 → on remonte une erreur (alerte email dans
+ * l'orchestrator).
  */
 
-import Anthropic from "@anthropic-ai/sdk";
-import type {
-  DiscoveryResult,
-  GeocodeResult,
-  PipelineInput,
-  StructuredGame,
-} from "./types";
+import type { GeocodeResult, GeocodedLandmark, PipelineInput } from "./types";
+import { computeRadiusKm } from "./discover";
 
-const MODEL = "claude-sonnet-4-5-20250929";
+const PERPLEXITY_ENDPOINT = "https://api.perplexity.ai/chat/completions";
+const MODEL = "sonar-deep-research";
 
-export async function runSelect(
+export interface SelectionResult {
+  /** Les 5-8 landmarks sélectionnés par Perplexity, dans l'ordre de visite. */
+  selected: GeocodedLandmark[];
+  /** Markdown brut de la réponse Perplexity pour audit. */
+  rawMarkdown: string;
+  /** Citations Perplexity. */
+  citations: string[];
+}
+
+function buildSelectionPrompt(
   input: PipelineInput,
-  discovery: DiscoveryResult,
   geocode: GeocodeResult,
-): Promise<StructuredGame> {
-  if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY missing");
-  const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+): string {
+  const radiusKm = computeRadiusKm(input);
 
-  const poolDesc = geocode.geocoded
+  const pool = geocode.geocoded
     .map(
       (g, i) =>
-        `${i + 1}. "${g.name}" → Google: "${g.googleName}", GPS ${g.lat}, ${g.lon}, ${g.distanceFromStartM}m from start.${
-          g.narrativeTitle ? ` Relevance: ${g.narrativeTitle.slice(0, 200)}.` : ""
-        }`,
+        `${i + 1}. "${g.name}"
+   - Google name: "${g.googleName}"
+   - GPS: ${g.lat}, ${g.lon}
+   - Distance from start: ${g.distanceFromStartM} m
+   - Why it fits (research note): ${g.narrativeTitle ?? "(none)"}`,
     )
-    .join("\n");
+    .join("\n\n");
 
-  const warningBlock = discovery.warning
-    ? `\n**Editorial warning from research phase**: ${discovery.warning}\n`
-    : "";
-
-  const prompt = `You are designing an outdoor escape game in ${input.city}${
+  return `I'm finalizing the landmark selection for an outdoor escape game in ${input.city}${
     input.country ? `, ${input.country}` : ""
   }.
 
-## Scenario (from buyer, English-native)
+## Scenario (from buyer)
 
 **Theme**: ${input.theme}
 **Brief**: ${input.themeDescription ?? "(none)"}
 **Role-play**: ${input.productDescription ?? "(none)"}
 **Narrative**: ${input.narrative ?? "(none)"}
-${warningBlock}
+**Transport mode**: ${input.transportMode ?? "walking"}
+**Start point**: ${input.startPoint!.lat}, ${input.startPoint!.lon}
+**Search radius**: ${radiusKm} km
 
-## Verified landmark pool (already filtered by Google Places — all within 1.75 km of start, all real, no duplicates)
+## Geocoded pool (${geocode.geocoded.length} landmarks)
 
-${poolDesc}
+Each landmark below has been geocoded by Google Maps. The GPS coordinates are real and verified. Your job is to PICK the best 8 landmarks for the scenario and ORDER them in the most logical visit sequence.
+
+${pool}
 
 ## Your task
 
-1. **Pick 7 to 9 landmarks** from the pool above. Maximum thematic relevance.
-2. **Order them** in the most logical WALKING sequence — avoid zigzag, prefer a smooth arc (e.g. start central → loop outward → climax at the most dramatic spot).
-3. **Write all content in ENGLISH** (translation to user's language happens later).
-4. **For each stop**: a title with format "Landmark name — Narrative subtitle", a riddle observable from outside, a simple answer, a hint, an anecdote with real history, an AR character voice line, a treasure reward narrative.
-5. **Compose game-wide content**: title, description, intro narrative, epilogue, final riddle requiring whole-game knowledge.
-6. **Editorial honesty**: if the buyer's brief contains a historically dubious claim (per the warning above), present the game as "inspired by local memory" rather than reconstruction of a non-event. Stay anchored in verifiable facts.
+1. **Select 8 landmarks** (5 minimum if you really can't find 8). Pick based on :
+   - Strongest thematic fit with the scenario
+   - Geographic coherence (a logical walking/driving route, no zigzag)
+   - Variety (mix iconic + lesser-known if appropriate)
+   - Realistic distance for the transport mode (${input.transportMode ?? "walking"})
 
-## Schema — respond with this exact JSON
+2. **Order them** in the visit sequence (start near the start point, build narrative momentum, climax near the end).
 
-\`\`\`json
-{
-  "meta": {
-    "title": "string — English game title",
-    "description": "string — 1-2 sentences for product page",
-    "intro": "string — 3-5 sentences immersive intro, second person",
-    "epilogue": "string — 3-5 sentences closing",
-    "epilogueTitle": "string — short title",
-    "finalRiddleText": "string — synthesis riddle requiring whole game",
-    "finalAnswer": "string — simple answer (UPPERCASE word OR number)",
-    "finalAnswerExplanation": "string — 2-3 sentences"
-  },
-  "stops": [
-    {
-      "step_order": 1,
-      "title": "Landmark Name — Narrative Subtitle",
-      "landmarkName": "Exact landmark name from pool above",
-      "latitude": <number from pool>,
-      "longitude": <number from pool>,
-      "placeId": "<placeId from pool>",
-      "riddle": "Observable riddle 2-3 sentences (count, date, name on facade...)",
-      "answer": "UPPERCASE word or number",
-      "hints": [{"text": "Hint if stuck", "order": 1}],
-      "anecdote": "Real historical anecdote 2-3 sentences",
-      "arCharacterType": "guide_male | guide_female | scholar | monk | soldier",
-      "arCharacterDialogue": "Immersive 1-2 sentences in the archetype's voice",
-      "arFacadeText": "Same as answer, UPPERCASE",
-      "arTreasureReward": "Symbolic virtual reward description",
-      "landmarkHistory": {"en": "2-3 sentences about the landmark history"},
-      "validationRadiusMeters": 30,
-      "bonusTimeSeconds": 30
-    }
-  ]
-}
+3. **Reject** any candidate from the pool that doesn't fit the scenario, has wrong coordinates (Google misnamed), or duplicates another.
+
+## Output format (strict)
+
+Respond with exactly this markdown structure :
+
+### Selected Landmarks (in visit order)
+
+\`\`\`
+1. **Exact landmark name from the pool**
+2. **Exact landmark name from the pool**
+...
 \`\`\`
 
-## Strict rules
+### Rationale
+One paragraph explaining the selection logic.
 
-- ALL content in English
-- \`landmarkName\` MUST be one of the names from the pool above (verbatim)
-- \`latitude\`, \`longitude\`, \`placeId\` MUST be from the pool (no invention)
-- \`answer\` = \`arFacadeText\` always (same string)
-- Latin answers acceptable (VERITAS, REFUGIUM, LIBERTAS...) for atmosphere
-- 7-9 stops, no more no less
+Use the EXACT names from the pool above (verbatim, copy-paste). No extras, no inventions. If you select fewer than 5, explain why in the rationale.`;
+}
 
-Respond with JSON only, no preamble, no markdown wrapper.`;
+export async function callPerplexity(prompt: string): Promise<{
+  content: string;
+  citations: string[];
+}> {
+  const apiKey = process.env.PERPLEXITY_API_KEY;
+  if (!apiKey) throw new Error("PERPLEXITY_API_KEY missing");
 
-  console.log(`[v3 select] Calling Claude Sonnet 4.5 on pool of ${geocode.geocoded.length} landmarks...`);
-  const t0 = Date.now();
-  const response = await client.messages.create({
-    model: MODEL,
-    max_tokens: 8000,
-    temperature: 0.3,
-    messages: [{ role: "user", content: prompt }],
+  const res = await fetch(PERPLEXITY_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: MODEL,
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.1,
+      max_tokens: 3000,
+    }),
   });
-  const dur = Math.round((Date.now() - t0) / 1000);
 
-  const text = response.content[0].type === "text" ? response.content[0].text : "";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error(`Select response not parseable as JSON. Preview: ${text.slice(0, 300)}`);
+  const json = await res.json();
+  if (!res.ok) {
+    throw new Error(`Perplexity ${res.status}: ${JSON.stringify(json).slice(0, 300)}`);
   }
 
-  let parsed: StructuredGame;
-  try {
-    parsed = JSON.parse(jsonMatch[0]);
-  } catch (e) {
-    throw new Error(
-      `Select JSON parse failed: ${e instanceof Error ? e.message : "?"}. Preview: ${jsonMatch[0].slice(0, 300)}`,
+  return {
+    content: json.choices?.[0]?.message?.content ?? "",
+    citations: json.citations ?? [],
+  };
+}
+
+function parseSelectionMarkdown(
+  markdown: string,
+  pool: GeocodedLandmark[],
+): GeocodedLandmark[] {
+  const selectedMatch = markdown.match(
+    /#{2,4}\s*Selected\s+Landmarks[^\n]*\n([\s\S]*?)(?=\n#{2,4}|$)/i,
+  );
+  if (!selectedMatch) return [];
+
+  const body = selectedMatch[1];
+  // Match "N. **Name**" lines
+  const headerRegex = /(?:^|\n)\s*(\d{1,2})\.\s+\*\*([^*\n]+)\*\*/g;
+  const names: Array<{ order: number; name: string }> = [];
+  let m: RegExpExecArray | null;
+  while ((m = headerRegex.exec(body)) !== null) {
+    names.push({
+      order: parseInt(m[1], 10),
+      name: m[2].trim().replace(/^["'«]+|["'»]+$/g, ""),
+    });
+  }
+
+  // Match each selected name back to the pool (by exact name OR Google name)
+  const result: GeocodedLandmark[] = [];
+  for (const sel of names) {
+    const hit = pool.find(
+      (p) =>
+        p.name === sel.name ||
+        p.googleName === sel.name ||
+        p.name.toLowerCase() === sel.name.toLowerCase() ||
+        p.googleName.toLowerCase() === sel.name.toLowerCase(),
     );
+    if (hit) {
+      // Reassign step_order based on Perplexity's chosen sequence
+      result.push({ ...hit, order: sel.order });
+    } else {
+      console.warn(`[select] Selected name "${sel.name}" not found in pool, skipping`);
+    }
   }
 
-  if (!Array.isArray(parsed.stops) || parsed.stops.length < 7) {
-    throw new Error(`Select returned only ${parsed.stops?.length ?? 0} stops (need ≥7)`);
+  return result;
+}
+
+export async function runSelect(
+  input: PipelineInput,
+  geocode: GeocodeResult,
+): Promise<SelectionResult> {
+  if (geocode.geocoded.length === 0) {
+    throw new Error("No geocoded landmarks to select from");
   }
 
-  parsed.sourceLanguage = "en";
+  console.log(`[select] Perplexity passe 2 — sélection sur pool de ${geocode.geocoded.length} géocodés`);
+  const t0 = Date.now();
+  const prompt = buildSelectionPrompt(input, geocode);
+  const { content, citations } = await callPerplexity(prompt);
+  const dur = Math.round((Date.now() - t0) / 1000);
+  console.log(`[select] Perplexity passe 2 done in ${dur}s`);
 
-  // Defaults if Claude forgot fields
-  parsed.stops = parsed.stops.map((s) => ({
-    ...s,
-    arCharacterType: s.arCharacterType || "guide_male",
-    validationRadiusMeters: s.validationRadiusMeters ?? 30,
-    bonusTimeSeconds: s.bonusTimeSeconds ?? 30,
-    landmarkHistory: s.landmarkHistory ?? { en: "" },
-  }));
+  const selected = parseSelectionMarkdown(content, geocode.geocoded);
+  console.log(`[select] ${selected.length} landmarks sélectionnés par Perplexity`);
 
-  console.log(`[v3 select] Claude done in ${dur}s — ${parsed.stops.length} stops selected`);
-  return parsed;
+  return {
+    selected,
+    rawMarkdown: content,
+    citations,
+  };
 }
