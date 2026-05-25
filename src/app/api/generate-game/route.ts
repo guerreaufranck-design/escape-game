@@ -490,23 +490,22 @@ export async function POST(request: NextRequest) {
               typeof body.productDescription === "string"
                 ? body.productDescription
                 : undefined,
-            // (2026-05-25) Feature flag pipeline v2 — Perplexity-first FR,
+            // (2026-05-25) Pipeline V2 par DÉFAUT (Perplexity-first FR,
             // respect buyer payload, Google Places anti-bias, Quality Gate
-            // + needs_review humain in loop.
-            // Source de vérité de l'activation v2 (par priorité décroissante) :
-            //   1. body.pipelineVersion === "v2" (override par appel)
-            //   2. env PIPELINE_VERSION === "v2" (bascule globale)
-            //   3. sinon v1 (legacy)
+            // + needs_review humain in loop).
+            //
+            // Override v1 possible :
+            //   - body.pipelineVersion === "v1" (override par appel)
+            //   - env PIPELINE_VERSION === "v1" (bascule globale revert)
             pipelineVersion:
-              body.pipelineVersion === "v2"
-                ? "v2"
-                : process.env.PIPELINE_VERSION === "v2"
-                  ? "v2"
-                  : "v1",
+              body.pipelineVersion === "v1" || process.env.PIPELINE_VERSION === "v1"
+                ? "v1"
+                : "v2",
           },
         });
+        const pv = body.pipelineVersion === "v1" || process.env.PIPELINE_VERSION === "v1" ? "v1" : "v2";
         console.log(
-          `[GenerateGame] ASYNC mode: emitted game/build.requested for slug=${template.slug} pipelineVersion=${body.pipelineVersion === "v2" || process.env.PIPELINE_VERSION === "v2" ? "v2" : "v1"}. Returning 200 queued.`,
+          `[GenerateGame] ASYNC mode: emitted game/build.requested for slug=${template.slug} pipelineVersion=${pv}. Returning 200 queued.`,
         );
         return NextResponse.json(
           {

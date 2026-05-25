@@ -86,14 +86,13 @@ export const buildGameDurable = inngest.createFunction(
   async ({ event, step, logger }) => {
     const data = event.data;
 
-    // Guard v1 : si le payload demande explicitement la v2 (ou env globale),
-    // on skip — buildGameV2 prend le relais. Évite double processing du même
-    // event.
-    const wantsV2 = (data as { pipelineVersion?: string }).pipelineVersion === "v2"
-      || process.env.PIPELINE_VERSION === "v2";
-    if (wantsV2) {
-      logger.info(`[build-game v1] SKIP — pipelineVersion=v2, déléguant à buildGameV2`);
-      return { skipped: true, reason: "delegated_to_v2" };
+    // Guard v1 (2026-05-25) : V2 est désormais le default. v1 ne tourne
+    // QUE si explicitement demandée (body.pipelineVersion=v1 OU env=v1).
+    const wantsV1 = (data as { pipelineVersion?: string }).pipelineVersion === "v1"
+      || process.env.PIPELINE_VERSION === "v1";
+    if (!wantsV1) {
+      logger.info(`[build-game v1] SKIP — V2 est désormais default, déléguant à buildGameV2`);
+      return { skipped: true, reason: "v2_is_default" };
     }
 
     logger.info(

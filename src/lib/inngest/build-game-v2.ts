@@ -39,13 +39,13 @@ export const buildGameV2 = inngest.createFunction(
     const data = event.data;
     logger.info(`[v2] start slug=${data.slug} city=${data.city} lang=${data.language ?? "fr"}`);
 
-    // Garde-fou : ne run que si le payload demande explicitement v2 (feature flag)
-    // ou si on a configuré une bascule globale.
-    const flagV2 = (event.data as { pipelineVersion?: string }).pipelineVersion === "v2"
-      || process.env.PIPELINE_VERSION === "v2";
-    if (!flagV2) {
-      logger.info(`[v2] SKIP — pipelineVersion!=v2, déléguant à buildGameDurable v1`);
-      return { skipped: true, reason: "not_v2" };
+    // Guard v2 (2026-05-25) : V2 est désormais default. Skip UNIQUEMENT
+    // si on demande v1 explicitement (legacy escape hatch).
+    const wantsV1 = (event.data as { pipelineVersion?: string }).pipelineVersion === "v1"
+      || process.env.PIPELINE_VERSION === "v1";
+    if (wantsV1) {
+      logger.info(`[v2] SKIP — pipelineVersion=v1 demandé explicitement`);
+      return { skipped: true, reason: "v1_requested" };
     }
 
     const supabase = createAdminClient();
