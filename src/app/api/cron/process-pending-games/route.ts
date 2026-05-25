@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
     const cooldownCutoff = new Date(Date.now() - 15 * 60 * 1000).toISOString();
     const { data: stuckGames, error } = await supabase
       .from("games")
-      .select("id, slug, city, title, transport_mode, created_at, last_finalize_at")
+      .select("id, slug, city, title, transport_mode, created_at, last_finalize_at, start_point_source")
       .eq("is_published", false)
       // CRITICAL : skip games awaiting human review. They're not "stuck",
       // they're correctly flagged by validator and waiting for operator
@@ -82,6 +82,10 @@ export async function GET(request: NextRequest) {
       // prepareGamePackage uselessly. Observed 2026-05-18 on the Lille
       // test game : 396 telemetry rows in 3h, infinite loop.
       .eq("needs_review", false)
+      // CRITICAL 2026-05-25 : skip games managed by pipeline v5 (build-game-v2
+      // Inngest function). Those games are NOT "stuck" — they're mid-pipeline
+      // with their own retry/halt logic. The cron must not touch them.
+      .neq("start_point_source", "pipeline_v2")
       .lt("created_at", cutoff)
       // Cooldown : last_finalize_at NULL OK (jamais tenté) ou < cooldownCutoff
       .or(`last_finalize_at.is.null,last_finalize_at.lt.${cooldownCutoff}`)

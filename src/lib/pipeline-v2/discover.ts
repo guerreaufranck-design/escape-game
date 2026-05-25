@@ -1,116 +1,109 @@
 /**
- * DISCOVERY v4 — Perplexity sonar-deep-research, MAXIMUM coverage.
+ * DISCOVER v5 — Perplexity sonar standard, prompt validé par l'opérateur.
  *
- * Mandat user 2026-05-25 :
- *   - "j'ai dit le maximum" — pas 10-30, le MAXIMUM
- *   - Pas de pré-sélection à cette étape
- *   - Pas de filtre côté code
- *   - Contrainte rayon 1.75 km dans le prompt (diamètre 3.5 km imposé)
+ * Philosophie :
+ *   - City-tour FIRST : on cherche les richesses culturelles/historiques/
+ *     touristiques de la ville. Le thème est une couche narrative en
+ *     surcouche.
+ *   - Ce que cherche un touriste dans un Lonely Planet / Le Routard / Michelin
+ *   - EXCLURE : mairie, écoles, postes, gares, hôpitaux, commerces,
+ *     hôtels, parcs génériques, bâtiments modernes sans statut
+ *   - INCLURE : monuments historiques, cathédrales, châteaux, musées,
+ *     places iconiques, ponts célèbres, mémoriaux significatifs,
+ *     UNESCO, monuments classés
  *
- * Perplexity sort TOUT ce qu'il trouve. Google geocode ensuite (sans
- * filtre). Perplexity (passe 2) sélectionne les 8 meilleurs en fonction
- * du scénario.
+ * Modèle : sonar (standard, rapide ~5-10s). Si hallucinations fréquentes,
+ * passer à sonar-deep-research via CONFIG.PERPLEXITY_DISCOVER_MODEL.
  */
 
+import { CONFIG } from "./config";
 import type { DiscoveredLandmark, DiscoveryResult, PipelineInput } from "./types";
 
 const PERPLEXITY_ENDPOINT = "https://api.perplexity.ai/chat/completions";
-const MODEL = "sonar-deep-research";
-
-/** Diamètre walking imposé par le mandat user. */
-export const WALKING_DIAMETER_KM = 3.5;
-
-/**
- * Calcule le rayon de recherche en km en fonction du mode de transport
- * et du radius envoyé par OddballTrip.
- *
- *   - walking          → 1.75 km (diamètre 3.5 km, mandat user 2026-05-25)
- *   - mixed/driving    → input.radiusKm si présent (ex: roadtrip Étretat 60 km)
- *                        sinon défaut 15 km (= diamètre 30 km)
- */
-export function computeRadiusKm(input: PipelineInput): number {
-  const mode = input.transportMode ?? "walking";
-  if (mode === "walking") {
-    return WALKING_DIAMETER_KM / 2;
-  }
-  // Mixed / driving — roadtrip : on respecte ce qu'OddballTrip a envoyé
-  if (typeof input.radiusKm === "number" && input.radiusKm > 0) {
-    return input.radiusKm;
-  }
-  return 15; // défaut roadtrip si payload silencieux
-}
 
 export function buildDiscoveryPrompt(input: PipelineInput): string {
-  if (!input.startPoint) {
-    throw new Error("startPoint is required for discovery");
-  }
-
   const { lat, lon } = input.startPoint;
-  const radiusKm = computeRadiusKm(input);
-  const mode = input.transportMode ?? "walking";
+  const modeDesc = {
+    walking: "walking",
+    mixed: "mixed (car + walking)",
+    driving: "driving",
+  }[input.transportMode];
 
-  return `I'm designing an outdoor experience in ${input.city}${
+  return `I'm designing an outdoor escape game / city tour in ${input.city}${
     input.country ? `, ${input.country}` : ""
-  } — a CITY-TOUR played with a narrative theme layered on top.
+  }.
 
-**Theme (narrative overlay)**: ${input.theme}
-${input.themeDescription ? `**Brief**: ${input.themeDescription}` : ""}
-${input.productDescription ? `**Role-play context**: ${input.productDescription}` : ""}
-${input.narrative ? `**Narrative direction**: ${input.narrative}` : ""}
+Audience : tourists who DO NOT KNOW this city. No insider knowledge required.
 
-**Start point GPS**: ${lat}, ${lon}
-**Transport mode**: ${mode}
-**Constraint**: every landmark must be within a ${radiusKm} km radius of the start point (diameter ${radiusKm * 2} km).
+**Scenario (narrative overlay)**:
+- Theme: ${input.theme}
+- Brief: ${input.themeDescription ?? "(none)"}
+- Role-play: ${input.productDescription ?? "(none)"}
+- Narrative direction: ${input.narrative ?? "(none)"}
 
-## CRITICAL — what to include
+**Geographic constraints**:
+- Start point: ${lat}, ${lon}${input.startPointText ? ` (${input.startPointText})` : ""}
+- Transport mode: ${modeDesc}
+- Search radius: ${input.radiusKm} km around the start point
+- Estimated duration: ${input.estimatedDurationMin} minutes total
 
-This product is FIRST a city tour, SECOND a thematic game. The customer pays to discover the city's MAJOR heritage while playing — the theme is a narrative thread woven on top.
+**Your task**
 
-**List the MAJOR landmarks of the city within the radius**, even if they have no direct link to the theme or scenario.
+This is FIRST a city-tour, SECOND a thematic game. The customer pays to discover the CULTURAL, HISTORIC AND TOURISTIC HERITAGE of the city while playing — the theme is a narrative layer on top.
 
-Include the city's **major sites only** :
-- Historic monuments and significant buildings
-- Major churches, cathedrals, abbeys
-- Castles, fortresses, ramparts
-- Famous squares, iconic bridges
-- Major museums
-- Notable viewpoints, beaches, cliffs (if cultural/touristic significance)
-- Important memorials
+List the **cultural / historic / touristic landmarks** within the radius. The good question to ask :
 
-**Exclude** : small commerce, minor curiosities, generic gardens, ordinary public buildings (post offices, schools), commemorative plaques unless famous.
+> "If a tourist with 1 day in this city pulled out a Lonely Planet / Le Routard / Michelin guide, what would the guide tell them to visit?"
 
-A great viewpoint, a famous bridge, the main cathedral — these ALL belong in the list, even if they have no direct link to the theme. Claude will weave the thematic narrative around them in a later step.
+**Include** (= what guidebooks list) :
+- Historic monuments (cathedrals, abbeys, castles, fortresses, towers, ramparts)
+- Heritage residences (princely residences, famous houses, châteaux)
+- Major museums + archaeological sites
+- Iconic squares, bridges, fountains, statues
+- Famous gardens, viewpoints
+- Beaches, cliffs, natural sites of cultural significance
+- Memorials and commemorative sites IF they mark a historically significant event (Stolpersteine, war memorials, slavery memorials, etc)
+- UNESCO sites, Monuments Historiques classés
 
-**Do NOT pre-filter on theme relevance**. The thematic selection happens in a second pass.
+**Exclude** (= what a guidebook would skip) :
+- Mairie / town hall / city hall (administrative, not heritage)
+- Schools, post offices, hospitals
+- Ordinary public buildings without cultural status
+- Shops, restaurants, hotels
+- Modern buildings without architectural significance
+- Generic parks without cultural anchor
+- Train / bus stations (unless architecturally listed)
 
-For each landmark provide:
-- **Exact name** as it appears on Google Maps / official sources
-- **Brief description** (1 sentence about what it is)
-- **Source** (Wikipedia, tourist board, OSM, news, archive — anything reliable)
+**Reachability**: respect the transport mode. Walking = walkable in the duration. Mixed/driving = car-accessible, can be farther.
 
-## Format
+For each landmark provide :
+1. **Exact canonical name** as on Google Maps (in local language : "Cathédrale Saint-Florin", not English translation)
+2. **Brief description** — 1 sentence : what is it culturally / historically
+3. **Source** — Wikipedia URL, tourist board, or Wikidata reference
 
-Respond in clean markdown with exactly these sections :
+**Format** :
 
 ### Editorial Warning
-2-3 sentences if the scenario contains historically problematic or inaccurate angles. Write "None" if no warning.
+2-3 sentences if scenario contains historically problematic / inaccurate angles. Write "None" if not.
 
 ### Landmarks
-Numbered list. For each :
 
 \`\`\`
-N. **Exact landmark name**
-- Relevance: <1 sentence>
-- Source: <citation>
+1. **Exact landmark name**
+- Description: <1 sentence cultural/historical>
+- Source: <URL>
+
+2. **Exact landmark name**
+- Description: <1 sentence>
+- Source: <URL>
+
+(...all you find, no upper limit, no theme filter...)
 \`\`\`
 
 Start directly with "### Editorial Warning". No preamble.`;
 }
 
-export async function callPerplexity(prompt: string): Promise<{
-  content: string;
-  citations: string[];
-}> {
+export async function callPerplexity(prompt: string): Promise<{ content: string; citations: string[] }> {
   const apiKey = process.env.PERPLEXITY_API_KEY;
   if (!apiKey) throw new Error("PERPLEXITY_API_KEY missing");
 
@@ -121,10 +114,10 @@ export async function callPerplexity(prompt: string): Promise<{
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: CONFIG.PERPLEXITY_DISCOVER_MODEL,
       messages: [{ role: "user", content: prompt }],
-      temperature: 0.1,
-      max_tokens: 8000,
+      temperature: CONFIG.PERPLEXITY_TEMPERATURE,
+      max_tokens: CONFIG.PERPLEXITY_MAX_TOKENS,
     }),
   });
 
@@ -140,27 +133,16 @@ export async function callPerplexity(prompt: string): Promise<{
 }
 
 export function parseDiscoveryMarkdown(markdown: string): {
-  landmarks: Array<{ order: number; name: string; relevance: string; source?: string }>;
+  landmarks: Array<{ order: number; name: string; description: string; source?: string }>;
   warning?: string;
 } {
-  const warningMatch = markdown.match(
-    /#{2,4}\s*Editorial\s+Warning[^\n]*\n([\s\S]*?)(?=\n#{2,4}|$)/i,
-  );
-  const landmarksMatch = markdown.match(
-    /#{2,4}\s*Landmarks[^\n]*\n([\s\S]*?)(?=\n#{2,4}|$)/i,
-  );
+  const warningMatch = markdown.match(/#{2,4}\s*Editorial\s+Warning[^\n]*\n([\s\S]*?)(?=\n#{2,4}|$)/i);
+  const landmarksMatch = markdown.match(/#{2,4}\s*Landmarks[^\n]*\n([\s\S]*?)(?=\n#{2,4}|$)/i);
 
   const warning = warningMatch?.[1]?.trim();
-  const cleanWarning =
-    warning && !/^none|^aucun|^no\s+/i.test(warning) ? warning : undefined;
+  const cleanWarning = warning && !/^none|^aucun|^no\s+/i.test(warning) ? warning : undefined;
 
-  const landmarks: Array<{
-    order: number;
-    name: string;
-    relevance: string;
-    source?: string;
-  }> = [];
-
+  const landmarks: Array<{ order: number; name: string; description: string; source?: string }> = [];
   if (landmarksMatch) {
     const body = landmarksMatch[1];
     const headerRegex = /(?:^|\n)\s*(\d{1,3})\.\s+\*\*([^*\n]+)\*\*/g;
@@ -180,17 +162,14 @@ export function parseDiscoveryMarkdown(markdown: string): {
           ? positions[i + 1].index - positions[i + 1].order.toString().length - 6
           : body.length;
       const subBody = body.slice(start, end);
-      const relevance = extractField(subBody, ["relevance", "pertinence", "why"]) ?? "";
-      const source = extractField(subBody, ["source", "citation"]);
       landmarks.push({
         order: positions[i].order,
         name: positions[i].name,
-        relevance,
-        source,
+        description: extractField(subBody, ["description", "relevance"]) ?? "",
+        source: extractField(subBody, ["source", "citation"]),
       });
     }
   }
-
   return { landmarks, warning: cleanWarning };
 }
 
@@ -206,36 +185,35 @@ function extractField(body: string, labels: string[]): string | undefined {
   return undefined;
 }
 
-export async function runDiscovery(input: PipelineInput): Promise<DiscoveryResult> {
-  if (!input.startPoint) {
-    throw new Error("startPoint missing — pipeline requires explicit start point");
-  }
-
-  const radiusKm = computeRadiusKm(input);
-  console.log(`[discover] Perplexity sonar-deep-research, max landmarks, rayon ${radiusKm} km (mode=${input.transportMode ?? "walking"}) autour de ${input.startPoint.lat},${input.startPoint.lon}`);
+export async function runDiscover(input: PipelineInput): Promise<DiscoveryResult> {
+  console.log(
+    `[v5 discover] Perplexity ${CONFIG.PERPLEXITY_DISCOVER_MODEL}, rayon ${input.radiusKm} km (mode=${input.transportMode}) autour de ${input.startPoint.lat},${input.startPoint.lon}`,
+  );
   const t0 = Date.now();
   const prompt = buildDiscoveryPrompt(input);
   const { content, citations } = await callPerplexity(prompt);
   const dur = Math.round((Date.now() - t0) / 1000);
-  console.log(`[discover] Perplexity done in ${dur}s, ${content.length} chars, ${citations.length} citations`);
+  console.log(`[v5 discover] Perplexity done in ${dur}s, ${content.length} chars, ${citations.length} citations`);
 
   const parsed = parseDiscoveryMarkdown(content);
-  console.log(`[discover] ${parsed.landmarks.length} landmarks bruts trouvés, warning=${parsed.warning ? "YES" : "no"}`);
+  console.log(
+    `[v5 discover] ${parsed.landmarks.length} landmarks bruts, warning=${parsed.warning ? "YES" : "no"}`,
+  );
 
-  if (parsed.landmarks.length < 5) {
+  if (parsed.landmarks.length < CONFIG.MIN_STOPS) {
     throw new Error(
-      `Discovery returned only ${parsed.landmarks.length} landmarks (need ≥5 minimum from research). Preview: ${content.slice(0, 500)}`,
+      `Discovery returned only ${parsed.landmarks.length} landmarks (need ≥${CONFIG.MIN_STOPS}). Preview: ${content.slice(0, 500)}`,
     );
   }
 
   const landmarks: DiscoveredLandmark[] = parsed.landmarks.map((l) => ({
     order: l.order,
     name: l.name,
-    narrativeTitle: l.relevance,
+    narrativeTitle: l.description,
     riddle: "",
     answer: "",
     hint: "",
-    anecdote: l.relevance,
+    anecdote: l.description,
     sources: l.source ? [l.source] : [],
   }));
 

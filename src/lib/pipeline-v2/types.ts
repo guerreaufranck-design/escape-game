@@ -24,15 +24,15 @@ export interface PipelineInput {
     landmarkName?: string;
     description?: string;
   }>;
-  /** Point de départ explicite (override Perplexity / Google geocoding). */
-  startPoint?: { lat: number; lon: number };
+  /** Point de départ — OBLIGATOIRE en v5 (validateStartPoint() throw sinon). */
+  startPoint: { lat: number; lon: number };
   startPointText?: string;
-  /** Langue cible ISO 639-1 (fr, en, de, es, it...). Défaut fr. */
+  /** Langue cible ISO 639-1 (fr, en, de, es, it...). */
   language: string;
-  /** Mode de transport. */
-  transportMode?: "walking" | "driving" | "mixed";
-  /** Rayon en km pour mode roadtrip. */
-  radiusKm?: number;
+  /** Mode de transport — toujours résolu (default walking). */
+  transportMode: "walking" | "driving" | "mixed";
+  /** Rayon en km — toujours résolu (depuis payload OU config defaults). */
+  radiusKm: number;
   /** Genre narratif. */
   genre?: string;
   /** Type de produit. */

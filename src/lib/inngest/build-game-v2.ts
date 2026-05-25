@@ -1,188 +1,212 @@
 /**
- * Inngest function — buildGameV2.
+ * Inngest function — buildGameV2 (pipeline v5)
  *
- * Remplace buildGameDurable (v1) pour les achats OddballTrip routés en v2.
+ * Mandat user 2026-05-25 : "utilise Inngest comme il faut".
  *
- * Flow :
- *   1. Insert games row vide avec is_published=false (pour avoir gameId)
- *   2. step.run("pipeline-v2") → runPipelineV2() qui fait tout
- *      (discover → geocode → structure → quality → persist → translate → audio)
- *   3. Flip is_published=true (sauf si needs_review=true)
- *   4. Create activation code
- *   5. Callback OddballTrip avec code
+ * Chaque step.run() = sa propre exécution Vercel (10 min max chacune).
+ * Inngest cache le résultat de chaque step. Si une étape plante, seule
+ * cette étape est rejouée (avec les résultats des précédentes en cache).
  *
- * Concurrency : 3 jeux en parallèle max (Perplexity rate limit + ElevenLabs).
- * Retry : 1 fois en cas de fail (Perplexity flaky).
+ * Séquence (chaque ligne = 1 step.run()) :
+ *
+ *   1. insert-empty-game     ~1s   créer row games minimal + flag pipeline_v2
+ *   2. discover              ~10s  Perplexity sonar → pool brut
+ *   3. geocode               ~30s  Google Places pour chaque (zéro filtre)
+ *   4. select                ~30s  Claude pick 8 best ordered
+ *   5. narrate               ~60s  Claude écrit riddles/anecdotes/AR en EN
+ *   6. persist-master-en     ~2s   UPDATE games + INSERT 8 game_steps
+ *   7. persist-translation-en ~2s  UPSERT translations_cache EN
+ *   8. translate             ~15s  Gemini EN → langue client (skip si EN)
+ *   9. persist-translation   ~2s   UPSERT translations_cache client_lang
+ *  10. audio                  ~3min ElevenLabs dans langue client + Storage
+ *  11. persist-audios        ~1s   UPSERT audio_cache
+ *  12. activation-code       ~1s   INSERT activation_codes
+ *  13. publish                ~1s  UPDATE games.is_published=true
+ *  14. callback              ~3s   POST OddballTrip callback URL
+ *
+ * Total estimé : 5-7 min (vs ~15 min hors-spec d'avant).
+ * Échec d'un step → retry automatique sans repayer les précédents.
  */
 
 import { inngest, gameBuildRequested } from "@/lib/inngest-client";
-import { createAdminClient } from "@/lib/supabase/admin";
-import { runPipelineV2 } from "@/lib/pipeline-v2/orchestrator";
-import type { PipelineInput } from "@/lib/pipeline-v2/types";
-
-function generateActivationCode(slug: string): string {
-  const cityPart = slug.slice(0, 4).toUpperCase();
-  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
-  const rand2 = Math.random().toString(36).slice(2, 6).toUpperCase();
-  return `${cityPart}-${rand}-${rand2}`;
-}
+import { buildPipelineInput, validateStartPoint } from "@/lib/pipeline-v2/input";
+import { runDiscover } from "@/lib/pipeline-v2/discover";
+import { runGeocode } from "@/lib/pipeline-v2/geocode";
+import { runSelect } from "@/lib/pipeline-v2/select";
+import { runNarrate } from "@/lib/pipeline-v2/narrate";
+import { runAudio } from "@/lib/pipeline-v2/audio";
+import { translateGame } from "@/lib/pipeline-v2/translate";
+import {
+  insertEmptyGame,
+  persistMasterEN,
+  persistTranslation,
+  persistAudios,
+  createActivationCode,
+  publishGame,
+  notifyOddballTrip,
+  haltForReview,
+} from "@/lib/pipeline-v2/persist";
+import { CONFIG } from "@/lib/pipeline-v2/config";
+import type { StructuredGame, TranslationResult } from "@/lib/pipeline-v2/types";
 
 export const buildGameV2 = inngest.createFunction(
   {
     id: "build-game-v2",
-    name: "v2 — Perplexity-first pipeline",
+    name: "v5 — Pipeline propre (multi step.run Inngest)",
     triggers: [{ event: gameBuildRequested }],
     concurrency: { limit: 3 },
-    retries: 1,
+    retries: 2, // chaque step a 2 retries Inngest
   },
   async ({ event, step, logger }) => {
     const data = event.data;
-    logger.info(`[v2] start slug=${data.slug} city=${data.city} lang=${data.language ?? "fr"}`);
 
-    // Guard v2 (2026-05-25) : V2 est désormais default. Skip UNIQUEMENT
-    // si on demande v1 explicitement (legacy escape hatch).
-    const wantsV1 = (event.data as { pipelineVersion?: string }).pipelineVersion === "v1"
-      || process.env.PIPELINE_VERSION === "v1";
+    // Skip si v1 explicitement demandé (legacy escape hatch)
+    const wantsV1 =
+      (data as { pipelineVersion?: string }).pipelineVersion === "v1" ||
+      process.env.PIPELINE_VERSION === "v1";
     if (wantsV1) {
-      logger.info(`[v2] SKIP — pipelineVersion=v1 demandé explicitement`);
+      logger.info(`[v5] SKIP — pipelineVersion=v1 demandé`);
       return { skipped: true, reason: "v1_requested" };
     }
 
-    const supabase = createAdminClient();
+    // Build input + valide startPoint
+    const input = buildPipelineInput(data);
+    try {
+      validateStartPoint(input);
+    } catch (e) {
+      throw new Error(`[v5] startPoint invalide: ${e instanceof Error ? e.message : "?"}`);
+    }
+    logger.info(
+      `[v5] start slug=${input.slug} city=${input.city} clientLang=${input.language} mode=${input.transportMode} radius=${input.radiusKm}km`,
+    );
 
-    // 1. Insert games row vide pour avoir un gameId
-    const gameId = await step.run("insertEmptyGame", async () => {
-      const { data: row, error } = await supabase
-        .from("games")
-        .insert({
-          slug: data.slug,
-          title: data.title || data.slug,
-          description: "(pipeline v2 en cours)",
-          city: data.city,
-          difficulty: data.difficulty ?? 3,
-          estimated_duration_min: data.estimatedDurationMin ?? 90,
-          mode: data.mode ?? "city_game",
-          transport_mode: data.transportMode ?? "walking",
-          radius_km: data.radiusKm ?? null,
-          is_published: false,
-          needs_review: false,
-          original_payload: data.originalPayload ?? {},
-          product_description: data.productDescription ?? null,
-          updated_at: new Date().toISOString(),
-        })
-        .select("id")
-        .single();
-      if (error) throw new Error(`Insert games failed: ${error.message}`);
-      return row.id as string;
+    // ── STEP 1 : insert empty game ──
+    const gameId = await step.run("insert-empty-game", async () => {
+      return await insertEmptyGame(input);
     });
-    logger.info(`[v2] insert game ok — id=${gameId}`);
+    logger.info(`[v5] gameId=${gameId} créé (flag ${CONFIG.PIPELINE_VERSION_TAG})`);
 
-    // 2. Run pipeline complet (orchestrator gère tout)
-    const result = await step.run("pipeline-v2", async () => {
-      const input: PipelineInput = {
-        slug: data.slug,
-        city: data.city,
-        country: data.country,
-        theme: data.title,
-        themeDescription: data.themeDescription,
-        productDescription: data.productDescription,
-        narrative: data.narrative,
-        buyerStops: (data.originalPayload as { stops?: PipelineInput["buyerStops"] })?.stops ?? undefined,
-        startPoint: data.startPointLat && data.startPointLon
-          ? { lat: data.startPointLat, lon: data.startPointLon }
-          : undefined,
-        startPointText: data.startPointText,
-        language: (data.language ?? "fr").toLowerCase().slice(0, 2),
-        transportMode: data.transportMode ?? "walking",
-        radiusKm: data.radiusKm,
-        genre: data.genre,
-        mode: (data.mode ?? "city_game") as "city_game" | "city_tour",
-        estimatedDurationMin: data.estimatedDurationMin ?? 90,
-        difficulty: data.difficulty ?? 3,
-        buyerEmail: data.buyerEmail,
-        orderId: data.orderId,
-        callbackUrl: data.callbackUrl,
-        callbackSecret: data.callbackSecret,
-        originalPayload: data.originalPayload ?? {},
-      };
-      // (2026-05-25, v3) L'orchestrator gère lui-même la traduction
-      // EN → langue client. Aucune autre langue n'est générée
-      // (mandat user : pas d'audio spéculatif).
-      return await runPipelineV2(input, gameId, {
-        skipAudio: false,
+    // ── STEP 2 : DISCOVER (Perplexity) ──
+    let discovery;
+    try {
+      discovery = await step.run("discover", async () => {
+        return await runDiscover(input);
       });
-    });
-
-    // 3. Si needs_review → on s'arrête, pas de code, pas de callback
-    if (result.needsReview) {
-      logger.warn(`[v2] needs_review : ${result.reviewReason} — NO code, NO callback sent`);
-      return {
-        gameId,
-        needsReview: true,
-        reason: result.reviewReason,
-        flags: result.qualityFlags,
-      };
+    } catch (e) {
+      const reason = `Discover échec : ${e instanceof Error ? e.message : "?"}`;
+      await haltForReview(gameId, reason);
+      throw new Error(reason);
     }
 
-    // 4. Flip is_published=true
+    // ── STEP 3 : GEOCODE (Google Places) ──
+    const geocode = await step.run("geocode", async () => {
+      return await runGeocode(input, discovery.landmarks);
+    });
+
+    if (geocode.geocoded.length < CONFIG.MIN_STOPS) {
+      const reason = `Geocode : seulement ${geocode.geocoded.length} landmarks géocodés (min ${CONFIG.MIN_STOPS}). Failed: ${geocode.failed.length}`;
+      await haltForReview(gameId, reason);
+      return { gameId, halted: true, reason };
+    }
+
+    // ── STEP 4 : SELECT (Claude) ──
+    let selection;
+    try {
+      selection = await step.run("select", async () => {
+        return await runSelect(input, geocode);
+      });
+    } catch (e) {
+      const reason = `Select échec : ${e instanceof Error ? e.message : "?"}`;
+      await haltForReview(gameId, reason);
+      throw new Error(reason);
+    }
+
+    if (selection.selected.length < CONFIG.MIN_STOPS) {
+      const reason = `Select : seulement ${selection.selected.length} landmarks (min ${CONFIG.MIN_STOPS})`;
+      await haltForReview(gameId, reason);
+      return { gameId, halted: true, reason };
+    }
+
+    // ── STEP 5 : NARRATE (Claude EN) ──
+    const game: StructuredGame = await step.run("narrate", async () => {
+      return await runNarrate(input, selection.selected, discovery.warning);
+    });
+
+    // ── STEP 6 : PERSIST master EN ──
+    await step.run("persist-master-en", async () => {
+      await persistMasterEN(gameId, input, game);
+    });
+    logger.info(`[v5] master EN persisté : ${game.stops.length} stops`);
+
+    // Source as translation (EN) — pour persist + audio
+    const sourceAsTranslation: TranslationResult = {
+      language: "en",
+      meta: game.meta,
+      stops: game.stops.map((s) => ({
+        step_order: s.step_order,
+        title: s.title,
+        landmarkName: s.landmarkName,
+        riddle: s.riddle,
+        anecdote: s.anecdote,
+        arCharacterDialogue: s.arCharacterDialogue,
+        arTreasureReward: s.arTreasureReward,
+        hint: s.hints[0]?.text ?? "",
+      })),
+    };
+
+    // ── STEP 7 : persist translation EN ──
+    await step.run("persist-translation-en", async () => {
+      await persistTranslation(gameId, sourceAsTranslation);
+    });
+
+    // ── STEP 8 : TRANSLATE (Gemini) si client_lang != EN ──
+    const clientLang = input.language;
+    let clientContent: TranslationResult = sourceAsTranslation;
+    if (clientLang !== "en") {
+      try {
+        clientContent = await step.run("translate", async () => {
+          return await translateGame(game, clientLang);
+        });
+        await step.run("persist-translation-client", async () => {
+          await persistTranslation(gameId, clientContent);
+        });
+      } catch (e) {
+        logger.warn(`[v5] translate ${clientLang} failed, fallback EN: ${e instanceof Error ? e.message : "?"}`);
+        clientContent = sourceAsTranslation;
+      }
+    }
+
+    // ── STEP 10 : AUDIO langue client ──
+    await step.run("audio", async () => {
+      const audios = await runAudio(gameId, game, clientContent);
+      await persistAudios(gameId, audios);
+    });
+    logger.info(`[v5] audio ${clientLang} terminé`);
+
+    // ── STEP 12 : ACTIVATION CODE ──
+    const code = await step.run("activation-code", async () => {
+      return await createActivationCode(gameId, input);
+    });
+    logger.info(`[v5] activation_code créé : ${code}`);
+
+    // ── STEP 13 : PUBLISH ──
     await step.run("publish", async () => {
-      const { error } = await supabase
-        .from("games")
-        .update({ is_published: true, updated_at: new Date().toISOString() })
-        .eq("id", gameId);
-      if (error) throw new Error(`Publish failed: ${error.message}`);
+      await publishGame(gameId);
     });
 
-    // 5. Create activation code
-    const code = await step.run("createCode", async () => {
-      const codeStr = generateActivationCode(data.slug);
-      const expires = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
-      const { error } = await supabase.from("activation_codes").insert({
-        code: codeStr,
-        game_id: gameId,
-        team_name: data.buyerEmail?.split("@")[0] ?? "Buyer",
-        expires_at: expires.toISOString(),
-        is_single_use: true,
-        max_uses: 1,
-      });
-      if (error) throw new Error(`Code create failed: ${error.message}`);
-      return codeStr;
-    });
-    logger.info(`[v2] code created : ${code}`);
-
-    // 6. Callback OddballTrip
-    if (data.callbackUrl && data.callbackSecret) {
+    // ── STEP 14 : CALLBACK OddballTrip ──
+    if (input.callbackUrl && input.callbackSecret) {
       await step.run("callback", async () => {
-        try {
-          const res = await fetch(data.callbackUrl!, {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${data.callbackSecret}`,
-            },
-            body: JSON.stringify({
-              slug: data.slug,
-              gameId,
-              code,
-              orderId: data.orderId,
-              language: data.language,
-            }),
-          });
-          if (!res.ok) {
-            logger.warn(`[v2] callback non-2xx : ${res.status}`);
-          }
-        } catch (e) {
-          logger.warn(`[v2] callback failed (non-blocking) : ${e instanceof Error ? e.message : "unknown"}`);
-        }
+        await notifyOddballTrip(input, gameId, code);
       });
     }
 
+    logger.info(`[v5] DONE — slug=${input.slug} code=${code} stops=${game.stops.length}`);
     return {
       gameId,
       code,
-      needsReview: false,
-      stopCount: result.structure.stops.length,
-      languages: [data.language, ...result.translations.map((t) => t.language)],
+      stops: game.stops.length,
+      language: clientLang,
     };
   },
 );

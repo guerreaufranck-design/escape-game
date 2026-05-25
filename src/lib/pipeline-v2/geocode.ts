@@ -1,20 +1,16 @@
 /**
- * GEOCODE v4 — Google Places pure géolocalisation, AUCUN filtre.
+ * GEOCODE v5 — Google Places pur, ZÉRO filtre.
  *
- * Mandat user 2026-05-25 :
+ * Mandat user :
  *   "google geocode n'a pas d'intelligence il est fait pour géolocaliser,
  *    donc il géolocalise tout les landmarks, tous"
  *   "je ne veux pas de filtres"
  *
- * Comportement :
- *   - Pour chaque landmark Perplexity, on cherche dans Google Places
- *   - Si Google trouve : on garde les coords + nom Google
- *   - Si Google ne trouve PAS : pas de coord donc on n'a rien à passer
- *     à la suite — log mais on continue
- *   - PAS de filtre similarity, PAS de filtre radius, PAS de dedup
+ * Pour chaque landmark Perplexity, on demande à Google ses coords. On
+ * garde ce qu'on a. Si Google ne trouve pas → on log et on saute. Pas
+ * de filtre de similarité, de distance, ni de dedup côté code.
  *
- * C'est Perplexity (passe 2) qui sélectionnera les meilleurs landmarks
- * géocodés en fonction du scénario.
+ * Claude (étape suivante) sélectionnera en sachant tout du pool.
  */
 
 import type {
@@ -24,8 +20,7 @@ import type {
   PipelineInput,
 } from "./types";
 
-const PLACES_TEXT_SEARCH =
-  "https://maps.googleapis.com/maps/api/place/findplacefromtext/json";
+const PLACES_TEXT_SEARCH = "https://maps.googleapis.com/maps/api/place/findplacefromtext/json";
 
 function haversineMeters(
   a: { lat: number; lon: number },
@@ -35,18 +30,15 @@ function haversineMeters(
   const R = 6371e3;
   const dLat = toRad(b.lat - a.lat);
   const dLon = toRad(b.lon - a.lon);
-  const lat1 = toRad(a.lat);
-  const lat2 = toRad(b.lat);
   const sa =
     Math.sin(dLat / 2) ** 2 +
-    Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+    Math.sin(dLon / 2) ** 2 *
+      Math.cos(toRad(a.lat)) *
+      Math.cos(toRad(b.lat));
   return 2 * R * Math.asin(Math.sqrt(sa));
 }
 
-async function geocodeLandmark(
-  name: string,
-  city: string,
-): Promise<{
+async function geocodeOne(name: string, city: string): Promise<{
   lat: number;
   lon: number;
   placeId: string;
@@ -80,9 +72,6 @@ export async function runGeocode(
   input: PipelineInput,
   landmarks: DiscoveredLandmark[],
 ): Promise<GeocodeResult> {
-  if (!input.startPoint) {
-    throw new Error("startPoint missing — pipeline requires explicit start point");
-  }
   const startPoint = {
     lat: input.startPoint.lat,
     lon: input.startPoint.lon,
@@ -92,24 +81,24 @@ export async function runGeocode(
   const geocoded: GeocodedLandmark[] = [];
   const failed: GeocodeResult["failed"] = [];
 
-  console.log(`[geocode] ${landmarks.length} landmarks à géocoder via Google Places (aucun filtre)`);
+  console.log(`[v5 geocode] ${landmarks.length} landmarks à géocoder (zéro filtre, on garde tout ce que Google trouve)`);
 
   for (const lm of landmarks) {
-    const result = await geocodeLandmark(lm.name, input.city);
-    if (!result) {
+    const r = await geocodeOne(lm.name, input.city);
+    if (!r) {
       failed.push({ landmark: lm, reason: "Google Places returned no candidate" });
-      console.log(`  ✗ "${lm.name}" — pas trouvé par Google`);
+      console.log(`  ✗ "${lm.name}" — Google n'a rien trouvé`);
       continue;
     }
-    const distance = haversineMeters(startPoint, { lat: result.lat, lon: result.lon });
+    const distance = haversineMeters(startPoint, { lat: r.lat, lon: r.lon });
     geocoded.push({
       ...lm,
-      ...result,
+      ...r,
       distanceFromStartM: Math.round(distance),
     });
-    console.log(`  ✓ "${lm.name}" → "${result.googleName}" (${result.lat}, ${result.lon}, ${Math.round(distance)}m)`);
+    console.log(`  ✓ "${lm.name}" → "${r.googleName}" (${r.lat}, ${r.lon}, ${Math.round(distance)}m)`);
   }
 
-  console.log(`[geocode] ${geocoded.length} géocodés / ${failed.length} non trouvés`);
+  console.log(`[v5 geocode] ${geocoded.length} géocodés, ${failed.length} non trouvés`);
   return { geocoded, failed, startPoint };
 }
