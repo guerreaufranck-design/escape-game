@@ -219,6 +219,10 @@ export async function POST(request: NextRequest) {
           productDescription: d.productDescription,
           startPointLat: startLat,
           startPointLon: startLon,
+          // V5 (2026-05-26) : on propage AUSSI le texte original pour que
+          // validate-draft puisse forcer ce landmark comme stop 1 (cohérence
+          // PWA : "votre point de départ" = stop 1).
+          startPointText: d.startPointText,
           targetStopCount: d.targetStopCount ?? 8,
           transportMode: d.transportMode,
           radiusKm: d.radiusKm,

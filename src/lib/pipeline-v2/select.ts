@@ -37,9 +37,22 @@ function buildSelectionPrompt(input: PipelineInput, geocode: GeocodeResult): str
     )
     .join("\n\n");
 
+  // Detect if pool index 0 is a forced start point (marked by runGeocode)
+  const hasForcedStart =
+    geocode.geocoded.length > 0 &&
+    geocode.geocoded[0].narrativeTitle?.includes("[FORCED START]");
+  const forcedStartBlock = hasForcedStart
+    ? `\n## NON-NEGOTIABLE constraint — FIRST STOP IS LOCKED
+
+The buyer explicitly chose **candidate #1 ("${geocode.geocoded[0].googleName}")** as their starting landmark. This is what they will see on their map as "your starting point" and what they will physically arrive at.
+
+**You MUST place candidate #1 as your step_order=1.** Do not skip it. Do not reorder it. Pick ${CONFIG.TARGET_STOPS - 1} additional landmarks for steps 2 through ${CONFIG.TARGET_STOPS}, ordered for an optimal route from the forced start.
+`
+    : "";
+
   return `You are selecting the landmarks for an outdoor escape game / city tour in ${input.city}${
     input.country ? `, ${input.country}` : ""
-  }.
+  }.${forcedStartBlock}
 
 ## Scenario (buyer-provided, English-native)
 
@@ -163,6 +176,34 @@ export async function runSelect(
     throw new Error(
       `Select : après matching back au pool, seulement ${selected.length}/${parsed.selected.length} landmarks valides`,
     );
+  }
+
+  // ── Safety : enforce forced start at position 1, même si Claude a ignoré ──
+  // Le prompt demande explicitement à Claude de mettre le forced start à
+  // step_order=1. Mais on ne fait JAMAIS confiance aveugle au LLM — si Claude
+  // l'a déplacé en 2e/3e position, ou retiré, on le réinjecte de force.
+  const forcedStart = geocode.geocoded[0];
+  if (forcedStart?.narrativeTitle?.includes("[FORCED START]")) {
+    const currentIdx = selected.findIndex((s) => s.placeId === forcedStart.placeId);
+    if (currentIdx === -1) {
+      // Claude l'a complètement retiré → on le réinjecte en tête + on retire le dernier
+      console.warn(
+        `[v5 select] Claude a IGNORÉ le forced start "${forcedStart.googleName}" — réinjection en step_order=1 (drop du dernier de sa sélection)`,
+      );
+      selected.unshift({ ...forcedStart, order: 1 });
+      if (selected.length > CONFIG.TARGET_STOPS) selected.pop();
+    } else if (currentIdx !== 0) {
+      // Claude l'a déplacé → on le swap en première position
+      console.warn(
+        `[v5 select] Claude a placé le forced start en step_order=${currentIdx + 1} au lieu de 1 — swap`,
+      );
+      const [start] = selected.splice(currentIdx, 1);
+      selected.unshift({ ...start, order: 1 });
+    }
+    // Re-numbering pour rester cohérent
+    for (let i = 0; i < selected.length; i++) {
+      selected[i] = { ...selected[i], order: i + 1 };
+    }
   }
 
   console.log(`[v5 select] Claude done in ${dur}s — ${selected.length} sélectionnés`);

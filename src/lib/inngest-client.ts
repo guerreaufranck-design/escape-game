@@ -229,8 +229,16 @@ export const draftValidateRequested = eventType("draft/validate.requested", {
     theme: string;
     themeDescription: string;
     productDescription?: string;
-    startPointLat: number;
-    startPointLon: number;
+    /**
+     * V5 (2026-05-26) : startPointLat/Lon devenus OPTIONNELS. Le payload
+     * peut fournir SOIT le GPS (legacy), SOIT un texte type
+     * "Notre Dame de Paris - Paris" (nouveau flux OddballTrip qui n'a
+     * pas d'outils GPS fiables). validateDraft.ts vérifie qu'au moins
+     * une des deux sources est présente.
+     */
+    startPointLat?: number;
+    startPointLon?: number;
+    startPointText?: string;
     targetStopCount: number;
     transportMode?: "walking" | "mixed" | "driving";
     radiusKm?: number;

@@ -14,7 +14,7 @@
 import { inngest, draftValidateRequested } from "@/lib/inngest-client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { runDiscover } from "@/lib/pipeline-v2/discover";
-import { runGeocode } from "@/lib/pipeline-v2/geocode";
+import { runGeocode, geocodeStartPoint } from "@/lib/pipeline-v2/geocode";
 import { runSelect } from "@/lib/pipeline-v2/select";
 import { CONFIG } from "@/lib/pipeline-v2/config";
 import type { PipelineInput } from "@/lib/pipeline-v2/types";
@@ -42,6 +42,27 @@ export const validateDraft = inngest.createFunction(
           ? CONFIG.WALKING_DEFAULT_RADIUS_KM
           : CONFIG.ROADTRIP_DEFAULT_RADIUS_KM;
 
+    // Détection GPS valide vs texte seul (cf. input.ts shouldResolveStartFromText)
+    const hasValidGps =
+      typeof data.startPointLat === "number" &&
+      typeof data.startPointLon === "number" &&
+      !(data.startPointLat === 0 && data.startPointLon === 0);
+    const hasText =
+      typeof data.startPointText === "string" && data.startPointText.trim().length > 0;
+    if (!hasValidGps && !hasText) {
+      const reason = `startPoint missing : payload doit fournir SOIT startPointLat/Lon, SOIT startPointText`;
+      logger.error(`[validateDraft] ${data.slug} ${reason}`);
+      await supabase
+        .from("game_drafts")
+        .update({
+          status: "pending",
+          validation_error: reason,
+          updated_at: new Date().toISOString(),
+        })
+        .eq("slug", data.slug);
+      throw new Error(reason);
+    }
+
     const input: PipelineInput = {
       slug: data.slug,
       city: data.city,
@@ -49,7 +70,10 @@ export const validateDraft = inngest.createFunction(
       theme: data.theme,
       themeDescription: data.themeDescription,
       productDescription: data.productDescription,
-      startPoint: { lat: data.startPointLat, lon: data.startPointLon },
+      startPoint: hasValidGps
+        ? { lat: data.startPointLat as number, lon: data.startPointLon as number }
+        : { lat: 0, lon: 0 }, // placeholder, résolu par resolve-start
+      startPointText: data.startPointText,
       language: "en", // drafts in EN (source), narration translated at sale time
       transportMode,
       radiusKm,
@@ -59,6 +83,39 @@ export const validateDraft = inngest.createFunction(
       difficulty: 3,
       originalPayload: data as unknown as Record<string, unknown>,
     };
+
+    // ── STEP 0.5 : Resolve start point + force as stop 1 ──
+    // Règle (2026-05-26) : si le payload contient un startPointText non vide,
+    // on l'utilise TOUJOURS pour résoudre le start point ET le forcer comme
+    // stop 1 — peu importe si GPS aussi présent (l'admin/drafts pré-géocode
+    // mais on veut quand même la cohérence buyer-text = stop1).
+    //
+    // Si pas de texte → mode legacy : on utilise le GPS tel quel, pas de
+    // forced start (Claude libre de choisir l'ordre).
+    let forcedStartLandmark: Awaited<ReturnType<typeof geocodeStartPoint>> = null;
+    if (hasText) {
+      forcedStartLandmark = await step.run("resolve-start", async () => {
+        return await geocodeStartPoint(data.startPointText as string, data.city);
+      });
+      if (!forcedStartLandmark) {
+        const reason = `resolve-start échec : Google Places n'a pas trouvé "${data.startPointText}" dans ${data.city}`;
+        await supabase
+          .from("game_drafts")
+          .update({
+            status: "pending",
+            validation_error: reason,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("slug", data.slug);
+        throw new Error(reason);
+      }
+      // Override input.startPoint avec les coords Google (même si admin/drafts
+      // avait pré-résolu — Google est plus fiable que les coords passées).
+      input.startPoint = { lat: forcedStartLandmark.lat, lon: forcedStartLandmark.lon };
+      logger.info(
+        `[validateDraft] ${data.slug} startPoint résolu : ${forcedStartLandmark.googleName} @ ${forcedStartLandmark.lat},${forcedStartLandmark.lon}`,
+      );
+    }
 
     // ── STEP 1 : Discover (Perplexity sonar standard) ──
     let discovery;
@@ -80,9 +137,9 @@ export const validateDraft = inngest.createFunction(
       throw new Error(reason);
     }
 
-    // ── STEP 2 : Geocode (Google Places pur) ──
+    // ── STEP 2 : Geocode (Google Places pur) + injection forced start ──
     const geocode = await step.run("geocode", async () => {
-      return await runGeocode(input, discovery.landmarks);
+      return await runGeocode(input, discovery.landmarks, forcedStartLandmark);
     });
 
     if (geocode.geocoded.length < CONFIG.MIN_STOPS) {
@@ -164,12 +221,18 @@ export const validateDraft = inngest.createFunction(
         citationsCount: discovery.citations.length,
       };
 
+      // Mandat 2026-05-26 : start_point persisté = stops[0] (le joueur
+      // PWA verra "votre point de départ" cohérent avec le stop 1).
+      const stop1 = stops[0];
       await supabase
         .from("game_drafts")
         .update({
           status: "validated",
           stops,
           diagnostics,
+          start_point_lat: stop1?.lat ?? null,
+          start_point_lon: stop1?.lon ?? null,
+          start_point_text: stop1?.name ?? data.startPointText ?? null,
           validated_at: new Date().toISOString(),
           validation_error: null,
           updated_at: new Date().toISOString(),
@@ -177,7 +240,7 @@ export const validateDraft = inngest.createFunction(
         .eq("slug", data.slug);
 
       logger.info(
-        `[validateDraft v5] ${data.slug} VALIDATED : ${stops.length} stops (${discovery.landmarks.length} candidats → ${geocode.geocoded.length} géocodés → ${selection.selected.length} sélectionnés)`,
+        `[validateDraft v5] ${data.slug} VALIDATED : ${stops.length} stops (${discovery.landmarks.length} candidats → ${geocode.geocoded.length} géocodés → ${selection.selected.length} sélectionnés) — start_point=stop1="${stop1?.name}"`,
       );
     });
 

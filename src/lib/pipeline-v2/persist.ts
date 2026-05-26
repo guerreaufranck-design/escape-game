@@ -31,9 +31,16 @@ function getClient() {
 // ─────────────────────────────────────────────────────────────
 
 /** Crée une ligne games minimale avec is_published=false + start_point_source=pipeline_v2.
- *  Le cron process-pending-games doit IGNORER les rows avec ce flag. */
+ *  Le cron process-pending-games doit IGNORER les rows avec ce flag.
+ *  Note (2026-05-26) : si startPoint est encore le placeholder (0,0)
+ *  parce qu'on attend la résolution textuelle, on écrit NULL pour ne
+ *  pas polluer la DB. persistMasterEN écrira la vraie valeur (= stop 1)
+ *  après select. */
 export async function insertEmptyGame(input: PipelineInput): Promise<string> {
   const s = getClient();
+  const isPlaceholderStart =
+    !input.startPoint ||
+    (input.startPoint.lat === 0 && input.startPoint.lon === 0);
   const { data, error } = await s
     .from("games")
     .insert({
@@ -46,8 +53,8 @@ export async function insertEmptyGame(input: PipelineInput): Promise<string> {
       mode: input.mode,
       transport_mode: input.transportMode,
       radius_km: input.radiusKm,
-      start_point_lat: input.startPoint.lat,
-      start_point_lon: input.startPoint.lon,
+      start_point_lat: isPlaceholderStart ? null : input.startPoint.lat,
+      start_point_lon: isPlaceholderStart ? null : input.startPoint.lon,
       start_point_text: input.startPointText ?? null,
       start_point_source: CONFIG.PIPELINE_VERSION_TAG,
       is_published: false,
@@ -74,19 +81,30 @@ export async function persistMasterEN(
   const s = getClient();
 
   // 1. UPDATE games meta
+  // Mandat 2026-05-26 : start_point_* persisté = stops[0]. Le joueur PWA
+  // voit "votre point de départ = [stop 1]" — cohérence totale (avant on
+  // pouvait avoir un start affiché à 30 km du stop 1 dans le PWA).
+  const stop1 = game.stops[0];
+  const updatePayload: Record<string, unknown> = {
+    title: game.meta.title,
+    description: game.meta.description,
+    intro_speech: game.meta.intro,
+    epilogue_title: game.meta.epilogueTitle,
+    epilogue_text: game.meta.epilogue,
+    final_riddle_text: game.meta.finalRiddleText,
+    final_answer: game.meta.finalAnswer,
+    final_answer_explanation: game.meta.finalAnswerExplanation,
+    updated_at: new Date().toISOString(),
+  };
+  if (stop1?.latitude && stop1?.longitude) {
+    updatePayload.start_point_lat = stop1.latitude;
+    updatePayload.start_point_lon = stop1.longitude;
+    updatePayload.start_point_text = stop1.landmarkName ?? input.startPointText ?? null;
+  }
+
   const { error: gErr } = await s
     .from("games")
-    .update({
-      title: game.meta.title,
-      description: game.meta.description,
-      intro_speech: game.meta.intro,
-      epilogue_title: game.meta.epilogueTitle,
-      epilogue_text: game.meta.epilogue,
-      final_riddle_text: game.meta.finalRiddleText,
-      final_answer: game.meta.finalAnswer,
-      final_answer_explanation: game.meta.finalAnswerExplanation,
-      updated_at: new Date().toISOString(),
-    })
+    .update(updatePayload)
     .eq("id", gameId);
   if (gErr) throw new Error(`persistMasterEN games update: ${gErr.message}`);
 

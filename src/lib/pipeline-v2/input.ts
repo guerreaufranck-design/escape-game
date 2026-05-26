@@ -53,11 +53,15 @@ export function buildPipelineInput(data: RawEventData): PipelineInput {
         ? CONFIG.WALKING_DEFAULT_RADIUS_KM
         : CONFIG.ROADTRIP_DEFAULT_RADIUS_KM;
 
-  // Start point (validé séparément)
+  // Start point — V5 (2026-05-26) : peut être :
+  //   (a) GPS lat/lon (legacy / payload OddballTrip ancien)
+  //   (b) startPointText seul (nouveau flux OddballTrip — on géocode dans
+  //       l'étape resolve-start de la pipeline)
+  // Si ni (a) ni (b), validateStartPoint() throw plus bas.
   const startPoint =
     typeof data.startPointLat === "number" && typeof data.startPointLon === "number"
       ? { lat: data.startPointLat, lon: data.startPointLon }
-      : undefined;
+      : { lat: 0, lon: 0 }; // placeholder — sera remplacé par resolve-start
 
   return {
     slug: data.slug,
@@ -67,7 +71,7 @@ export function buildPipelineInput(data: RawEventData): PipelineInput {
     themeDescription: data.themeDescription,
     productDescription: data.productDescription,
     narrative: data.narrative,
-    startPoint: startPoint!, // type asserts here, validation immédiate ci-dessous
+    startPoint, // si placeholder (0,0), la pipeline va le résoudre via startPointText
     startPointText: data.startPointText,
     language,
     transportMode,
@@ -84,21 +88,54 @@ export function buildPipelineInput(data: RawEventData): PipelineInput {
   };
 }
 
-/** Throw si startPoint manquant ou invalide. */
+/**
+ * Throw si AUCUNE source de startPoint n'est fournie.
+ *
+ * V5 (2026-05-26) accepte deux entrées :
+ *   (a) GPS lat/lon valides (legacy)
+ *   (b) startPointText non vide (nouveau flux OddballTrip — texte type
+ *       "Notre Dame de Paris - Paris", à géocoder dans l'étape resolve-start)
+ *
+ * Si (a) absent ET (b) absent → throw. Si (a) absent et (b) présent, on
+ * laisse les coords à (0,0) — l'étape resolve-start de la pipeline va
+ * géocoder le texte avant tout autre usage.
+ */
 export function validateStartPoint(input: PipelineInput): void {
-  if (!input.startPoint) {
+  const hasGps =
+    input.startPoint &&
+    typeof input.startPoint.lat === "number" &&
+    typeof input.startPoint.lon === "number" &&
+    !(input.startPoint.lat === 0 && input.startPoint.lon === 0) &&
+    input.startPoint.lat >= -90 &&
+    input.startPoint.lat <= 90 &&
+    input.startPoint.lon >= -180 &&
+    input.startPoint.lon <= 180;
+
+  const hasText =
+    typeof input.startPointText === "string" && input.startPointText.trim().length > 0;
+
+  if (!hasGps && !hasText) {
     throw new Error(
-      `[v5 input] startPoint missing for slug=${input.slug} — payload OddballTrip doit fournir startPoint:{lat,lon}`,
+      `[v5 input] startPoint missing for slug=${input.slug} — OddballTrip doit fournir SOIT startPointLat/Lon, SOIT startPointText (ex: "Notre Dame de Paris - Paris")`,
     );
   }
-  const { lat, lon } = input.startPoint;
-  if (typeof lat !== "number" || typeof lon !== "number") {
-    throw new Error(`[v5 input] startPoint lat/lon invalides: ${JSON.stringify(input.startPoint)}`);
+
+  // Si GPS fourni mais hors range, on rejette
+  if (input.startPoint && !hasGps && !hasText) {
+    const { lat, lon } = input.startPoint;
+    throw new Error(`[v5 input] startPoint GPS invalides: ${lat},${lon}`);
   }
-  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-    throw new Error(`[v5 input] startPoint hors range: ${lat},${lon}`);
-  }
-  if (lat === 0 && lon === 0) {
-    throw new Error(`[v5 input] startPoint = null island (0,0)`);
-  }
+}
+
+/** Indique si le startPoint doit être résolu via géocodage textuel.
+ *  Vrai si on n'a pas de GPS valide mais qu'on a un texte. */
+export function shouldResolveStartFromText(input: PipelineInput): boolean {
+  const hasValidGps =
+    input.startPoint &&
+    !(input.startPoint.lat === 0 && input.startPoint.lon === 0) &&
+    typeof input.startPoint.lat === "number" &&
+    typeof input.startPoint.lon === "number";
+  const hasText =
+    typeof input.startPointText === "string" && input.startPointText.trim().length > 0;
+  return !hasValidGps && hasText;
 }

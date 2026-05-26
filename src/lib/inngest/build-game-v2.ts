@@ -29,9 +29,13 @@
  */
 
 import { inngest, gameBuildRequested } from "@/lib/inngest-client";
-import { buildPipelineInput, validateStartPoint } from "@/lib/pipeline-v2/input";
+import {
+  buildPipelineInput,
+  validateStartPoint,
+  shouldResolveStartFromText,
+} from "@/lib/pipeline-v2/input";
 import { runDiscover } from "@/lib/pipeline-v2/discover";
-import { runGeocode } from "@/lib/pipeline-v2/geocode";
+import { runGeocode, geocodeStartPoint } from "@/lib/pipeline-v2/geocode";
 import { runSelect } from "@/lib/pipeline-v2/select";
 import { runNarrate } from "@/lib/pipeline-v2/narrate";
 import { runAudio } from "@/lib/pipeline-v2/audio";
@@ -86,6 +90,32 @@ export const buildGameV2 = inngest.createFunction(
     });
     logger.info(`[v5] gameId=${gameId} créé (flag ${CONFIG.PIPELINE_VERSION_TAG})`);
 
+    // ── STEP 1.5 : RESOLVE START POINT + force as stop 1 ──
+    // Règle (2026-05-26) : si payload contient startPointText non vide, on
+    // l'utilise TOUJOURS pour résoudre le start + le forcer comme stop 1
+    // (cohérence PWA : ce qu'OddballTrip écrit = ce que voit le joueur = stop 1).
+    //
+    // Si pas de texte mais GPS valide → mode legacy, pas de forced start
+    // (Claude libre de choisir l'ordre, comme avant).
+    let forcedStartLandmark: Awaited<ReturnType<typeof geocodeStartPoint>> = null;
+    const hasStartText =
+      typeof input.startPointText === "string" && input.startPointText.trim().length > 0;
+    if (hasStartText || shouldResolveStartFromText(input)) {
+      forcedStartLandmark = await step.run("resolve-start", async () => {
+        return await geocodeStartPoint(input.startPointText!, input.city);
+      });
+      if (!forcedStartLandmark) {
+        const reason = `resolve-start échec : Google Places n'a pas trouvé "${input.startPointText}" dans ${input.city}`;
+        await haltForReview(gameId, reason);
+        throw new Error(reason);
+      }
+      // Mutate input.startPoint pour les phases suivantes (radius bias, distances)
+      input.startPoint = { lat: forcedStartLandmark.lat, lon: forcedStartLandmark.lon };
+      logger.info(
+        `[v5] startPoint résolu via Google : ${forcedStartLandmark.googleName} @ ${forcedStartLandmark.lat},${forcedStartLandmark.lon}`,
+      );
+    }
+
     // ── STEP 2 : DISCOVER (Perplexity) ──
     let discovery;
     try {
@@ -98,9 +128,9 @@ export const buildGameV2 = inngest.createFunction(
       throw new Error(reason);
     }
 
-    // ── STEP 3 : GEOCODE (Google Places) ──
+    // ── STEP 3 : GEOCODE (Google Places) — injecte le forced start landmark ──
     const geocode = await step.run("geocode", async () => {
-      return await runGeocode(input, discovery.landmarks);
+      return await runGeocode(input, discovery.landmarks, forcedStartLandmark);
     });
 
     if (geocode.geocoded.length < CONFIG.MIN_STOPS) {
