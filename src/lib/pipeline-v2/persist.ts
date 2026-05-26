@@ -14,6 +14,7 @@ import { createClient } from "@supabase/supabase-js";
 import { CONFIG } from "./config";
 import type {
   AudioResult,
+  GeocodedLandmark,
   PipelineInput,
   StructuredGame,
   TranslationResult,
@@ -24,6 +25,142 @@ function getClient() {
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) throw new Error("Supabase env missing");
   return createClient(url, key);
+}
+
+// ─────────────────────────────────────────────────────────────
+// STEP 0 — Draft lookup (skip discover/geocode/select si trouvé)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * Cherche un draft `validated` pour ce slug. Si présent → on saute
+ * Perplexity discover (~10s + ~$0.005), Google geocode (~30s + ~$0.02/landmark),
+ * et Claude select (~30s + ~$0.01). Économie nette : ~1-2 min + ~$0.50/vente.
+ *
+ * Stratégie alignée sur V1 (game-pipeline.ts:1014-1049) :
+ *   - Filtre status = 'validated' + stops non vide + count ≥ MIN_STOPS
+ *   - Verrouille (status → 'fulfilling') pour éviter qu'un 2e acheteur
+ *     consomme le même draft pendant qu'on traite celui-ci
+ *
+ * Retourne :
+ *   - null  : pas de draft → pipeline normale (discover/geocode/select)
+ *   - object : draft trouvé → on utilise stops directement
+ */
+export async function loadValidatedDraft(slug: string): Promise<{
+  draftId: string;
+  stops: GeocodedLandmark[];
+  editorialWarning?: string;
+  selectionRationale?: string;
+} | null> {
+  const s = getClient();
+  const { data: draft, error } = await s
+    .from("game_drafts")
+    .select("id, slug, stops, diagnostics")
+    .eq("slug", slug)
+    .eq("status", "validated")
+    .maybeSingle();
+
+  if (error) {
+    console.warn(`[v5 loadValidatedDraft] lookup error for ${slug}: ${error.message}`);
+    return null;
+  }
+  if (!draft) return null;
+
+  const rawStops = Array.isArray(draft.stops) ? draft.stops : [];
+  if (rawStops.length < CONFIG.MIN_STOPS) {
+    console.warn(
+      `[v5 loadValidatedDraft] draft ${slug} a seulement ${rawStops.length} stops (min ${CONFIG.MIN_STOPS}) — ignored`,
+    );
+    return null;
+  }
+
+  // Lock the draft to prevent concurrent consumption.
+  // Note : si la vente échoue plus tard, ce draft reste en 'fulfilling' —
+  // un opérateur peut le remettre en 'validated' manuellement. Pour l'instant
+  // pas d'auto-unlock pour éviter qu'un retry Inngest le ré-utilise en boucle.
+  const { error: lockErr } = await s
+    .from("game_drafts")
+    .update({ status: "fulfilling", updated_at: new Date().toISOString() })
+    .eq("id", draft.id);
+  if (lockErr) {
+    console.warn(`[v5 loadValidatedDraft] lock failed for ${slug}: ${lockErr.message} — using draft anyway`);
+  }
+
+  // Convert draft.stops (DB schema) → GeocodedLandmark[] (pipeline schema)
+  type RawStop = {
+    step_order?: number;
+    name?: string;
+    description?: string;
+    rationale?: string | null;
+    lat?: number;
+    lon?: number;
+    placeId?: string;
+    types?: string[];
+    distanceFromStartM?: number;
+  };
+  const stops: GeocodedLandmark[] = rawStops.map((raw, i) => {
+    const r = raw as RawStop;
+    return {
+      order: r.step_order ?? i + 1,
+      name: r.name ?? `Stop ${i + 1}`,
+      googleName: r.name ?? `Stop ${i + 1}`,
+      narrativeTitle: r.rationale ?? r.description ?? "",
+      riddle: "",    // narrate écrira
+      answer: "",    // narrate écrira
+      hint: "",      // narrate écrira
+      anecdote: "",  // narrate écrira
+      sources: [],
+      lat: typeof r.lat === "number" ? r.lat : 0,
+      lon: typeof r.lon === "number" ? r.lon : 0,
+      placeId: r.placeId ?? "",
+      formattedAddress: "",
+      placeTypes: Array.isArray(r.types) ? r.types : [],
+      distanceFromStartM: r.distanceFromStartM ?? 0,
+    };
+  });
+
+  const diag = (draft.diagnostics ?? {}) as Record<string, unknown>;
+  return {
+    draftId: draft.id as string,
+    stops,
+    editorialWarning: typeof diag.editorialWarning === "string" ? diag.editorialWarning : undefined,
+    selectionRationale: typeof diag.selectionRationale === "string" ? diag.selectionRationale : undefined,
+  };
+}
+
+/**
+ * Marque le draft comme `fulfilled` après que la vente a réussi (game published).
+ * Si la vente échoue, le draft reste en 'fulfilling' pour intervention manuelle.
+ *
+ * Aligné sur V1 (game-pipeline.ts:2449) qui utilise status='fulfilled' +
+ * fulfilled_at + fulfilled_game_id. La row reste pour audit/analytics
+ * (combien de ventes par slug) mais n'est plus réutilisée.
+ */
+export async function markDraftConsumed(draftId: string, gameId: string): Promise<void> {
+  const s = getClient();
+  const { error } = await s
+    .from("game_drafts")
+    .update({
+      status: "fulfilled",
+      fulfilled_at: new Date().toISOString(),
+      fulfilled_game_id: gameId,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", draftId);
+  if (error) {
+    console.warn(`[v5 markDraftConsumed] failed for ${draftId}: ${error.message}`);
+  }
+}
+
+/**
+ * Libère un draft `fulfilling` en cas d'échec de la pipeline en aval.
+ * Permet à un retry futur (ou à l'opérateur) de retenter.
+ */
+export async function releaseDraft(draftId: string): Promise<void> {
+  const s = getClient();
+  await s
+    .from("game_drafts")
+    .update({ status: "validated", updated_at: new Date().toISOString() })
+    .eq("id", draftId);
 }
 
 // ─────────────────────────────────────────────────────────────
