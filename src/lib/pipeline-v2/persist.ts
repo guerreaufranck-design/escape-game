@@ -123,54 +123,148 @@ export async function persistMasterEN(
 // STEP 6/7 — Persist translation (langue client si != EN)
 // ─────────────────────────────────────────────────────────────
 
-/** Upsert translations_cache si la table le supporte. Non-bloquant en cas d'erreur schema. */
+/**
+ * Upsert translations_cache pour la langue cible.
+ *
+ * Schéma DB réel (vérifié 2026-05-26) :
+ *   - source_id      UUID (= gameId pour game-level, = step.id pour step-level,
+ *                          ou synthétique `hint-{gameId}-{stepOrder}-{idx}` pour hints)
+ *   - source_table   "games" | "game_steps"
+ *   - source_field   colonne DB ("title", "description", "intro_speech",
+ *                                "epilogue_title", "epilogue_text",
+ *                                "final_riddle_text", "final_answer",
+ *                                "final_answer_explanation",
+ *                                "landmark_name", "riddle_text", "anecdote",
+ *                                "ar_character_dialogue", "ar_treasure_reward",
+ *                                "landmark_history", "hint_text")
+ *   - language       ISO 639-1
+ *   - translated_text
+ *   - mode           (legacy, optionnel)
+ *
+ * onConflict : "source_id,source_field,language"
+ *
+ * Ce format est ce que `translateGameField` / `translateStepFields` /
+ * `prepareGamePackage` lisent côté player API (cacheOnly: true).
+ * Avant 2026-05-26 cette fonction écrivait dans `game_id,step_order,
+ * field,text` (colonnes inexistantes) → silent failure → cache vide
+ * pour les drafts → joueur voyait EN. Fix : aligner sur le vrai schéma.
+ *
+ * Pour le mapping field V5 → colonne DB on s'aligne sur les conventions
+ * lues dans game-package.ts (référence canonique).
+ */
+
+/** Mapping V5 meta key → colonne DB games */
+const META_FIELD_MAP: Record<string, string> = {
+  title: "title",
+  description: "description",
+  intro: "intro_speech",
+  epilogue: "epilogue_text",
+  epilogue_title: "epilogue_title",
+  final_riddle_text: "final_riddle_text",
+  final_answer: "final_answer",
+  final_answer_explanation: "final_answer_explanation",
+};
+
 export async function persistTranslation(
   gameId: string,
   translation: TranslationResult,
 ): Promise<void> {
   const s = getClient();
 
-  const writes: Array<{ field: string; step_order: number | null; text: string }> = [
-    { field: "title", step_order: null, text: translation.meta.title },
-    { field: "description", step_order: null, text: translation.meta.description },
-    { field: "intro", step_order: null, text: translation.meta.intro },
-    { field: "epilogue", step_order: null, text: translation.meta.epilogue },
-    { field: "epilogue_title", step_order: null, text: translation.meta.epilogueTitle },
-    { field: "final_riddle_text", step_order: null, text: translation.meta.finalRiddleText },
-    { field: "final_answer", step_order: null, text: translation.meta.finalAnswer },
-    { field: "final_answer_explanation", step_order: null, text: translation.meta.finalAnswerExplanation },
-  ];
+  // EN est la langue source — pas besoin de la cacher. Le player API
+  // lit games/game_steps directement pour EN, et translate-service.ts
+  // skip translations_cache pour targetLang === "en" (lignes 72-74).
+  if (translation.language === "en") return;
+
+  // Fetch step IDs (UUID) by step_order — nécessaire pour source_id step-level
+  const { data: steps, error: stepsErr } = await s
+    .from("game_steps")
+    .select("id, step_order")
+    .eq("game_id", gameId)
+    .order("step_order");
+  if (stepsErr) throw new Error(`persistTranslation fetch steps: ${stepsErr.message}`);
+  const stepIdByOrder = new Map<number, string>();
+  for (const st of steps ?? []) stepIdByOrder.set(st.step_order, st.id);
+
+  type Write = {
+    source_id: string;
+    source_table: "games" | "game_steps";
+    source_field: string;
+    text: string;
+  };
+  const writes: Write[] = [];
+
+  // ── Game-level (source_table=games, source_id=gameId) ──
+  for (const [v5Key, dbField] of Object.entries(META_FIELD_MAP)) {
+    const text = (translation.meta as Record<string, unknown>)[
+      v5Key === "epilogue_title" ? "epilogueTitle"
+      : v5Key === "final_riddle_text" ? "finalRiddleText"
+      : v5Key === "final_answer" ? "finalAnswer"
+      : v5Key === "final_answer_explanation" ? "finalAnswerExplanation"
+      : v5Key
+    ];
+    if (typeof text !== "string" || !text.trim()) continue;
+    writes.push({ source_id: gameId, source_table: "games", source_field: dbField, text });
+  }
+
+  // ── Step-level (source_table=game_steps, source_id=step UUID) ──
   for (const stop of translation.stops) {
-    writes.push(
-      { field: "title", step_order: stop.step_order, text: stop.title },
-      { field: "landmark_name", step_order: stop.step_order, text: stop.landmarkName },
-      { field: "riddle_text", step_order: stop.step_order, text: stop.riddle },
-      { field: "anecdote", step_order: stop.step_order, text: stop.anecdote },
-      { field: "ar_character_dialogue", step_order: stop.step_order, text: stop.arCharacterDialogue },
-      { field: "ar_treasure_reward", step_order: stop.step_order, text: stop.arTreasureReward },
-      { field: "hint_0", step_order: stop.step_order, text: stop.hint },
-    );
+    const stepId = stepIdByOrder.get(stop.step_order);
+    if (!stepId) {
+      console.warn(`[v5 persist] step_order ${stop.step_order} not found in DB — skip translation`);
+      continue;
+    }
+    const stepWrites: Array<[string, string]> = [
+      ["title", stop.title],
+      ["landmark_name", stop.landmarkName],
+      ["riddle_text", stop.riddle],
+      ["anecdote", stop.anecdote],
+      ["ar_character_dialogue", stop.arCharacterDialogue],
+      ["ar_treasure_reward", stop.arTreasureReward],
+    ];
+    for (const [field, text] of stepWrites) {
+      if (typeof text !== "string" || !text.trim()) continue;
+      writes.push({ source_id: stepId, source_table: "game_steps", source_field: field, text });
+    }
+
+    // ── Hint synthetic (source_id = hint-{gameId}-{stepOrder}-{idx}) ──
+    // V5 produit un seul hint par stop dans le TranslationResult, donc idx=0.
+    // Pattern aligné sur game-package.ts ligne 325 (`hint-${gameId}-${step_order}-${idx}`).
+    if (typeof stop.hint === "string" && stop.hint.trim()) {
+      writes.push({
+        source_id: `hint-${gameId}-${stop.step_order}-0`,
+        source_table: "game_steps",
+        source_field: "hint_text",
+        text: stop.hint,
+      });
+    }
   }
 
   let okCount = 0;
   let errCount = 0;
+  const errors: string[] = [];
   for (const w of writes) {
     const { error } = await s.from("translations_cache").upsert(
       {
-        game_id: gameId,
-        step_order: w.step_order,
+        source_id: w.source_id,
+        source_table: w.source_table,
+        source_field: w.source_field,
         language: translation.language,
-        field: w.field,
-        text: w.text,
-        updated_at: new Date().toISOString(),
+        translated_text: w.text,
       },
-      { onConflict: "game_id,step_order,language,field" },
+      { onConflict: "source_id,source_field,language" },
     );
-    if (error) errCount++;
-    else okCount++;
+    if (error) {
+      errCount++;
+      if (errors.length < 3) errors.push(`${w.source_field}/${w.source_table}: ${error.message}`);
+    } else okCount++;
   }
   if (errCount > 0) {
-    console.warn(`[v5 persist] translations_cache: ${okCount} ok, ${errCount} errors (schema mismatch likely — non-blocking)`);
+    console.warn(
+      `[v5 persist] translations_cache (${translation.language}): ${okCount} ok, ${errCount} errors. First: ${errors.join(" | ")}`,
+    );
+  } else {
+    console.log(`[v5 persist] translations_cache (${translation.language}): ${okCount} entries written`);
   }
 }
 
@@ -201,28 +295,117 @@ export async function persistAudios(gameId: string, audio: AudioResult): Promise
 }
 
 // ─────────────────────────────────────────────────────────────
-// STEP 9 — Create activation code
+// STEP 9 — Create activation code (idempotent)
 // ─────────────────────────────────────────────────────────────
 
+/**
+ * Crée un code activation pour ce game ET ce buyer — IDEMPOTENT.
+ *
+ * Avant 2026-05-26 : insertion brute sans order_id / buyer_email.
+ * Conséquence : OddballTrip appelait ensuite `/api/external/generate-code`
+ * dont l'idempotency check (orderId + buyerEmail) ne trouvait PAS le code
+ * V5 (puisque ces colonnes étaient NULL) → un 2ème code était créé pour
+ * le même achat (cf Bouillon 26/05 : L-HE-YS6R-8XYS V5 + BOUI-GTUG-PJS3
+ * external). Le client recevait celui d'OddballTrip, le V5 restait
+ * orphelin en DB → pollution + risque de confusion opérateur.
+ *
+ * Fix : on aligne EXACTEMENT sur la logique de `external/generate-code`
+ *   1. Si orderId fourni → check (game_id, order_id). Si existe → return.
+ *   2. Sinon, fallback (game_id, buyer_email) dans 1h. Si existe → return.
+ *   3. Sinon → insert avec order_id + buyer_email pour que le PROCHAIN
+ *      appel (OddballTrip après notre callback) trouve ce code et le
+ *      renvoie au lieu d'en créer un nouveau.
+ */
 export async function createActivationCode(
   gameId: string,
   input: PipelineInput,
 ): Promise<string> {
   const s = getClient();
-  const cityPart = input.slug.slice(0, 4).toUpperCase();
+
+  // ── 1. Idempotency par orderId (clé canonique) ──
+  if (input.orderId) {
+    const { data: existing, error: lookupErr } = await s
+      .from("activation_codes")
+      .select("code")
+      .eq("game_id", gameId)
+      .eq("order_id", input.orderId)
+      .limit(1)
+      .maybeSingle();
+    // Si la colonne order_id n'existe pas (migration 022 pas appliquée),
+    // on tombera dans le catch — on continue vers le fallback email.
+    if (!lookupErr && existing?.code) {
+      console.log(
+        `[v5 createActivationCode] IDEMPOTENT return code=${existing.code} (orderId=${input.orderId})`,
+      );
+      return existing.code;
+    }
+  }
+
+  // ── 2. Fallback idempotency par (game_id, buyer_email) dans 1h ──
+  if (input.buyerEmail) {
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { data: recent, error: fbErr } = await s
+      .from("activation_codes")
+      .select("code, created_at")
+      .eq("game_id", gameId)
+      .eq("buyer_email", input.buyerEmail)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!fbErr && recent?.code) {
+      console.log(
+        `[v5 createActivationCode] IDEMPOTENT FALLBACK code=${recent.code} (email=${input.buyerEmail}, recent=${recent.created_at})`,
+      );
+      return recent.code;
+    }
+  }
+
+  // ── 3. Pas de code existant → on en crée un. ──
+  // Le préfixe = 4 chars du slug pour traçabilité (ex: BOUI-, AGRI-...).
+  const cityPart = input.slug.replace(/[^a-z0-9]/gi, "").slice(0, 4).toUpperCase();
   const r1 = Math.random().toString(36).slice(2, 6).toUpperCase();
   const r2 = Math.random().toString(36).slice(2, 6).toUpperCase();
   const code = `${cityPart}-${r1}-${r2}`;
   const expires = new Date(Date.now() + CONFIG.CODE_VALIDITY_DAYS * 24 * 60 * 60 * 1000);
-  const { error } = await s.from("activation_codes").insert({
+
+  const payload: Record<string, unknown> = {
     code,
     game_id: gameId,
     team_name: input.buyerEmail?.split("@")[0] ?? "Buyer",
     expires_at: expires.toISOString(),
     is_single_use: true,
     max_uses: 1,
-  });
+    buyer_email: input.buyerEmail ?? null,
+  };
+  // N'ajoute order_id que si présent — résilient si la colonne n'existe
+  // pas (migration 022). Si l'INSERT échoue à cause de order_id, on
+  // retire et on retente une fois.
+  if (input.orderId) payload.order_id = input.orderId;
+
+  let { error } = await s.from("activation_codes").insert(payload);
+
+  if (error && /column.*order_id|order_id.*does not exist/i.test(error.message)) {
+    console.warn(
+      `[v5 createActivationCode] order_id column missing — retry without it (migration 022 not applied)`,
+    );
+    delete payload.order_id;
+    const retry = await s.from("activation_codes").insert(payload);
+    error = retry.error;
+  }
+  if (error && /column.*buyer_email|buyer_email.*does not exist/i.test(error.message)) {
+    console.warn(
+      `[v5 createActivationCode] buyer_email column missing — retry without it`,
+    );
+    delete payload.buyer_email;
+    const retry = await s.from("activation_codes").insert(payload);
+    error = retry.error;
+  }
   if (error) throw new Error(`createActivationCode: ${error.message}`);
+
+  console.log(
+    `[v5 createActivationCode] CREATED code=${code} for gameId=${gameId.slice(0, 8)} order=${input.orderId ?? "—"} email=${input.buyerEmail ?? "—"}`,
+  );
   return code;
 }
 

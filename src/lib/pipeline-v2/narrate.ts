@@ -23,6 +23,50 @@ import type {
   StructuredGame,
 } from "./types";
 
+/**
+ * Directives narratives en fonction du transport mode.
+ *
+ * Mandat user 2026-05-26 :
+ *   - walking : narration continue, transitions courtes, joueur à pied
+ *   - mixed / driving : narration "chapitrée", joueur peut étaler sur
+ *                       plusieurs sessions (1 journée OU 1 semaine — on
+ *                       NE mentionne PAS de durée précise).
+ *   - mixed = driving pour le ton (dès qu'il y a 1 trajet voiture, le
+ *     ton "voyage" prend le dessus).
+ *   - Voix AR identique entre walking et roadtrip (pas de switch
+ *     ElevenLabs) — seul le texte change.
+ */
+function transportDirectives(transportMode: "walking" | "mixed" | "driving"): string {
+  if (transportMode === "walking") {
+    return `## Transport-aware writing directives (WALKING mode)
+
+The player will WALK from one landmark to the next (5-15 minutes between stops, all on foot, in a compact area).
+
+- **intro** : the player STANDS at the start point with the city in front of them — direct, immersive, urgent.
+  Example tone : "Before you, the old town stretches out. You have today, no more — let the trail begin."
+- **anecdote** : tight, continuous narrative — assume the player just walked from the previous stop and arrives energized.
+- **arCharacterDialogue** : energetic, complicit, urgent — like a friend whispering "look at THIS detail before they notice us".
+- **landmarkHistory** : strict heritage focus on the landmark itself (no landscape/road framing).
+- **arTreasureReward** : compact symbolic object (a sealed parchment, a small carved seal, a coin).
+- **epilogue** : closes the LOOP — the player ends near the start, the trail is "complete in one motion".
+- **DO NOT mention** : "your journey will take X days", "rest at an inn", "roads ahead". The player is here NOW, in one session.`;
+  }
+
+  // mixed | driving — same tone (dès qu'il y a 1 segment voiture, on traite comme roadtrip)
+  return `## Transport-aware writing directives (ROADTRIP mode — mixed/driving)
+
+The player will DRIVE between landmarks (10-40 min car rides between most stops, possibly spread over MULTIPLE sessions — could be 1 day, could be a full week).
+
+- **intro** : the player is at the WHEEL, about to start a journey — open horizon tone, panoramic feel.
+  Example tone : "The road waits. Take it at your own pace — what matters is that you arrive at each place with the right eyes."
+- **anecdote** : reflective, allows space — assume the player just drove for 20+ minutes through landscape to reach this stop. Acknowledge arrival when natural.
+- **arCharacterDialogue** : "drive-in" tone — the character RECOGNIZES the player has come from afar : "You traveled far — listen before you continue." Calm, contemplative, never urgent.
+- **landmarkHistory** : heritage of the landmark PLUS optional landscape/territorial context (the relief, the historic route, the river crossed) — 2-3 sentences total.
+- **arTreasureReward** : "carnet de route" / journey tokens — a stamped page, a piece of map, a relic of passage. Something that ACCUMULATES over the journey.
+- **epilogue** : closes the JOURNEY (not the loop) — the player has crossed territory and time, and carries it forward.
+- **DO NOT mention** specific durations like "your 2-day trip" — players will choose their own pacing (some do it all in one day, others over a week). Use OPEN time language : "your journey", "this voyage", "the road you take", "at your own pace".`;
+}
+
 export async function runNarrate(
   input: PipelineInput,
   selected: GeocodedLandmark[],
@@ -60,7 +104,6 @@ export async function runNarrate(
 **Genre**: ${input.genre ?? "historical"}
 **Mode**: ${input.mode}
 **Transport**: ${input.transportMode}
-**Duration**: ${input.estimatedDurationMin} minutes
 **Audience**: tourists novice to this city, no insider knowledge required
 ${warningBlock}
 
@@ -71,6 +114,8 @@ ${stopsList}
 ## CITY-TOUR philosophy
 
 Some of these landmarks were chosen for city-tour value (must-see heritage), even if their direct thematic link is weak. Your job is to **weave the scenario narrative AROUND each landmark**, no matter what it is. Example : theme Lupin + stop "Falaise d'Aval" → write a riddle/anecdote connecting Maurice Leblanc's inspiration to the cliffs.
+
+${transportDirectives(input.transportMode)}
 
 ## Your task
 
@@ -102,6 +147,8 @@ Then write game-wide content :
 - answer = arFacadeText (same UPPERCASE string)
 - Latin answers acceptable (VERITAS, REFUGIUM, LIBERTAS...) for atmosphere
 - Riddles must be solvable by a tourist who doesn't know the city
+- DO NOT anchor any specific duration anywhere in the text ("2 days", "a weekend", "in 90 minutes"). Players choose their own pacing — use open time language ("your journey", "at your own pace", "today", "your trail").
+- Apply the **Transport-aware writing directives** above verbatim — they override any default narrative reflex.
 
 ## Output schema (JSON only, no preamble)
 
