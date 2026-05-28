@@ -25,6 +25,14 @@ export interface SelectionResult {
   rawMarkdown: string;
 }
 
+/** Compute median of an array of numbers. */
+function median(arr: number[]): number {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
 function buildSelectionPrompt(input: PipelineInput, geocode: GeocodeResult): string {
   const pool = geocode.geocoded
     .map(
@@ -36,6 +44,14 @@ function buildSelectionPrompt(input: PipelineInput, geocode: GeocodeResult): str
    - Description (from research): ${g.narrativeTitle ?? "(none)"}`,
     )
     .join("\n\n");
+
+  // ANTI-OUTLIER (2026-05-27) : on calcule la distance médiane du pool
+  // pour donner à Claude un seuil concret. Bug observé Vianden 27/05 :
+  // 7 stops dans cluster <400m, 8e stop à 754m (barrage) = outlier
+  // thématique forcé. Cette consigne guide Claude à éviter ces sauts.
+  const dists = geocode.geocoded.map((g) => g.distanceFromStartM ?? 0);
+  const medianDist = Math.round(median(dists));
+  const outlierThreshold = Math.round(medianDist * 3);
 
   // Detect if pool index 0 is a forced start point (marked by runGeocode)
   const hasForcedStart =
@@ -83,9 +99,19 @@ This product is FIRST a city-tour (tourist discovers the city's heritage), SECON
 3. **Variety** : mix iconic + lesser-known if both are heritage-grade
 4. **Thematic relevance** : tiebreaker only — used to rank between two equally important sites
 
+## ANTI-OUTLIER RULE (geographic discipline)
+
+Pool median distance from start : **${medianDist}m**. Outlier threshold (3× median) : **${outlierThreshold}m**.
+
+- STRONGLY PREFER candidates within 2× the median distance (= within ${Math.round(medianDist * 2)}m of start).
+- **AVOID** any candidate beyond ${outlierThreshold}m, EVEN IF it is thematically perfect. These outliers create awkward jumps in the walking/driving experience and disconnect the climax from the cluster.
+- If excluding outliers leaves you with fewer than ${CONFIG.TARGET_STOPS} candidates, prefer returning ${CONFIG.MIN_STOPS} tightly-clustered stops over ${CONFIG.TARGET_STOPS} with one outlier.
+- A culturally significant landmark closer to the cluster ALWAYS wins over a thematically perfect landmark far outside the cluster.
+
 **Examples of good selection logic** :
 - Étretat theme Lupin → pick Falaise d'Aval, Aiguille, Maurice Leblanc house, Manneporte even though only the last has direct Lupin link — they're THE Étretat
 - Vaduz theme "WWII Regiment" → pick the Castle, Cathedral, National Museum, Town Square (these are Vaduz's main heritage), even if no direct WWII angle
+- Vianden theme Hugo (small village pool) → pick the Castle, Hugo House, Hugo Monument, Trinitarian Church, Museum, Bridge banks — DO NOT include a dam 750m away just for a "modernity climax"
 
 **Order the selection** in the optimal visit sequence (start near start point, build narrative momentum, climax near the end).
 
@@ -175,6 +201,24 @@ export async function runSelect(
   if (selected.length < CONFIG.MIN_STOPS) {
     throw new Error(
       `Select : après matching back au pool, seulement ${selected.length}/${parsed.selected.length} landmarks valides`,
+    );
+  }
+
+  // ── ANTI-OUTLIER detection (post-select log) ──
+  // On vérifie que Claude a respecté la consigne anti-outlier du prompt.
+  // Si non, on log un warning pour traçabilité (mais on ne prune pas
+  // automatiquement — l'opérateur peut décider après review).
+  const selDists = selected.map((s) => s.distanceFromStartM ?? 0);
+  const selMedian = median(selDists);
+  const outlierThresh = selMedian * 3;
+  const outliers = selected.filter((s) => (s.distanceFromStartM ?? 0) > outlierThresh && selMedian > 50);
+  if (outliers.length > 0) {
+    console.warn(
+      `[v5 select] ⚠️ ${outliers.length} OUTLIER(S) detected (>${Math.round(outlierThresh)}m, median=${Math.round(selMedian)}m): ${outliers.map((o) => `"${o.name}" @${o.distanceFromStartM}m`).join(", ")}. Claude a ignoré l'anti-outlier rule — opérateur peut éditer le draft post-publish.`,
+    );
+  } else {
+    console.log(
+      `[v5 select] ✓ no outliers (median=${Math.round(selMedian)}m, all within 3× = ${Math.round(outlierThresh)}m)`,
     );
   }
 
