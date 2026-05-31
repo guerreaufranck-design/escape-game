@@ -76,6 +76,17 @@ export const recoverStuckGames = inngest.createFunction(
         .select("id, slug, city, title, created_at")
         .eq("is_published", false)
         .eq("needs_review", false)
+        // CRITICAL (2026-05-31) : skip games managed by pipeline v5 (build-game-v2
+        // Inngest function). Re-firing 'game/generate.requested' on a V5-tagged
+        // game routes it to the V1 generateGame Inngest fn — which doesn't know
+        // how to finish a V5 game and re-burns Claude/Gemini/ElevenLabs API calls
+        // every 5 min indefinitely. Same defense already in place on the cron
+        // process-pending-games (see route.ts line 88).
+        //
+        // Si un game V5 est réellement stuck (rare car build-game-v2 a halt+
+        // needs_review explicite à chaque step), l'opérateur le repère via le
+        // dashboard et relance manuellement — pas via ce heartbeat.
+        .neq("start_point_source", "pipeline_v2")
         .lt("created_at", cutoff)
         .order("created_at", { ascending: true })
         .limit(MAX_REPLAYS_PER_TICK);
