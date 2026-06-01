@@ -156,6 +156,14 @@ export interface StructuredGame {
     finalRiddleText: string;
     finalAnswer: string;
     finalAnswerExplanation: string;
+    /**
+     * 3 indices progressifs pour la méta-énigme finale (2026-05-31).
+     * Garantie anti-blocage : le joueur peut toujours finir.
+     *   [0] LIGHT  : catégorie + 1ère lettre
+     *   [1] MEDIUM : 3 premières lettres + contexte
+     *   [2] STRONG : réponse avec 1 lettre cachée
+     */
+    finalRiddleHints?: string[];
   };
   /** Stops dans l'ordre. */
   stops: StructuredStop[];

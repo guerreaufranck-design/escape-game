@@ -136,7 +136,55 @@ Then write game-wide content :
 - description (1-2 sentences for product page)
 - intro (3-5 sentences, immersive, second person)
 - epilogue (3-5 sentences)
-- finalRiddleText + finalAnswer + finalAnswerExplanation
+- finalRiddleText + finalAnswer + finalAnswerExplanation + finalRiddleHints (3 progressive hints)
+
+## META-FINALE — HARD RULE (2026-05-31, post-incident Versailles/Montoire/Bayeux)
+
+The meta-finale (finalAnswer) is the most fragile part of the experience.
+Observed failure modes :
+  - Versailles "VIRTUS" : 6 Latin virtues + 1 stray year = incoherent pattern
+  - Bayeux "FIVE" : trivial counting, no real puzzle
+  - Montoire "3" : meaningless meta-answer
+  - Vianden "AMOR" : OK because 7 pure Latin words → 1 umbrella Latin word
+
+To prevent these failures, FOLLOW THESE RULES STRICTLY :
+
+### Rule 1 — Define meta-answer FIRST
+Before writing the 8 stop answers, choose the **umbrella concept** :
+  - A single Latin word (recommended — universal across 32 player languages) : VIRTUS, HONOR, AMOR, MEMORIA, FIDES, AUDACIA, SPES, PATRIA, GLORIA, VERITAS...
+  - OR a single proper noun (universal) : a king's name, a battle, a city
+  - OR a single common noun in the role-play language
+
+### Rule 2 — All 8 stop answers MUST be instances of the meta-category
+If meta = VIRTUS, ALL 8 stop answers must be Latin virtues.
+If meta = a king's name, ALL 8 answers must be his attributes/places.
+**ZERO mixing of categories.** NO stray years like 1770, NO stray numbers, NO stray
+foreign-language words. If you cannot find 8 same-category answers observable
+at the landmarks, REDUCE to ${CONFIG.MIN_STOPS} answers all in the category.
+
+### Rule 3 — The finalRiddleText MUST :
+  - Explicitly state the category : "These 7 Latin words are all virtues."
+  - State the expected answer format : "Find the single Latin word (X letters) that names the concept."
+  - Hint at the answer naturally (a famous quote, a thematic link).
+
+### Rule 4 — Provide 3 progressive hints (mandatory)
+The player has 2 attempts. Between attempts, hints are revealed progressively.
+Each hint is ONE SHORT SENTENCE :
+  - hint 1 (LIGHT) : Restate the category + first letter of the answer.
+                    Example : "It's a Latin word. The first letter is V."
+  - hint 2 (MEDIUM) : Show the first 3 letters + thematic context.
+                    Example : "VIR... Think of what binds all the virtues together."
+  - hint 3 (STRONG) : Show the answer with 1 letter missing in the middle.
+                    Example : "VIR_US — the missing letter is between S and U."
+
+These 3 hints GUARANTEE the player can finish without external lookup.
+
+### Rule 5 — Forbidden meta-answers
+  - ❌ Pure numbers ("3", "1940", "FIVE")
+  - ❌ Trivial counts ("the number of beaches")
+  - ❌ Generic English words ("LOVE", "TRUTH") — prefer Latin equivalent (AMOR, VERITAS) for multi-language stability
+  - ❌ Multi-word answers ("THE KING'S OATH")
+  - ❌ Names that contradict the riddles' enumeration
 
 ## Strict rules
 
@@ -161,8 +209,13 @@ Then write game-wide content :
     "epilogue": "string",
     "epilogueTitle": "string",
     "finalRiddleText": "string",
-    "finalAnswer": "string",
-    "finalAnswerExplanation": "string"
+    "finalAnswer": "string (UPPERCASE, single word, Latin preferred)",
+    "finalAnswerExplanation": "string",
+    "finalRiddleHints": [
+      "Hint 1 LIGHT — category + first letter of answer (1 sentence)",
+      "Hint 2 MEDIUM — first 3 letters + thematic context (1 sentence)",
+      "Hint 3 STRONG — answer with 1 letter blanked (e.g. VIR_US)"
+    ]
   },
   "stops": [
     {
@@ -220,6 +273,52 @@ Then write game-wide content :
     landmarkHistory: s.landmarkHistory ?? { en: "" },
   }));
 
-  console.log(`[v5 narrate] Claude done in ${dur}s — ${parsed.stops.length} stops habillés EN`);
+  // ── META-FINALE — safety check + auto-repair ──
+  // (2026-05-31) On enforce les HARD RULES post-parse :
+  //   1. finalAnswer doit être un mot (pas un nombre brut, pas un chiffre,
+  //      pas une année).
+  //   2. finalRiddleHints doit exister et contenir exactement 3 strings.
+  //   3. Si Claude a raté → on log un warning ET on génère des hints
+  //      fallback minimalistes pour ne pas casser la pipeline downstream.
+  const meta = parsed.meta as typeof parsed.meta & {
+    finalRiddleHints?: string[];
+  };
+  const finalAnswer = meta.finalAnswer ?? "";
+  const isNumericOnly = /^\d+$/.test(finalAnswer.trim());
+  const isPureCount = /^(ONE|TWO|THREE|FOUR|FIVE|SIX|SEVEN|EIGHT|NINE|TEN)$/i.test(finalAnswer.trim());
+  if (isNumericOnly || isPureCount) {
+    console.warn(
+      `[v5 narrate] ⚠️  META-FINALE WARNING : finalAnswer="${finalAnswer}" semble être un nombre/count brut, contraire à la HARD RULE. ` +
+      `Claude n'a pas respecté la consigne d'umbrella concept. Le jeu est jouable mais la qualité méta est dégradée.`,
+    );
+  }
+
+  // Sanitize finalRiddleHints (provide fallback if Claude omitted)
+  if (!Array.isArray(meta.finalRiddleHints) || meta.finalRiddleHints.length === 0) {
+    console.warn(
+      `[v5 narrate] ⚠️  META-FINALE WARNING : finalRiddleHints manquant. Auto-fallback généré.`,
+    );
+    const a = finalAnswer || "?";
+    meta.finalRiddleHints = [
+      `The answer is a single word. First letter: ${a.charAt(0) || "?"}.`,
+      a.length >= 3
+        ? `The first 3 letters are ${a.slice(0, 3)}.`
+        : `Think about the umbrella concept of the riddles you have solved.`,
+      a.length >= 4
+        ? `${a.charAt(0)}${a.slice(1).replace(/./g, "_")} — answer has ${a.length} letters.`
+        : `The answer is ${a.charAt(0)}_..._${a.charAt(a.length - 1)} (${a.length} letters).`,
+    ];
+  } else if (meta.finalRiddleHints.length < 3) {
+    while (meta.finalRiddleHints.length < 3) {
+      meta.finalRiddleHints.push(`(no additional hint — answer has ${finalAnswer.length} letters)`);
+    }
+  } else if (meta.finalRiddleHints.length > 3) {
+    meta.finalRiddleHints = meta.finalRiddleHints.slice(0, 3);
+  }
+
+  // Persist back the sanitized hints
+  parsed.meta = meta;
+
+  console.log(`[v5 narrate] Claude done in ${dur}s — ${parsed.stops.length} stops habillés EN, méta="${finalAnswer}" + 3 hints`);
   return parsed;
 }

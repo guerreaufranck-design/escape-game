@@ -233,16 +233,34 @@ export async function persistMasterEN(
     final_answer_explanation: game.meta.finalAnswerExplanation,
     updated_at: new Date().toISOString(),
   };
+  // 2026-05-31 : 3 indices progressifs pour la méta-énigme (anti-blocage).
+  // Si la migration 043 n'est pas encore appliquée, on retombe sur un
+  // INSERT sans cette colonne (retry catch). Le jeu marche quand même.
+  if (Array.isArray(game.meta.finalRiddleHints) && game.meta.finalRiddleHints.length === 3) {
+    updatePayload.final_riddle_hints = game.meta.finalRiddleHints;
+  }
   if (stop1?.latitude && stop1?.longitude) {
     updatePayload.start_point_lat = stop1.latitude;
     updatePayload.start_point_lon = stop1.longitude;
     updatePayload.start_point_text = stop1.landmarkName ?? input.startPointText ?? null;
   }
 
-  const { error: gErr } = await s
+  let { error: gErr } = await s
     .from("games")
     .update(updatePayload)
     .eq("id", gameId);
+
+  // Resilience : si final_riddle_hints n'existe pas (migration 043 pas
+  // encore appliquée), on retry sans cette colonne. Le jeu reste jouable
+  // (UI PWA tombera sur les fallback hints client-side si besoin).
+  if (gErr && /column.*final_riddle_hints|final_riddle_hints.*does not exist/i.test(gErr.message)) {
+    console.warn(
+      `[v5 persist] Migration 043 not applied — final_riddle_hints column missing. Retrying update without it.`,
+    );
+    delete updatePayload.final_riddle_hints;
+    const retry = await s.from("games").update(updatePayload).eq("id", gameId);
+    gErr = retry.error;
+  }
   if (gErr) throw new Error(`persistMasterEN games update: ${gErr.message}`);
 
   // 2. DELETE then INSERT game_steps (idempotent)
@@ -360,6 +378,24 @@ export async function persistTranslation(
     ];
     if (typeof text !== "string" || !text.trim()) continue;
     writes.push({ source_id: gameId, source_table: "games", source_field: dbField, text });
+  }
+
+  // ── Meta-finale hints (2026-05-31) — chaque hint dans translations_cache ──
+  // Pattern aligné sur les hints de stop : 1 row par hint, source_field
+  // "final_riddle_hint_0", "_1", "_2". Le player API peut les lire pour
+  // afficher progressivement entre les 2 tentatives.
+  const metaHints = (translation.meta as { finalRiddleHints?: unknown }).finalRiddleHints;
+  if (Array.isArray(metaHints)) {
+    for (let i = 0; i < metaHints.length && i < 3; i++) {
+      const h = metaHints[i];
+      if (typeof h !== "string" || !h.trim()) continue;
+      writes.push({
+        source_id: gameId,
+        source_table: "games",
+        source_field: `final_riddle_hint_${i}`,
+        text: h,
+      });
+    }
   }
 
   // ── Step-level (source_table=game_steps, source_id=step UUID) ──
