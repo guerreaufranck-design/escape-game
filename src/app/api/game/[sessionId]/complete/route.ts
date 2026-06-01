@@ -104,6 +104,12 @@ export async function POST(
         if (codeRow?.code && apiSecret) {
           // Don't await — fire and forget so the player's results page
           // isn't slowed down by a network call to oddballtrip.com.
+          //
+          // Observabilité (2026-05-31) : on log AUSSI le succès pour
+          // confirmer côté Vercel logs que le ping est bien parti et
+          // qu'OddballTrip a accepté. Avant, .catch seul = succès
+          // silencieux → impossible de vérifier sans demander à
+          // OddballTrip côté leur DB.
           fetch("https://www.oddballtrip.com/api/external/game-finished", {
             method: "POST",
             headers: {
@@ -111,9 +117,29 @@ export async function POST(
               "Content-Type": "application/json",
             },
             body: JSON.stringify({ code: codeRow.code }),
-          }).catch((err) => {
-            console.warn("[complete] game-finished ping failed:", err);
-          });
+          })
+            .then(async (res) => {
+              const body = await res.text().catch(() => "");
+              if (res.ok) {
+                console.log(
+                  `[complete] game-finished ping OK for code=${codeRow.code} body=${body.slice(0, 200)}`,
+                );
+              } else {
+                console.warn(
+                  `[complete] game-finished ping FAILED status=${res.status} code=${codeRow.code} body=${body.slice(0, 200)}`,
+                );
+              }
+            })
+            .catch((err) => {
+              console.warn("[complete] game-finished ping failed:", err);
+            });
+        } else {
+          // Diagnostic explicite si une des 2 conditions manque — utile
+          // pour identifier des bugs de config (EXTERNAL_API_SECRET non
+          // set en prod, codeRow.code NULL...).
+          console.warn(
+            `[complete] game-finished SKIPPED — hasCode=${!!codeRow?.code} hasSecret=${!!apiSecret}`,
+          );
         }
       } catch (err) {
         console.warn("[complete] game-finished lookup failed:", err);
