@@ -11,7 +11,7 @@ interface SessionRow {
   player_name: string;
   team_name: string | null;
   game_title: string;
-  status: "active" | "completed" | "abandoned";
+  status: string; // active | completed | abandoned | pending | (futur)
   current_step: number;
   total_steps: number;
   started_at: string;
@@ -22,11 +22,20 @@ interface SessionsTableProps {
   sessions: SessionRow[];
 }
 
-const statusConfig = {
+// 2026-06-01 fix : on accepte tout status string + fallback générique.
+// Avant : un status "pending" (introduit récemment) crashait la page
+// avec TypeError: Cannot read prop 'label' of undefined → 500 sur
+// /admin/sessions, bloquant toute la consultation des sessions.
+const statusConfig: Record<string, { label: string; className: string }> = {
   active: { label: "En cours", className: "bg-emerald-900/40 text-emerald-400 border-emerald-800/50" },
   completed: { label: "Termine", className: "bg-blue-900/40 text-blue-400 border-blue-800/50" },
   abandoned: { label: "Abandonne", className: "bg-red-900/40 text-red-400 border-red-800/50" },
-} as const;
+  pending: { label: "En attente", className: "bg-amber-900/40 text-amber-400 border-amber-800/50" },
+};
+const STATUS_FALLBACK = { label: "Inconnu", className: "bg-zinc-800/40 text-zinc-400 border-zinc-700/50" };
+function getStatus(s: string) {
+  return statusConfig[s] ?? STATUS_FALLBACK;
+}
 
 function formatTime(seconds: number | null): string {
   if (seconds == null) return "-";
@@ -67,7 +76,7 @@ export function SessionsTable({ sessions }: SessionsTableProps) {
           >
             {s === "all"
               ? "Tous"
-              : statusConfig[s as keyof typeof statusConfig].label}
+              : getStatus(s).label}
           </Button>
         ))}
       </div>
@@ -108,10 +117,10 @@ export function SessionsTable({ sessions }: SessionsTableProps) {
                 <td className="px-4 py-3">
                   <span
                     className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-medium ${
-                      statusConfig[session.status].className
+                      getStatus(session.status).className
                     }`}
                   >
-                    {statusConfig[session.status].label}
+                    {getStatus(session.status).label}
                   </span>
                 </td>
                 <td className="px-4 py-3 text-zinc-300">
