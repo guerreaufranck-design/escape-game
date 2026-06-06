@@ -359,9 +359,20 @@ RULE 3 — DATED EVENTS DRIVE MAGIC WORDS
 ║                                                                       ║
 ║ USE INSTEAD — pick the MOST DRAMATIC option among :                   ║
 ║                                                                       ║
-║   A. LATIN THEMATIC WORDS (preferred — exotic, narrable, varied) :    ║
-║      VERITAS, FIDES, AURUM, LIBERTAS, MARE, GLORIA, VIRTUS, PAX,      ║
-║      CARITAS, MEMENTO, IMPERIUM, REGINA, MAGNUM, VICTORIA, etc.       ║
+║   🌍 LANGUAGE RULE (READ FIRST) — MATCH THE DESTINATION CULTURE :     ║
+║      Pick answer words in the language a LOCAL would use, written in  ║
+║      the Latin alphabet. LATIN WORDS ONLY for Roman / classical /     ║
+║      Mediterranean-European themes (Italy, Spain, France, Greece,     ║
+║      Roman/medieval sites). For every other culture, use the LOCAL    ║
+║      language (romaji / transliteration), e.g.:                       ║
+║        Japan → REI, GEI, MIYABI, KOKORO, HANA                         ║
+║        USA / UK → GOLD, LUCK, POWER, HOPE, GLORY                      ║
+║        Germany → German words, etc.                                   ║
+║      Latin in a NON-Latin country (Las Vegas, Kyoto, New York) is     ║
+║      FORBIDDEN — it breaks immersion. A local must recognise it.      ║
+║                                                                       ║
+║   A. THEMATIC WORDS in that culture's language (exotic, narrable) :   ║
+║      Roman/EU theme → VERITAS, FIDES, GLORIA, VIRTUS, PAX, AURUM…     ║
 ║      → BUT vary them across stops. Don't repeat the same word.        ║
 ║                                                                       ║
 ║   B. ARABIC YEAR ("1628", "1789", "1944") :                           ║
@@ -1778,7 +1789,7 @@ export async function regenerateStep(params: {
     params.location.answer.toUpperCase().trim() === "AUTO";
 
   const answerInstruction = answerIsPlaceholder
-    ? `INVENT a single thematic answer that fits the theme "${params.theme}" and the location. Output it as UPPERCASE Latin word, year, Roman numeral, or evocative single word. NEVER output the literal string "AUTO" — that's a placeholder, not an answer. Examples: VERITAS, MCMXIV, IGNIS, AURUM, REQUIESCAT.`
+    ? `INVENT a single thematic answer that fits the theme "${params.theme}" and the location. Output it as an UPPERCASE word in the language that matches the destination culture — Latin ONLY for Roman/classical/European themes; otherwise the LOCAL language written in the Latin alphabet (e.g. Japan → romaji like KOKORO, USA/UK → English like GOLD), or a year / Roman numeral. Latin in a non-Latin country is FORBIDDEN. NEVER output the literal string "AUTO" — that's a placeholder, not an answer. Examples: VERITAS (Roman theme), KOKORO (Japan), GOLD (USA), MCMXIV.`
     : `Use exactly: "${params.location.answer}"`;
 
   const answerLine = answerIsPlaceholder
@@ -2649,8 +2660,11 @@ ACCEPTED MECHANISMS (pick ONE) :
        a) EVERY indice MUST start with an A-Z LETTER. If any indice is a
           number (e.g. "1248", "43", "177") OR starts with a non-letter
           character, M1 is FORBIDDEN. Use M2, M3, or M4 instead.
-       b) The resulting word MUST be a REAL recognizable word in
-          Latin/French/English/Spanish/Italian OR a real proper noun
+       b) The resulting word MUST be a REAL recognizable word in the
+          DESTINATION'S language — Latin ONLY for Roman/classical/EU
+          themes; otherwise the LOCAL language in the Latin alphabet
+          (e.g. Japan → romaji like KOKORO, USA/UK → English like GLORY)
+          — OR a real proper noun
           (city, person, named concept). NEVER output a meaningless
           string like "FAVAGIS", "CSSACFMV", or any concatenation that
           doesn't resolve to a known word — those are AUTOMATIC FAILURES.
