@@ -15,6 +15,7 @@
 
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { StructuredGame, TranslationResult } from "./types";
+import { callOpenAI } from "../openai-fallback";
 
 const MODEL = "gemini-2.5-flash";
 
@@ -108,8 +109,21 @@ export async function translateGame(
   });
 
   const prompt = buildTranslatePrompt(game, targetLang);
-  const result = await model.generateContent(prompt);
-  const text = result.response.text();
+  let text: string;
+  try {
+    const result = await model.generateContent(prompt);
+    text = result.response.text();
+  } catch (geminiErr) {
+    // Gemini 2.5-flash is frequently rate-limited / 503 under load. On ANY
+    // Gemini failure, fall back to OpenAI (gpt-4o-mini) so a transient Gemini
+    // outage doesn't stall or kill the build. (New Orleans 2026-06-07: Gemini
+    // 503 during the translate step.) The prompt already asks for a JSON object.
+    console.warn(
+      `[v5 translate ${targetLang}] Gemini failed (${(geminiErr as Error).message.slice(0, 140)}) ` +
+        `— falling back to OpenAI ${process.env.OPENAI_MODEL || "gpt-4o-mini"}`,
+    );
+    text = await callOpenAI(prompt, true);
+  }
 
   let parsed: { meta: StructuredGame["meta"]; stops: TranslationResult["stops"] };
   try {
