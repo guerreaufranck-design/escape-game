@@ -1,4 +1,5 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
+import { callOpenAI } from "./openai-fallback";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
 
@@ -43,11 +44,12 @@ export async function translateText(
     return await translateViaGemini(prompt);
   } catch (geminiErr) {
     console.warn(
-      `[translateText] Gemini failed (${(geminiErr as Error).message.slice(0, 100)}), falling back to Claude`,
+      `[translateText] Gemini failed (${(geminiErr as Error).message.slice(0, 100)}), falling back to OpenAI ${process.env.OPENAI_MODEL || "gpt-4o-mini"}`,
     );
-    // Fallback: Claude Haiku (slightly slower, ~3× the price, but reliable
-    // when Gemini is down — quota cooked, project flagged, regional outage).
-    return translateViaClaude(prompt);
+    // Fallback: OpenAI gpt-4o-mini — cheap and reliable when Gemini is down
+    // (quota cooked, project flagged, regional outage). Chosen over Claude
+    // for cost: translation is a banal task, no need for an expensive model.
+    return callOpenAI(prompt, false);
   }
 }
 
@@ -69,9 +71,9 @@ export async function translateJsonObject<T = Record<string, string>>(
     raw = await geminiRestCall(prompt, true);
   } catch (geminiErr) {
     console.warn(
-      `[translateJsonObject] Gemini failed (${(geminiErr as Error).message.slice(0, 100)}), falling back to Claude`,
+      `[translateJsonObject] Gemini failed (${(geminiErr as Error).message.slice(0, 100)}), falling back to OpenAI ${process.env.OPENAI_MODEL || "gpt-4o-mini"}`,
     );
-    raw = await translateViaClaude(prompt);
+    raw = await callOpenAI(prompt, true);
   }
   // Strip code fences / prose around the JSON object.
   const match = raw.match(/\{[\s\S]*\}/);
@@ -112,37 +114,8 @@ async function geminiRestCall(prompt: string, jsonMode: boolean): Promise<string
   return String(out).trim();
 }
 
-async function translateViaClaude(prompt: string): Promise<string> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) throw new Error("ANTHROPIC_API_KEY missing (Claude fallback)");
-
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: "claude-haiku-4-5",
-      max_tokens: 4096,
-      temperature: 0.2,
-      messages: [{ role: "user", content: prompt }],
-    }),
-  });
-
-  if (!res.ok) {
-    const errBody = await res.text();
-    throw new Error(`Claude ${res.status}: ${errBody.slice(0, 200)}`);
-  }
-
-  const data = await res.json();
-  const out = data?.content
-    ?.filter((c: { type?: string }) => c.type === "text")
-    .map((c: { text?: string }) => c.text)
-    .join("") ?? "";
-  return String(out).trim();
-}
+// (translateViaClaude removed 2026-06-07 — translate fallbacks now use OpenAI
+//  gpt-4o-mini via callOpenAI; Claude is too expensive for banal translation.)
 
 /**
  * Compares a player's photo (base64) with the expected landmark description.
