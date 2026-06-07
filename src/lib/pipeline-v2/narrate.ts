@@ -265,6 +265,21 @@ These 3 hints GUARANTEE the player can finish without external lookup.
   }
 
   parsed.sourceLanguage = "en";
+
+  // Guard (2026-06-07) : Claude returns the stops array but OCCASIONALLY omits a
+  // required field (riddle / answer / title) for ONE stop in its JSON. Left
+  // unguarded, that `undefined` reaches persist.ts → "null value in column
+  // riddle_text violates not-null constraint" → the WHOLE build dies, and Inngest
+  // replays the SAME cached bad narrate output, so all 3 retries fail identically.
+  // Fix : throw a CLEAR error HERE (before returning) on missing stops/fields, so
+  // the Inngest narrate step retries with a FRESH Claude call instead of poisoning
+  // persist. New Orleans 2026-06-07 : stop with riddle=null killed the build.
+  if (!Array.isArray(parsed.stops) || parsed.stops.length === 0) {
+    throw new Error(
+      `Narrate returned no usable stops. Preview: ${jsonMatch[0].slice(0, 300)}`,
+    );
+  }
+
   parsed.stops = parsed.stops.map((s) => ({
     ...s,
     arCharacterType: s.arCharacterType || "guide_male",
@@ -272,6 +287,20 @@ These 3 hints GUARANTEE the player can finish without external lookup.
     bonusTimeSeconds: s.bonusTimeSeconds ?? CONFIG.BONUS_TIME_S,
     landmarkHistory: s.landmarkHistory ?? { en: "" },
   }));
+
+  for (const s of parsed.stops) {
+    const rec = s as unknown as Record<string, unknown>;
+    const missing = (["title", "riddle", "answer"] as const).filter(
+      (k) => !(typeof rec[k] === "string" && (rec[k] as string).trim().length > 0),
+    );
+    if (missing.length > 0) {
+      throw new Error(
+        `Narrate produced an incomplete stop (order ${rec.step_order ?? "?"}, ` +
+          `"${rec.landmarkName ?? rec.title ?? "?"}") — missing/empty field(s): ` +
+          `[${missing.join(", ")}]. Claude dropped a field; the narrate step will retry.`,
+      );
+    }
+  }
 
   // ── META-FINALE — safety check + auto-repair ──
   // (2026-05-31) On enforce les HARD RULES post-parse :
