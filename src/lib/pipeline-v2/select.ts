@@ -17,6 +17,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 import { CONFIG } from "./config";
+import { optimizeRoute, routeLengthM } from "./route-optimize";
 import type { GeocodeResult, GeocodedLandmark, PipelineInput } from "./types";
 
 export interface SelectionResult {
@@ -249,6 +250,26 @@ export async function runSelect(
       selected[i] = { ...selected[i], order: i + 1 };
     }
   }
+
+  // ── Route optimization (2026-06-08) — déterministe, post-LLM ──
+  // Claude choisit BIEN les landmarks mais ordonne MAL la route (il raisonne la
+  // géographie au lieu de la calculer → zigzags, ex. Boston Old North→Tea Party).
+  // On garde son choix et on confie l'ORDRE à un calcul : plus-proche-voisin +
+  // 2-opt, départ (step 1) figé. Le dernier stop du chemin optimal = climax.
+  const beforeLen = routeLengthM(selected);
+  const optimized = optimizeRoute(selected);
+  for (let i = 0; i < optimized.length; i++) optimized[i] = { ...optimized[i], order: i + 1 };
+  const afterLen = routeLengthM(optimized);
+  if (afterLen + 1 < beforeLen) {
+    console.log(
+      `[v5 select] route optimized: ${Math.round(beforeLen)}m → ${Math.round(afterLen)}m ` +
+        `(−${Math.round(beforeLen - afterLen)}m) : ${optimized.map((s) => s.googleName || s.name).join(" → ")}`,
+    );
+  } else {
+    console.log(`[v5 select] route already optimal (${Math.round(beforeLen)}m), ordre Claude conservé`);
+  }
+  selected.length = 0;
+  selected.push(...optimized);
 
   console.log(`[v5 select] Claude done in ${dur}s — ${selected.length} sélectionnés`);
   return {
