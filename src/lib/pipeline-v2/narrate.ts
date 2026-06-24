@@ -67,6 +67,43 @@ The player will DRIVE between landmarks (10-40 min car rides between most stops,
 - **DO NOT mention** specific durations like "your 2-day trip" — players will choose their own pacing (some do it all in one day, others over a week). Use OPEN time language : "your journey", "this voyage", "the road you take", "at your own pace".`;
 }
 
+/**
+ * Langue dans laquelle DOIVENT être écrits les mots-réponses (les 8 stops + le
+ * méta-mot final). C'est la langue patrimoniale de la VILLE, pas la langue de
+ * livraison : un jeu à Barcelone → mots espagnols, à Cluny → français, à Kyoto
+ * → japonais en rōmaji. Le mot-réponse est révélé en AR et reste identique quelle
+ * que soit la langue du joueur (la narration, elle, est traduite autour).
+ *
+ * RAISON D'ÊTRE (2026-06-24) : avant, le prompt recommandait "un mot latin
+ * unique, universel sur 32 langues" → le LLM sortait SYSTÉMATIQUEMENT "VIRTUS"
+ * en latin sur tous les jeux. Réponse finale toujours identique + latin = nul.
+ */
+function heritageLanguage(input: PipelineInput): string {
+  const c = (input.country || "").trim().toLowerCase();
+  const byCountry: Record<string, string> = {
+    france: "French", espagne: "Spanish", spain: "Spanish", italie: "Italian", italy: "Italian",
+    allemagne: "German", germany: "German", portugal: "Portuguese",
+    "pays-bas": "Dutch", netherlands: "Dutch", "países bajos": "Dutch",
+    japon: "Japanese written in Latin/rōmaji script (NEVER kana or kanji)",
+    japan: "Japanese written in Latin/rōmaji script (NEVER kana or kanji)",
+    "royaume-uni": "English", "united kingdom": "English", uk: "English",
+    usa: "English", "états-unis": "English", "united states": "English", "estados unidos": "English",
+    irlande: "English", ireland: "English",
+    grèce: "Greek in Latin transliteration", greece: "Greek in Latin transliteration",
+    autriche: "German", austria: "German", luxembourg: "French",
+    suisse: "the local language of the city (French, German or Italian depending on the canton)",
+    switzerland: "the local language of the city (French, German or Italian depending on the canton)",
+    belgique: "the local language of the city (French or Dutch depending on the region)",
+    belgium: "the local language of the city (French or Dutch depending on the region)",
+  };
+  if (byCountry[c]) return byCountry[c];
+  const byLang: Record<string, string> = {
+    fr: "French", es: "Spanish", it: "Italian", de: "German", pt: "Portuguese",
+    nl: "Dutch", en: "English", ja: "Japanese written in Latin/rōmaji script (NEVER kana or kanji)",
+  };
+  return byLang[input.language] || "the local heritage language of the city";
+}
+
 export async function runNarrate(
   input: PipelineInput,
   selected: GeocodedLandmark[],
@@ -89,6 +126,7 @@ export async function runNarrate(
     : "";
 
   const archetypeList = Object.keys(CONFIG.ELEVENLABS_ARCHETYPE_VOICES).join(" | ");
+  const answerLang = heritageLanguage(input);
 
   const prompt = `You are writing the full narrative content for an outdoor escape game / city tour in ${input.city}${
     input.country ? `, ${input.country}` : ""
@@ -138,62 +176,82 @@ Then write game-wide content :
 - epilogue (3-5 sentences)
 - finalRiddleText + finalAnswer + finalAnswerExplanation + finalRiddleHints (3 progressive hints)
 
-## META-FINALE — HARD RULE (2026-05-31, post-incident Versailles/Montoire/Bayeux)
+## META-FINALE — HARD RULE (réécrit 2026-06-24)
 
 The meta-finale (finalAnswer) is the most fragile part of the experience.
-Observed failure modes :
-  - Versailles "VIRTUS" : 6 Latin virtues + 1 stray year = incoherent pattern
-  - Bayeux "FIVE" : trivial counting, no real puzzle
-  - Montoire "3" : meaningless meta-answer
-  - Vianden "AMOR" : OK because 7 pure Latin words → 1 umbrella Latin word
 
-To prevent these failures, FOLLOW THESE RULES STRICTLY :
+### ⛔ LANGUAGE & VARIETY — the #1 rule (read twice)
+The finalAnswer AND all 8 stop answers MUST be written in **${answerLang}**.
+**NEVER Latin** — the ONLY exception is when the game's theme is literally Roman
+or classical antiquity (a Roman site, "Massalia antique", etc.). For every other
+theme, Latin is FORBIDDEN.
+
+The finalAnswer MUST be **specific to THIS game's city and theme**, and DIFFERENT
+from game to game. A player who buys several games must NOT get the same final word
+twice.
+  - ❌ ABSOLUTELY FORBIDDEN as finalAnswer : VIRTUS, VERITAS, HONOR, AMOR, FIDES,
+    MEMORIA, GLORIA, and any generic "virtues" umbrella. These have been overused
+    on every game — do not reach for them.
+  - ✅ Derive the final word from THIS scenario : the hidden treasure, the key
+    concept, the revealed secret, the city's defining idea — expressed in ${answerLang}.
+  - Illustrative ONLY (never copy — invent the right word for the actual game) :
+    a 1714 siege of Barcelona → "RESISTENCIA" ; a wine capital → "VENDIMIA" ;
+    a corsair port → "BOTÍN" ; a monastic city → "REGLA" ; a spa town → "TERMAS".
+    Each game gets its OWN word, in ${answerLang}.
+
+Note on multi-language : the answer word stays in ${answerLang} for ALL players —
+it is revealed in AR (engraved), and the narration is translated AROUND it. So a
+local-language answer is perfectly stable across the 32 player languages. Do NOT
+fall back to Latin "for universality".
+
+Observed past failure modes to also avoid :
+  - "VIRTUS" everywhere (the bug we are fixing) — same word + Latin = banned.
+  - Versailles : 6 virtues + 1 stray year = incoherent pattern.
+  - Bayeux "FIVE" / Montoire "3" : trivial counting, no real puzzle.
 
 ### Rule 1 — Define meta-answer FIRST
-Before writing the 8 stop answers, choose the **umbrella concept** :
-  - A single Latin word (recommended — universal across 32 player languages) : VIRTUS, HONOR, AMOR, MEMORIA, FIDES, AUDACIA, SPES, PATRIA, GLORIA, VERITAS...
-  - OR a single proper noun (universal) : a king's name, a battle, a city
-  - OR a single common noun in the role-play language
+Before writing the 8 stop answers, choose the **umbrella concept** as a single word
+in ${answerLang}, specific to this city/theme (see the language & variety rule above).
 
 ### Rule 2 — All 8 stop answers MUST be instances of the meta-category
-If meta = VIRTUS, ALL 8 stop answers must be Latin virtues.
-If meta = a king's name, ALL 8 answers must be his attributes/places.
+All 8 stop answers must be words in ${answerLang} that belong to ONE coherent
+category which the finalAnswer names or unites.
 **ZERO mixing of categories.** NO stray years like 1770, NO stray numbers, NO stray
-foreign-language words. If you cannot find 8 same-category answers observable
+foreign-language words, NO Latin. If you cannot find 8 same-category answers observable
 at the landmarks, REDUCE to ${CONFIG.MIN_STOPS} answers all in the category.
 
 ### Rule 3 — The finalRiddleText MUST :
-  - Explicitly state the category : "These 7 Latin words are all virtues."
-  - State the expected answer format : "Find the single Latin word (X letters) that names the concept."
+  - Explicitly state the category in plain language : e.g. "These words all name acts of resistance."
+  - State the expected answer format : "Find the single ${answerLang} word (X letters) that names the concept."
   - Hint at the answer naturally (a famous quote, a thematic link).
 
 ### Rule 4 — Provide 3 progressive hints (mandatory)
 The player has 2 attempts. Between attempts, hints are revealed progressively.
 Each hint is ONE SHORT SENTENCE :
   - hint 1 (LIGHT) : Restate the category + first letter of the answer.
-                    Example : "It's a Latin word. The first letter is V."
+                    Example : "It's a ${answerLang} word naming the city's defiance. The first letter is R."
   - hint 2 (MEDIUM) : Show the first 3 letters + thematic context.
-                    Example : "VIR... Think of what binds all the virtues together."
-  - hint 3 (STRONG) : Show the answer with 1 letter missing in the middle.
-                    Example : "VIR_US — the missing letter is between S and U."
+                    Example : "RES... Think of what bound the defenders together."
+  - hint 3 (STRONG) : Show the answer with 1 letter missing in the middle (e.g. RESIST_NCIA).
 
 These 3 hints GUARANTEE the player can finish without external lookup.
 
 ### Rule 5 — Forbidden meta-answers
+  - ❌ Latin (VIRTUS, VERITAS, AMOR…) — unless the theme is literally Roman/classical antiquity
+  - ❌ The same generic umbrella reused across games (especially any "virtues" concept)
   - ❌ Pure numbers ("3", "1940", "FIVE")
   - ❌ Trivial counts ("the number of beaches")
-  - ❌ Generic English words ("LOVE", "TRUTH") — prefer Latin equivalent (AMOR, VERITAS) for multi-language stability
   - ❌ Multi-word answers ("THE KING'S OATH")
   - ❌ Names that contradict the riddles' enumeration
 
 ## Strict rules
 
-- ALL content in English
+- ALL narrative TEXT (titles, riddles, anecdotes, intro, epilogue, finalRiddleText…) in English — it is the base, translated later. EXCEPTION : the answer words themselves (answer, arFacadeText, finalAnswer) are in ${answerLang}, because they are revealed in AR and stay identical across languages.
 - DO NOT change landmark selection or order
 - landmarkName must be verbatim from above (prefer Google name if available)
 - latitude, longitude, placeId must be verbatim from above
 - answer = arFacadeText (same UPPERCASE string)
-- Latin answers acceptable (VERITAS, REFUGIUM, LIBERTAS...) for atmosphere
+- answers (the 8 stops + finalAnswer) are written in ${answerLang}, NOT Latin (unless the theme is Roman/classical antiquity)
 - Riddles must be solvable by a tourist who doesn't know the city
 - DO NOT anchor any specific duration anywhere in the text ("2 days", "a weekend", "in 90 minutes"). Players choose their own pacing — use open time language ("your journey", "at your own pace", "today", "your trail").
 - Apply the **Transport-aware writing directives** above verbatim — they override any default narrative reflex.
@@ -209,7 +267,7 @@ These 3 hints GUARANTEE the player can finish without external lookup.
     "epilogue": "string",
     "epilogueTitle": "string",
     "finalRiddleText": "string",
-    "finalAnswer": "string (UPPERCASE, single word, Latin preferred)",
+    "finalAnswer": "string (UPPERCASE, single word, in the heritage language, theme-specific, NEVER Latin unless Roman/classical theme)",
     "finalAnswerExplanation": "string",
     "finalRiddleHints": [
       "Hint 1 LIGHT — category + first letter of answer (1 sentence)",
