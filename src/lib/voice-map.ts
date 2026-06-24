@@ -1,92 +1,117 @@
 /**
- * Mapping AR character archetype → ElevenLabs voice_id, with optional
- * per-language overrides for languages where a native-accent voice is
- * worth the curation cost.
+ * Mapping AR character archetype → ElevenLabs voice_id.
+ *
+ * RÈGLE D'OR (2026-06-24) : **la voix suit l'image**. Le genre de la voix
+ * ElevenLabs DOIT correspondre au genre du sprite affiché à l'écran. Avant, les
+ * blocs de narration (énigme/anecdote/histoire) étaient lus par la voix
+ * "narrator" (Dallin, homme) même quand le sprite du stop était une femme
+ * (guide_female) → voix homme sur image femme. Corrigé : voiceFor + voix de
+ * narrateur sont genrées via ARCHETYPE_GENDER, et les overrides de langue
+ * (ja/ko/zh) sont eux aussi gender-aware.
  *
  * Resolution order in voiceFor(archetype, language):
- *   1. LANGUAGE_OVERRIDES[language]            — native voice if curated for this lang
- *   2. ARCHETYPE_VOICES[archetype]             — character-specific voice
+ *   1. LANGUAGE_OVERRIDES[language][gender]    — native voice if curated for this lang+gender
+ *   2. ARCHETYPE_VOICES[archetype]             — character-specific voice (already gendered)
  *   3. DEFAULT_VOICE_ID                        — global fallback (Dallin)
- *
- * Update each entry once you've picked voices in the ElevenLabs Voice
- * Library. Use Multilingual v2 voices (or v3) for archetype voices since
- * they need to work across all languages — except where a native-language
- * override takes over (in which case the override can be a language-locked
- * professional voice).
  */
 import { DEFAULT_VOICE_ID } from "@/lib/elevenlabs";
 
 /**
- * Per-language overrides. When the player buys in one of these languages,
- * the audio is generated with a native-sounding voice instead of the
- * universal Multilingual v2 voice. This eliminates the slight American
- * accent on Asian languages — important for Klook market.
- *
- * Only languages with a curated native voice need an entry here. Others
- * fall back to the archetype voice (which is Multilingual v2).
+ * Per-language overrides — GENDER-AWARE. When the player buys in one of these
+ * languages, audio uses a native-sounding voice instead of the universal
+ * Multilingual v2 voice. An override is only applied for a gender if a native
+ * voice of that gender is curated; otherwise we fall back to the archetype
+ * voice (multilingual v2, already at the correct gender).
  */
-const LANGUAGE_OVERRIDES: Record<string, string> = {
-  ja: "f7UUeltR22mzvXAsYavl", // Yoshio - Calm Japanese Narrator (male, middle-aged, standard accent)
-  ko: "36g0LZWoT8jWnUnnCauK", // Eun-joong - Deep & Calm Korean Narrator (male, middle-aged, history-narration)
-  zh: "aKCHSFIIwPcohrgtKRE4", // Liu - Professional Mandarin Audiobook Narrator (male, middle-aged, standard)
+const LANGUAGE_OVERRIDES: Record<string, { male?: string; female?: string }> = {
+  ja: { male: "f7UUeltR22mzvXAsYavl" }, // Yoshio - Calm Japanese Narrator (male)
+  ko: { male: "36g0LZWoT8jWnUnnCauK" }, // Eun-joong - Korean Narrator (male)
+  zh: { male: "aKCHSFIIwPcohrgtKRE4" }, // Liu - Mandarin Audiobook Narrator (male)
 };
 
 /**
- * Per-archetype voices. Used as the default when no language override is set.
- *
- * Voices choisies dans le catalogue PRE-MADE ElevenLabs (compatibles
- * Flash 2.5 + multilingual v2/v3). Chaque archétype a une voix propre
- * qui correspond au caractère narratif du personnage AR :
- *
- *   knight    → Arnold (deep, autoritaire, militaire)
- *   witch     → Charlotte (mature feminine, raspy, mystérieuse)
- *   monk      → Brian (deep storyteller, calme, profondeur spirituelle)
- *   sailor    → Daniel (British weathered, grave maritime)
- *   detective → Antoni (warm inquisitive male, voix d'enquête)
- *   ghost     → George (mature British, raspy, voix d'outre-tombe)
- *   princess  → Charlotte (raspy female royal — peut être soft + mystery)
- *   peasant   → Antoni (warm folksy, accessible)
- *   soldier   → Arnold (strong stern, autorité militaire)
- *   narrator  → Dallin (default, calme middle-aged male — la voix
- *               OddballTrip historique pour anecdotes + épilogue)
- *
- * Effet : chaque AR character a sa propre voix → immersion +30%.
- * Pour les anecdotes et l'épilogue (slot=narrator), reste sur Dallin
- * pour la cohérence "tour-guide" à travers tout le jeu.
- *
- * Si dégradation perçue, revert chaque entrée à DEFAULT_VOICE_ID.
+ * Genre de chaque archétype = genre du SPRITE affiché. La voix DOIT suivre.
+ * Tout archétype absent → "male" (Dallin), le défaut neutre OddballTrip.
+ */
+const ARCHETYPE_GENDER: Record<string, "male" | "female"> = {
+  guide_male: "male", guide_female: "female",
+  knight: "male", soldier: "male", monk: "male", sailor: "male",
+  detective: "male", peasant: "male", viking: "male", ghost: "male",
+  scholar: "male", narrator: "male", default: "male",
+  witch: "female", princess: "female",
+};
+
+/**
+ * Per-archetype voices (Multilingual v2/v3, compatibles Flash 2.5).
+ *   knight/soldier → Arnold (M) · monk → Brian (M) · sailor → Daniel (M)
+ *   detective/peasant → Antoni (M) · ghost → George (M)
+ *   witch/princess → Charlotte (F) · guide_female → Charlotte (F)
+ *   narrator/guide_male/default → Dallin (M)
  */
 const ARCHETYPE_VOICES: Record<string, string> = {
-  knight: "VR6AewLTigWG4xSOukaG",        // Arnold — strong autoritaire
-  witch: "XB0fDUnXU5powFXDhCwa",         // Charlotte — raspy mature feminine
-  monk: "nPczCjzI2devNBz1zQrb",          // Brian — deep calm storyteller
-  sailor: "onwK4e9ZLuTAKqWW03F9",        // Daniel — British weathered
-  detective: "ErXwobaYiN019PkySvjV",     // Antoni — warm inquisitive
-  ghost: "JBFqnCBsd6RMkjVDRZzb",         // George — mature whispered
-  princess: "XB0fDUnXU5powFXDhCwa",      // Charlotte — soft mysterious
-  peasant: "ErXwobaYiN019PkySvjV",       // Antoni — warm folksy
-  soldier: "VR6AewLTigWG4xSOukaG",       // Arnold — strong stern
-  /** Neutral OddballTrip narrator (anecdotes + epilogue) — Dallin reste. */
-  narrator: DEFAULT_VOICE_ID,
-  /** Guides OddballTrip neutres — Dallin pour les fallbacks "default". */
-  guide_male: DEFAULT_VOICE_ID,
-  /** Guide féminin — Charlotte voix gentle pour alterner avec Dallin. */
-  guide_female: "XB0fDUnXU5powFXDhCwa",
+  knight: "VR6AewLTigWG4xSOukaG",        // Arnold
+  witch: "XB0fDUnXU5powFXDhCwa",         // Charlotte (F)
+  monk: "nPczCjzI2devNBz1zQrb",          // Brian
+  sailor: "onwK4e9ZLuTAKqWW03F9",        // Daniel
+  detective: "ErXwobaYiN019PkySvjV",     // Antoni
+  ghost: "JBFqnCBsd6RMkjVDRZzb",         // George
+  princess: "XB0fDUnXU5powFXDhCwa",      // Charlotte (F)
+  peasant: "ErXwobaYiN019PkySvjV",       // Antoni
+  soldier: "VR6AewLTigWG4xSOukaG",       // Arnold
+  narrator: DEFAULT_VOICE_ID,            // Dallin
+  guide_male: DEFAULT_VOICE_ID,          // Dallin
+  guide_female: "XB0fDUnXU5powFXDhCwa",  // Charlotte (F)
   default: DEFAULT_VOICE_ID,
 };
 
 /**
- * Resolve the right voice for a given archetype + language combination.
- * Language overrides win when present (native accent preferred over the
- * universal voice character).
+ * Voix "narrateur/guide" genrée — pour les blocs de NARRATION (énigme,
+ * anecdote, histoire) lus pendant qu'un sprite est affiché. On garde un ton
+ * narrateur cohérent mais au bon genre.
+ */
+const NARRATOR_VOICE: Record<"male" | "female", string> = {
+  male: DEFAULT_VOICE_ID,            // Dallin (voix tour-guide historique)
+  female: "EXAVITQu4vr4xnSDxMaL",    // Bella — narratrice calme multilingual v2
+};
+
+/** Genre du personnage (= genre du sprite). */
+export function genderOf(archetype: string | null | undefined): "male" | "female" {
+  if (!archetype) return "male";
+  return ARCHETYPE_GENDER[archetype] ?? "male";
+}
+
+/** Override de langue respectant le genre, sinon null. */
+function langOverride(language: string | undefined, gender: "male" | "female"): string | null {
+  if (!language) return null;
+  const o = LANGUAGE_OVERRIDES[language];
+  return o?.[gender] ?? null;
+}
+
+/**
+ * Voix du PERSONNAGE (dialogue AR) — sa voix d'archétype, genrée, avec override
+ * de langue du bon genre quand dispo.
  */
 export function voiceFor(
   archetype: string | null | undefined,
   language?: string,
 ): string {
-  if (language && LANGUAGE_OVERRIDES[language]) {
-    return LANGUAGE_OVERRIDES[language];
-  }
+  const gender = genderOf(archetype);
+  const override = langOverride(language, gender);
+  if (override) return override;
   if (!archetype) return ARCHETYPE_VOICES.default;
   return ARCHETYPE_VOICES[archetype] || ARCHETYPE_VOICES.default;
+}
+
+/**
+ * Voix de NARRATION pour un stop — ton narrateur, mais du même genre que le
+ * sprite affiché (`archetype`). C'est la correction du décalage voix/image.
+ */
+export function narratorVoiceFor(
+  archetype: string | null | undefined,
+  language?: string,
+): string {
+  const gender = genderOf(archetype);
+  const override = langOverride(language, gender);
+  if (override) return override;
+  return NARRATOR_VOICE[gender];
 }

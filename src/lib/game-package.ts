@@ -21,7 +21,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { translateGameField, translateStepFields, translateUIStrings } from "@/lib/translate-service";
 import { generateAndStoreAudio, buildAudioPath } from "@/lib/elevenlabs";
-import { voiceFor } from "@/lib/voice-map";
+import { voiceFor, narratorVoiceFor } from "@/lib/voice-map";
 import { t, isStaticLocale } from "@/lib/i18n";
 import { logTelemetry } from "@/lib/pipeline-telemetry";
 import { ui } from "@/lib/translations";
@@ -395,7 +395,8 @@ export async function prepareGamePackage(
         stepOrder: step.step_order,
         slot: "riddle",
         text: riddleText,
-        voiceId: voiceFor("narrator", language),
+        // voix narrateur AU GENRE du sprite affiché (= step.ar_character_type)
+        voiceId: narratorVoiceFor(step.ar_character_type, language),
       });
     } else if (cachedSlots.has(`${step.step_order}:riddle`)) {
       audioSkipped++;
@@ -417,7 +418,7 @@ export async function prepareGamePackage(
         stepOrder: step.step_order,
         slot: "anecdote",
         text: anecdoteText,
-        voiceId: voiceFor("narrator", language),
+        voiceId: narratorVoiceFor(step.ar_character_type, language),
       });
     } else if (cachedSlots.has(`${step.step_order}:anecdote`)) {
       audioSkipped++;
@@ -438,7 +439,7 @@ export async function prepareGamePackage(
         stepOrder: step.step_order,
         slot: "landmark_history",
         text: landmarkHistoryText,
-        voiceId: voiceFor("narrator", language),
+        voiceId: narratorVoiceFor(step.ar_character_type, language),
       });
     } else if (cachedSlots.has(`${step.step_order}:landmark_history`)) {
       audioSkipped++;
