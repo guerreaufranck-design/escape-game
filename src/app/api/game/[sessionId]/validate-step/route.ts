@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { validateStepSchema } from "@/lib/validators";
 import { haversineDistance } from "@/lib/geo";
+import { extractExpectedAnswer, matchAnswer } from "@/lib/answer-match";
 import { calculateScore } from "@/lib/scoring";
 import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
 import { translateStepFields, translateGameField } from "@/lib/translate-service";
@@ -140,14 +141,7 @@ export async function POST(
     // whitespace-trimmed, accent-folded) against the stored answer.
     const expectedRaw = step.answer_text;
     let expectedAnswer: string | null = null;
-    if (expectedRaw) {
-      if (typeof expectedRaw === "object") {
-        const o = expectedRaw as Record<string, string>;
-        expectedAnswer = o.en || o.fr || Object.values(o)[0] || null;
-      } else {
-        expectedAnswer = String(expectedRaw);
-      }
-    }
+    expectedAnswer = extractExpectedAnswer(expectedRaw);
 
     if (!expectedAnswer) {
       // The step has no stored answer — treat as legacy / GPS-only step
@@ -156,25 +150,15 @@ export async function POST(
       console.warn(
         `[validate-step/${sessionId}] step ${stepOrder} has no answer_text — accepting submission without text check`,
       );
-    } else {
-      const normalize = (s: string) =>
-        s
-          .normalize("NFD")
-          .replace(/[\u0300-\u036f]/g, "")
-          .toLowerCase()
-          .trim()
-          .replace(/\s+/g, "");
-      const submitted = normalize(answer);
-      const target = normalize(expectedAnswer);
-      if (!submitted || submitted !== target) {
-        return NextResponse.json({
-          success: false,
-          reason: "wrong_answer",
-          // tiny hint to the front-end: tell it the answer wasn't right.
-          // We intentionally do NOT leak the expected answer.
-          distance: distance !== null ? Math.round(distance) : null,
-        });
-      }
+    } else if (!matchAnswer(answer, expectedRaw)) {
+      // Shared logic (src/lib/answer-match.ts) \u2014 IDENTICAL to the offline
+      // client, so a step accepted offline is never rejected online.
+      return NextResponse.json({
+        success: false,
+        reason: "wrong_answer",
+        // We intentionally do NOT leak the expected answer.
+        distance: distance !== null ? Math.round(distance) : null,
+      });
     }
 
     // Step is valid - calculate time for this step
