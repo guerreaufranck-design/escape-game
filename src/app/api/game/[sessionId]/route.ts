@@ -65,6 +65,20 @@ export async function GET(
       );
     }
 
+    // OFFLINE pre-download (2026-07-01) : `?step=N` charge le CONTENU d'une
+    // étape arbitraire (riddle + indices + audioMap traduits) SANS avancer la
+    // session. Le client l'appelle en boucle (1..total) au démarrage pour tout
+    // mettre en cache. Sans le param → contentStep = current_step → comportement
+    // 100% identique pour les joueurs actuels.
+    const stepParam = request.nextUrl.searchParams.get("step");
+    const requestedStep = stepParam ? parseInt(stepParam, 10) : NaN;
+    const contentStep =
+      Number.isInteger(requestedStep) &&
+      requestedStep >= 1 &&
+      requestedStep <= session.total_steps
+        ? requestedStep
+        : session.current_step;
+
     const game = session.games as unknown as {
       id: string;
       title: string;
@@ -126,12 +140,12 @@ export async function GET(
     // S9 (2026-05-19) — tour content (null en mode city_game).
     let tourContent: GameState["tourContent"] = null;
 
-    if ((session.status === "active" || session.status === "pending") && session.current_step <= session.total_steps) {
+    if ((session.status === "active" || session.status === "pending") && contentStep <= session.total_steps) {
       const { data: step } = await supabase
         .from("game_steps")
         .select("*")
         .eq("game_id", session.game_id)
-        .eq("step_order", session.current_step)
+        .eq("step_order", contentStep)
         .single();
 
       if (step) {
@@ -240,7 +254,7 @@ export async function GET(
             : String(hints[0].text);
           if (hintEn) {
             void translateGameField(
-              `hint-${session.game_id}-${session.current_step}-0`,
+              `hint-${session.game_id}-${contentStep}-0`,
               "game_steps",
               "hint_text",
               hintEn,
@@ -497,7 +511,7 @@ export async function GET(
         : "city_game",
       estimatedDuration: game.estimated_duration_min ? `${Math.floor(game.estimated_duration_min / 60)}h${String(game.estimated_duration_min % 60).padStart(2, "0")}` : null,
       playerName: session.player_name || "Player",
-      currentStep: session.current_step,
+      currentStep: contentStep,
       currentStepId,
       totalSteps: session.total_steps,
       status: session.status,
@@ -540,7 +554,7 @@ export async function GET(
         .select("slot, public_url")
         .eq("game_id", session.game_id)
         .eq("language", locale)
-        .eq("step_order", session.current_step);
+        .eq("step_order", contentStep);
       if (strict.data && strict.data.length > 0) {
         audioRows = strict.data;
       } else {
@@ -549,12 +563,12 @@ export async function GET(
           .from("audio_cache")
           .select("slot, public_url, language")
           .eq("game_id", session.game_id)
-          .eq("step_order", session.current_step);
+          .eq("step_order", contentStep);
         if (fallback.data && fallback.data.length > 0) {
           const firstLang = fallback.data[0].language;
           audioRows = fallback.data.filter((r) => r.language === firstLang);
           console.warn(
-            `[game/${sessionId}] No audio for locale=${locale} step ${session.current_step}, fallback to language=${firstLang}`,
+            `[game/${sessionId}] No audio for locale=${locale} step ${contentStep}, fallback to language=${firstLang}`,
           );
         }
       }
