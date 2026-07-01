@@ -65,6 +65,20 @@ export async function GET(
       );
     }
 
+    // OFFLINE pre-download (2026-07-01) : `?step=N` charge le CONTENU d'une
+    // étape arbitraire (riddle + indices + audioMap traduits) SANS avancer la
+    // session. Le client l'appelle en boucle (1..total) au démarrage pour tout
+    // mettre en cache. Sans le param → contentStep = current_step → comportement
+    // 100% identique pour les joueurs actuels.
+    const stepParam = request.nextUrl.searchParams.get("step");
+    const requestedStep = stepParam ? parseInt(stepParam, 10) : NaN;
+    const contentStep =
+      Number.isInteger(requestedStep) &&
+      requestedStep >= 1 &&
+      requestedStep <= session.total_steps
+        ? requestedStep
+        : session.current_step;
+
     const game = session.games as unknown as {
       id: string;
       title: string;
@@ -76,6 +90,7 @@ export async function GET(
       intro_speech?: Record<string, string> | string | null;
       final_riddle_text?: Record<string, string> | string | null;
       final_answer_explanation?: Record<string, string> | string | null;
+      final_answer?: string | null;
     };
 
     // Translate game title & description
@@ -123,15 +138,19 @@ export async function GET(
     let hintsAvailable = 0;
     let currentStepId: string | null = null;
     let routeAttractions: GameState["routeAttractions"] = [];
+    // OFFLINE pre-download (?step) : textes récompense + indices (voir plus bas).
+    let offlineAnecdote: string | null = null;
+    let offlineLandmarkHistory: string | null = null;
+    let offlineHints: string[] = [];
     // S9 (2026-05-19) — tour content (null en mode city_game).
     let tourContent: GameState["tourContent"] = null;
 
-    if ((session.status === "active" || session.status === "pending") && session.current_step <= session.total_steps) {
+    if ((session.status === "active" || session.status === "pending") && contentStep <= session.total_steps) {
       const { data: step } = await supabase
         .from("game_steps")
         .select("*")
         .eq("game_id", session.game_id)
-        .eq("step_order", session.current_step)
+        .eq("step_order", contentStep)
         .single();
 
       if (step) {
@@ -240,7 +259,7 @@ export async function GET(
             : String(hints[0].text);
           if (hintEn) {
             void translateGameField(
-              `hint-${session.game_id}-${session.current_step}-0`,
+              `hint-${session.game_id}-${contentStep}-0`,
               "game_steps",
               "hint_text",
               hintEn,
@@ -307,6 +326,39 @@ export async function GET(
             type: step.ar_character_type || "default",
             dialogue,
           };
+        }
+
+        // OFFLINE pre-download (?step) : on inclut ici les textes normalement
+        // renvoyés par validate-step (anecdote, histoire du lieu) et par /hint
+        // (indices), traduits EN LIGNE (on a le réseau au pré-download) puis
+        // cachés. Ainsi le client offline a tout pour rendre une étape résolue.
+        if (stepParam) {
+          const trOffline = async (field: string, raw: string): Promise<string> => {
+            if (!raw) return "";
+            if (locale === "en") return raw;
+            try {
+              return await translateGameField(step.id, "game_steps", field, raw, locale);
+            } catch {
+              return raw;
+            }
+          };
+          offlineAnecdote =
+            (await trOffline("anecdote", getEnglishBase(step.anecdote))) || null;
+          offlineLandmarkHistory =
+            (await trOffline("landmark_history", getEnglishBase(step.landmark_history))) ||
+            null;
+          offlineHints = await Promise.all(
+            (hints as Hint[]).map((h, i) => {
+              const en =
+                typeof h.text === "object"
+                  ? (h.text as Record<string, string>).en ||
+                    (h.text as Record<string, string>).fr ||
+                    Object.values(h.text as Record<string, string>)[0] ||
+                    ""
+                  : String(h.text);
+              return trOffline(`hint_${i}`, en);
+            }),
+          );
         }
 
         // Route attractions — translate name + fact for each entry.
@@ -484,6 +536,17 @@ export async function GET(
           )
         : null;
 
+    // OFFLINE pre-download (?step) : la réponse finale + son explication, pour
+    // que le client puisse valider le code final sans réseau (elles restent
+    // cachées en jeu online normal).
+    const offlineFinalAnswer = stepParam ? game.final_answer ?? null : null;
+    const offlineFinalExplanation = stepParam
+      ? await translateOrFallback(
+          game.final_answer_explanation ?? null,
+          "final_answer_explanation",
+        )
+      : null;
+
     const gameState: GameState = {
       sessionId: session.id,
       gameId: session.game_id,
@@ -497,7 +560,7 @@ export async function GET(
         : "city_game",
       estimatedDuration: game.estimated_duration_min ? `${Math.floor(game.estimated_duration_min / 60)}h${String(game.estimated_duration_min % 60).padStart(2, "0")}` : null,
       playerName: session.player_name || "Player",
-      currentStep: session.current_step,
+      currentStep: contentStep,
       currentStepId,
       totalSteps: session.total_steps,
       status: session.status,
@@ -520,6 +583,11 @@ export async function GET(
       finalAttemptsUsed: session.final_attempts_used ?? 0,
       finalSucceeded: session.final_succeeded ?? null,
       finalAnswerExplanation,
+      offlineAnecdote,
+      offlineLandmarkHistory,
+      offlineHints,
+      offlineFinalAnswer,
+      offlineFinalExplanation,
     };
 
     // Pre-generated narration MP3 URLs for the current step (ElevenLabs).
@@ -540,7 +608,7 @@ export async function GET(
         .select("slot, public_url")
         .eq("game_id", session.game_id)
         .eq("language", locale)
-        .eq("step_order", session.current_step);
+        .eq("step_order", contentStep);
       if (strict.data && strict.data.length > 0) {
         audioRows = strict.data;
       } else {
@@ -549,12 +617,12 @@ export async function GET(
           .from("audio_cache")
           .select("slot, public_url, language")
           .eq("game_id", session.game_id)
-          .eq("step_order", session.current_step);
+          .eq("step_order", contentStep);
         if (fallback.data && fallback.data.length > 0) {
           const firstLang = fallback.data[0].language;
           audioRows = fallback.data.filter((r) => r.language === firstLang);
           console.warn(
-            `[game/${sessionId}] No audio for locale=${locale} step ${session.current_step}, fallback to language=${firstLang}`,
+            `[game/${sessionId}] No audio for locale=${locale} step ${contentStep}, fallback to language=${firstLang}`,
           );
         }
       }

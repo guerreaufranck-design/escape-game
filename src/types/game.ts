@@ -156,6 +156,17 @@ export interface GameState {
    * la session est passée en final_resolved_at.
    */
   finalAnswerExplanation: string | null;
+  /**
+   * OFFLINE pre-download (?step=N) uniquement : textes normalement renvoyés
+   * par validate-step / hint, inclus ici pour que le client puisse rendre une
+   * étape résolue sans réseau. Absents en jeu online normal.
+   */
+  offlineAnecdote?: string | null;
+  offlineLandmarkHistory?: string | null;
+  offlineHints?: string[];
+  /** Réponse finale + explication, uniquement dans le pack offline (?step). */
+  offlineFinalAnswer?: string | null;
+  offlineFinalExplanation?: string | null;
 }
 
 export interface CompletedStepInfo {
