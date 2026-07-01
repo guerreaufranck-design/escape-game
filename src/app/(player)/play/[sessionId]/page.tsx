@@ -23,6 +23,7 @@ import {
   setOfflineStep,
   markCompletedOffline,
   queueStart,
+  queueSkip,
   flushQueue,
 } from "@/lib/offline-play";
 import type { GameState, Hint } from "@/types/game";
@@ -914,7 +915,35 @@ export default function PlayPage() {
         }
       }
     } catch {
-      setError(tt('play.error.skipFailed', locale));
+      // OFFLINE : skip local — on révèle la réponse (arFacadeText), on montre
+      // le contenu pédagogique, on avance, et on met le skip en file de sync.
+      if (gameState) {
+        setSkipAnswer(gameState.arFacadeText || tt('play.error.answerNotAvailable', locale));
+        const isLast = gameState.currentStep >= gameState.totalSteps;
+        setSkipCompleted(isLast);
+        setHints([]);
+        if (gameState.offlineAnecdote) {
+          setAnecdote({
+            title:
+              gameState.currentRiddle?.title ||
+              tt('play.didYouKnow', locale) ||
+              "Le saviez-vous ?",
+            text: gameState.offlineAnecdote,
+          });
+        }
+        if (gameState.offlineLandmarkHistory) {
+          setLandmarkHistory(gameState.offlineLandmarkHistory);
+        }
+        setCompletedStepAudios({
+          landmarkHistory: gameState.audioMap?.landmarkHistory ?? null,
+          anecdote: gameState.audioMap?.anecdote ?? null,
+        });
+        queueSkip(sessionId, gameState.currentStep);
+        setOfflineStep(sessionId, gameState.currentStep + 1);
+        if (!isLast) void fetchGameState();
+      } else {
+        setError(tt('play.error.skipFailed', locale));
+      }
     } finally {
       setSkipping(false);
     }

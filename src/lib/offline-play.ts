@@ -24,7 +24,8 @@ export interface FullPack {
 
 type QueuedAction =
   | { type: "start"; at: number }
-  | { type: "complete"; stepOrder: number; answer: string; at: number };
+  | { type: "complete"; stepOrder: number; answer: string; at: number }
+  | { type: "skip"; stepOrder: number; at: number };
 
 const stepKey = (sessionId: string) => `offline:${sessionId}:step`;
 const queueKey = (sessionId: string) => `offline:${sessionId}:queue`;
@@ -114,6 +115,18 @@ export function queueStart(sessionId: string): void {
   s.setItem(queueKey(sessionId), JSON.stringify(q));
 }
 
+/** Enregistre un SKIP offline (progression + file de sync). */
+export function queueSkip(sessionId: string, stepOrder: number): void {
+  const s = ls();
+  if (!s) return;
+  const done = new Set(getCompletedOffline(sessionId));
+  done.add(stepOrder);
+  s.setItem(doneKey(sessionId), JSON.stringify([...done]));
+  const q = getQueue(sessionId);
+  q.push({ type: "skip", stepOrder, at: Date.now() });
+  s.setItem(queueKey(sessionId), JSON.stringify(q));
+}
+
 function getQueue(sessionId: string): QueuedAction[] {
   try {
     return JSON.parse(ls()?.getItem(queueKey(sessionId)) || "[]");
@@ -140,17 +153,28 @@ export async function flushQueue(sessionId: string, locale: string): Promise<boo
       allOk = false;
     }
   }
-  // puis les complétions dans l'ordre
-  const completes = q
-    .filter((x): x is Extract<QueuedAction, { type: "complete" }> => x.type === "complete")
+  // puis les avancées (validations + skips) dans l'ordre des étapes
+  const advances = q
+    .filter(
+      (x): x is Extract<QueuedAction, { type: "complete" | "skip" }> =>
+        x.type === "complete" || x.type === "skip",
+    )
     .sort((a, b) => a.stepOrder - b.stepOrder);
-  for (const a of completes) {
+  for (const a of advances) {
     try {
-      await fetch(`/api/game/${sessionId}/validate-step?lang=${locale}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ stepOrder: a.stepOrder, answer: a.answer }),
-      });
+      if (a.type === "complete") {
+        await fetch(`/api/game/${sessionId}/validate-step?lang=${locale}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stepOrder: a.stepOrder, answer: a.answer }),
+        });
+      } else {
+        await fetch(`/api/game/${sessionId}/skip-step?lang=${locale}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ stepOrder: a.stepOrder }),
+        });
+      }
     } catch {
       allOk = false;
     }
