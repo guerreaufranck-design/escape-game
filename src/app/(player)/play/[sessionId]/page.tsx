@@ -24,6 +24,7 @@ import {
   markCompletedOffline,
   queueStart,
   queueSkip,
+  queueFinal,
   flushQueue,
 } from "@/lib/offline-play";
 import type { GameState, Hint } from "@/types/game";
@@ -2326,7 +2327,34 @@ export default function PlayPage() {
                           setCodeResult({ valid: false, message: data.message || (tt('play.tryAgain', locale) || "Pas tout à fait — il vous reste un essai") });
                         }
                       } catch {
-                        setCodeResult({ valid: false, message: tt('play.verifyError', locale) });
+                        // OFFLINE : on valide le code final localement (la
+                        // réponse + l'explication sont dans le pack) et on met
+                        // la soumission en file de sync.
+                        const submitted = finalCodeInput.trim();
+                        if (
+                          gameState.offlineFinalAnswer &&
+                          matchAnswer(submitted, gameState.offlineFinalAnswer)
+                        ) {
+                          queueFinal(sessionId, submitted);
+                          setFinalResult({
+                            status: "success",
+                            attemptsRemaining: 0,
+                            correctAnswer: gameState.offlineFinalAnswer,
+                            explanation: gameState.offlineFinalExplanation ?? null,
+                          });
+                          setParticleBurst((n) => n + 1);
+                          setCodeResult({
+                            valid: true,
+                            message: tt('play.finalSuccess', locale) || "Bravo !",
+                          });
+                        } else {
+                          setCodeResult({
+                            valid: false,
+                            message:
+                              tt('play.tryAgain', locale) ||
+                              "Pas tout à fait — réessayez",
+                          });
+                        }
                       } finally {
                         setFinalSubmitting(false);
                       }

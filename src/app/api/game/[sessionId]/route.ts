@@ -90,6 +90,7 @@ export async function GET(
       intro_speech?: Record<string, string> | string | null;
       final_riddle_text?: Record<string, string> | string | null;
       final_answer_explanation?: Record<string, string> | string | null;
+      final_answer?: string | null;
     };
 
     // Translate game title & description
@@ -535,6 +536,17 @@ export async function GET(
           )
         : null;
 
+    // OFFLINE pre-download (?step) : la réponse finale + son explication, pour
+    // que le client puisse valider le code final sans réseau (elles restent
+    // cachées en jeu online normal).
+    const offlineFinalAnswer = stepParam ? game.final_answer ?? null : null;
+    const offlineFinalExplanation = stepParam
+      ? await translateOrFallback(
+          game.final_answer_explanation ?? null,
+          "final_answer_explanation",
+        )
+      : null;
+
     const gameState: GameState = {
       sessionId: session.id,
       gameId: session.game_id,
@@ -574,6 +586,8 @@ export async function GET(
       offlineAnecdote,
       offlineLandmarkHistory,
       offlineHints,
+      offlineFinalAnswer,
+      offlineFinalExplanation,
     };
 
     // Pre-generated narration MP3 URLs for the current step (ElevenLabs).

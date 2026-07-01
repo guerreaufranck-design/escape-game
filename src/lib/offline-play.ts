@@ -26,7 +26,8 @@ export interface FullPack {
 type QueuedAction =
   | { type: "start"; at: number }
   | { type: "complete"; stepOrder: number; answer: string; at: number }
-  | { type: "skip"; stepOrder: number; at: number };
+  | { type: "skip"; stepOrder: number; at: number }
+  | { type: "final"; answer: string; at: number };
 
 const stepKey = (sessionId: string) => `offline:${sessionId}:step`;
 const queueKey = (sessionId: string) => `offline:${sessionId}:queue`;
@@ -130,6 +131,15 @@ export function queueStart(sessionId: string): void {
   s.setItem(queueKey(sessionId), JSON.stringify(q));
 }
 
+/** Enregistre la soumission du CODE FINAL offline (file de sync). */
+export function queueFinal(sessionId: string, answer: string): void {
+  const s = ls();
+  if (!s) return;
+  const q: QueuedAction[] = getQueue(sessionId).filter((a) => a.type !== "final");
+  q.push({ type: "final", answer, at: Date.now() });
+  s.setItem(queueKey(sessionId), JSON.stringify(q));
+}
+
 /** Enregistre un SKIP offline (progression + file de sync). */
 export function queueSkip(sessionId: string, stepOrder: number): void {
   const s = ls();
@@ -190,6 +200,21 @@ export async function flushQueue(sessionId: string, locale: string): Promise<boo
           body: JSON.stringify({ stepOrder: a.stepOrder }),
         });
       }
+    } catch {
+      allOk = false;
+    }
+  }
+  // enfin, le code final (une seule soumission)
+  const finalAction = q.find(
+    (x): x is Extract<QueuedAction, { type: "final" }> => x.type === "final",
+  );
+  if (finalAction) {
+    try {
+      await fetch(`/api/game/${sessionId}/final-answer?lang=${locale}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ answer: finalAction.answer }),
+      });
     } catch {
       allOk = false;
     }

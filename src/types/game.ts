@@ -164,6 +164,9 @@ export interface GameState {
   offlineAnecdote?: string | null;
   offlineLandmarkHistory?: string | null;
   offlineHints?: string[];
+  /** Réponse finale + explication, uniquement dans le pack offline (?step). */
+  offlineFinalAnswer?: string | null;
+  offlineFinalExplanation?: string | null;
 }
 
 export interface CompletedStepInfo {
