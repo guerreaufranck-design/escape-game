@@ -313,6 +313,18 @@ export default function PlayPage() {
     });
     setNarrationText(text);
     narration.speak(text, audioUrl ? { audioUrl } : undefined);
+    // OFFLINE : remplace l'URL du sprite par un blob depuis le cache (async,
+    // sans bloquer l'audio ci-dessus → autoplay iOS préservé). En ligne,
+    // resolveCachedUrl renvoie l'URL d'origine.
+    if (sprite) {
+      void resolveCachedUrl(sprite).then((resolved) => {
+        if (resolved && resolved !== sprite) {
+          setGuideOverlay((prev) =>
+            prev ? { ...prev, characterSprite: resolved } : prev,
+          );
+        }
+      });
+    }
   };
 
   const dismissGuideOverlay = () => {

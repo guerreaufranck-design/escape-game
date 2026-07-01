@@ -13,6 +13,7 @@
  */
 import type { GameState } from "@/types/game";
 import { savePackage, loadPackage, warmAssets, collectAssetUrls } from "@/lib/offline-cache";
+import { getSpriteUrl, AR_POSES } from "@/lib/ar-sprites";
 
 export interface FullPack {
   savedAt: number;
@@ -48,6 +49,20 @@ export async function prefetchFullGame(
       for (const u of collectAssetUrls(data)) assetUrls.add(u);
     } catch {
       /* étape sautée — best effort */
+    }
+  }
+  // Sprites AR des personnages : leurs URLs sont construites côté client
+  // (pas dans le JSON), donc collectAssetUrls ne les voit pas. On les ajoute
+  // ici (toutes poses) pour que le "cercle" du perso s'affiche hors-ligne.
+  const types = new Set<string>();
+  for (const s of Object.values(steps)) {
+    const t = s.arCharacter?.type;
+    if (t && t.toLowerCase() !== "default") types.add(t.toLowerCase());
+  }
+  for (const t of types) {
+    for (const pose of AR_POSES) {
+      const u = getSpriteUrl(t, pose);
+      if (u) assetUrls.add(u);
     }
   }
   const pack: FullPack = { savedAt: Date.now(), locale, totalSteps, steps };
