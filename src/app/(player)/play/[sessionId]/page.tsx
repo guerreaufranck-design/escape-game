@@ -15,6 +15,7 @@ import { formatTime } from "@/lib/scoring";
 import { formatDistance } from "@/lib/geo";
 import { tt } from "@/lib/translations";
 import { matchAnswer } from "@/lib/answer-match";
+import { resolveCachedUrl } from "@/lib/offline-cache";
 import {
   prefetchFullGame,
   loadFullPack,
@@ -497,6 +498,8 @@ export default function PlayPage() {
 
   // Pré-download déclenché une seule fois par session.
   const prefetchedRef = useRef(false);
+  // Vrai quand tout le jeu + audios sont en cache → jouable hors-ligne.
+  const [offlineReady, setOfflineReady] = useState(false);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -511,7 +514,11 @@ export default function PlayPage() {
       setOfflineStep(sessionId, data.currentStep);
       if (!prefetchedRef.current && data.totalSteps > 0) {
         prefetchedRef.current = true;
-        void prefetchFullGame(sessionId, locale, data.totalSteps).catch(() => {});
+        void prefetchFullGame(sessionId, locale, data.totalSteps)
+          .then((r) => {
+            if (r.steps >= data.totalSteps) setOfflineReady(true);
+          })
+          .catch(() => {});
       }
       // BUG A FIX (2026-05-18) : ne PAS rediriger automatiquement vers
       // /results si un overlay post-game est en cours (skip reveal,
@@ -533,7 +540,18 @@ export default function PlayPage() {
           const step = getOfflineStep(sessionId, 1);
           const cached = pack.steps[step] || pack.steps[1];
           if (cached) {
-            setGameState({ ...cached, currentStep: step, status: "active" });
+            // Résout les URLs audio en blob depuis le cache → lecture offline
+            // fiable, sans dépendre du contrôle du service worker.
+            const am = cached.audioMap;
+            const audioMap = am
+              ? {
+                  riddle: await resolveCachedUrl(am.riddle),
+                  character: await resolveCachedUrl(am.character),
+                  anecdote: await resolveCachedUrl(am.anecdote),
+                  landmarkHistory: await resolveCachedUrl(am.landmarkHistory),
+                }
+              : null;
+            setGameState({ ...cached, currentStep: step, status: "active", audioMap });
             return;
           }
         }
@@ -1220,6 +1238,17 @@ export default function PlayPage() {
                 "Pour vous aider en direct si vous êtes perdu et améliorer le jeu, votre position GPS est enregistrée pendant la partie (toutes les 30 sec). Les données sont liées uniquement à votre session anonyme (aucun nom, aucun email), conservées 30 jours puis automatiquement supprimées. Conforme RGPD."}
             </p>
           </details>
+
+          {/* Statut de téléchargement hors-ligne */}
+          <div className="w-full text-center text-xs mb-2">
+            {offlineReady ? (
+              <span className="text-emerald-400">✓ Jeu téléchargé — jouable hors-ligne</span>
+            ) : (
+              <span className="text-slate-500 inline-flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" /> Téléchargement du jeu (hors-ligne)…
+              </span>
+            )}
+          </div>
 
           {/* Start button — starts the timer via API */}
           <Button

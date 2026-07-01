@@ -111,6 +111,9 @@ export async function warmAssets(
           ok++;
           continue;
         }
+        // cors : le storage Supabase public renvoie `Access-Control-Allow-
+        // Origin: *`, donc on récupère une réponse LISIBLE (indispensable pour
+        // en extraire un blob offline via resolveCachedUrl).
         const res = await fetch(url, { mode: "cors" });
         if (res.ok) {
           await cache.put(url, res.clone());
@@ -125,6 +128,29 @@ export async function warmAssets(
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, urls.length) }, () => worker()));
   return { ok, failed };
+}
+
+/**
+ * Résout une URL d'asset en URL JOUABLE hors-ligne : si l'asset est en cache,
+ * renvoie un blob: URL (lecture directe, sans dépendre du service worker) ;
+ * sinon renvoie l'URL d'origine. À appeler AVANT le tap utilisateur (async) pour
+ * que la lecture reste synchrone (politique autoplay iOS). Fonctionne car
+ * warmAssets cache en cors (réponse lisible). Fallback : l'URL d'origine.
+ */
+export async function resolveCachedUrl(url: string | null | undefined): Promise<string | null> {
+  if (!url) return null;
+  if (typeof caches === "undefined") return url;
+  try {
+    const cache = await caches.open(ASSET_CACHE);
+    const res = await cache.match(url);
+    if (res && res.type !== "opaque") {
+      const blob = await res.blob();
+      if (blob.size > 0) return URL.createObjectURL(blob);
+    }
+  } catch {
+    /* ignore */
+  }
+  return url;
 }
 
 /** Supprime le pack + les assets d'une session (nettoyage). */
