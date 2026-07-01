@@ -137,6 +137,10 @@ export async function GET(
     let hintsAvailable = 0;
     let currentStepId: string | null = null;
     let routeAttractions: GameState["routeAttractions"] = [];
+    // OFFLINE pre-download (?step) : textes récompense + indices (voir plus bas).
+    let offlineAnecdote: string | null = null;
+    let offlineLandmarkHistory: string | null = null;
+    let offlineHints: string[] = [];
     // S9 (2026-05-19) — tour content (null en mode city_game).
     let tourContent: GameState["tourContent"] = null;
 
@@ -321,6 +325,39 @@ export async function GET(
             type: step.ar_character_type || "default",
             dialogue,
           };
+        }
+
+        // OFFLINE pre-download (?step) : on inclut ici les textes normalement
+        // renvoyés par validate-step (anecdote, histoire du lieu) et par /hint
+        // (indices), traduits EN LIGNE (on a le réseau au pré-download) puis
+        // cachés. Ainsi le client offline a tout pour rendre une étape résolue.
+        if (stepParam) {
+          const trOffline = async (field: string, raw: string): Promise<string> => {
+            if (!raw) return "";
+            if (locale === "en") return raw;
+            try {
+              return await translateGameField(step.id, "game_steps", field, raw, locale);
+            } catch {
+              return raw;
+            }
+          };
+          offlineAnecdote =
+            (await trOffline("anecdote", getEnglishBase(step.anecdote))) || null;
+          offlineLandmarkHistory =
+            (await trOffline("landmark_history", getEnglishBase(step.landmark_history))) ||
+            null;
+          offlineHints = await Promise.all(
+            (hints as Hint[]).map((h, i) => {
+              const en =
+                typeof h.text === "object"
+                  ? (h.text as Record<string, string>).en ||
+                    (h.text as Record<string, string>).fr ||
+                    Object.values(h.text as Record<string, string>)[0] ||
+                    ""
+                  : String(h.text);
+              return trOffline(`hint_${i}`, en);
+            }),
+          );
         }
 
         // Route attractions — translate name + fact for each entry.
@@ -534,6 +571,9 @@ export async function GET(
       finalAttemptsUsed: session.final_attempts_used ?? 0,
       finalSucceeded: session.final_succeeded ?? null,
       finalAnswerExplanation,
+      offlineAnecdote,
+      offlineLandmarkHistory,
+      offlineHints,
     };
 
     // Pre-generated narration MP3 URLs for the current step (ElevenLabs).

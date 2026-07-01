@@ -14,6 +14,16 @@ import { useLocale } from "@/components/player/LocaleSelector";
 import { formatTime } from "@/lib/scoring";
 import { formatDistance } from "@/lib/geo";
 import { tt } from "@/lib/translations";
+import { matchAnswer } from "@/lib/answer-match";
+import {
+  prefetchFullGame,
+  loadFullPack,
+  getOfflineStep,
+  setOfflineStep,
+  markCompletedOffline,
+  queueStart,
+  flushQueue,
+} from "@/lib/offline-play";
 import type { GameState, Hint } from "@/types/game";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -485,6 +495,9 @@ export default function PlayPage() {
     }
   }, [gameState, finalResult]);
 
+  // Pré-download déclenché une seule fois par session.
+  const prefetchedRef = useRef(false);
+
   // Fetch game state
   const fetchGameState = useCallback(async () => {
     try {
@@ -493,14 +506,16 @@ export default function PlayPage() {
       if (!res.ok) throw new Error(tt('play.error.loadFailed', locale));
       const data: GameState = await res.json();
       setGameState(data);
+      // OFFLINE : on garde l'étape locale synchronisée sur le serveur, et on
+      // pré-télécharge TOUT le jeu (une fois) pour pouvoir continuer sans réseau.
+      setOfflineStep(sessionId, data.currentStep);
+      if (!prefetchedRef.current && data.totalSteps > 0) {
+        prefetchedRef.current = true;
+        void prefetchFullGame(sessionId, locale, data.totalSteps).catch(() => {});
+      }
       // BUG A FIX (2026-05-18) : ne PAS rediriger automatiquement vers
       // /results si un overlay post-game est en cours (skip reveal,
-      // step success, final code modal). Sans ce gate, quand le joueur
-      // skip le dernier stop, le serveur marque la session "completed",
-      // fetchGameState() détecte ce status et router.push("/results")
-      // fire AVANT que le joueur ait pu cliquer "Continuer" → final
-      // code modal. Le joueur saute direct à l'épilogue sans entrer
-      // la combinaison finale.
+      // step success, final code modal).
       if (
         data.status === "completed" &&
         !skipAnswer &&
@@ -510,17 +525,44 @@ export default function PlayPage() {
         router.push(`/results/${sessionId}`);
       }
     } catch (err) {
+      // OFFLINE FALLBACK : pas de réseau → on rend l'étape courante depuis le
+      // pack pré-téléchargé (progression suivie en local).
+      try {
+        const pack = await loadFullPack(sessionId);
+        if (pack) {
+          const step = getOfflineStep(sessionId, 1);
+          const cached = pack.steps[step] || pack.steps[1];
+          if (cached) {
+            setGameState({ ...cached, currentStep: step, status: "active" });
+            return;
+          }
+        }
+      } catch {
+        /* pas de pack → erreur ci-dessous */
+      }
       setError(
         err instanceof Error ? err.message : tt('play.error.fetchFailed', locale)
       );
     } finally {
       setLoading(false);
     }
-  }, [sessionId, setGameState, setLoading, setError, router, locale]);
+  }, [sessionId, setGameState, setLoading, setError, router, locale, skipAnswer, stepSuccess, showFinalCode]);
 
   useEffect(() => {
     fetchGameState();
   }, [fetchGameState]);
+
+  // OFFLINE : au retour du réseau, on rejoue la file (start + complétions)
+  // pour synchroniser le serveur, puis on rafraîchit l'état.
+  useEffect(() => {
+    const onReconnect = () => {
+      void flushQueue(sessionId, locale).then((ok) => {
+        if (ok) fetchGameState();
+      });
+    };
+    window.addEventListener("online", onReconnect);
+    return () => window.removeEventListener("online", onReconnect);
+  }, [sessionId, locale, fetchGameState]);
 
   // -------------------------------------------------------------------
   // Persist hints + notebook across reloads / accidental nav.
@@ -719,7 +761,44 @@ export default function PlayPage() {
         setTimeout(() => setError(null), 3000);
       }
     } catch {
-      setError(tt('play.error.validationGeneric', locale));
+      // OFFLINE : on valide localement avec la réponse déjà en cache
+      // (arFacadeText = la réponse pour les jeux AR), on avance en local et on
+      // met la complétion en file de synchronisation.
+      if (matchAnswer(submittedAnswer, gameState.arFacadeText)) {
+        setStepSuccess(true);
+        setNotebook((prev) => ({ ...prev, [gameState.currentStep]: submittedAnswer }));
+        setHints([]);
+        setGpsTooFar(false);
+        setParticleBurst((n) => n + 1);
+        if (gameState.arFacadeText) setCorrectAnswer(gameState.arFacadeText);
+        if (gameState.offlineAnecdote) {
+          setAnecdote({
+            title: gameState.currentRiddle?.title || "Le saviez-vous ?",
+            text: gameState.offlineAnecdote,
+          });
+        }
+        if (gameState.offlineLandmarkHistory) {
+          setLandmarkHistory(gameState.offlineLandmarkHistory);
+        }
+        setCompletedStepAudios({
+          landmarkHistory: gameState.audioMap?.landmarkHistory ?? null,
+          anecdote: gameState.audioMap?.anecdote ?? null,
+        });
+        setTreasure(
+          gameState.arTreasureReward
+            ? { text: gameState.arTreasureReward, object: "treasure_chest" }
+            : null,
+        );
+        const next = gameState.currentStep + 1;
+        markCompletedOffline(sessionId, gameState.currentStep, submittedAnswer);
+        setOfflineStep(sessionId, next);
+        if (next <= gameState.totalSteps) {
+          void fetchGameState(); // charge l'étape suivante depuis le pack
+        }
+      } else {
+        setError(tt('play.error.wrongAnswer', locale));
+        setTimeout(() => setError(null), 3500);
+      }
     } finally {
       setValidating(false);
     }
@@ -746,7 +825,13 @@ export default function PlayPage() {
         fetchGameState();
       }
     } catch {
-      setError(tt('play.error.hintFailed', locale));
+      // OFFLINE : l'indice est déjà dans le pack pré-téléchargé.
+      const offline = gameState.offlineHints?.[hintIndex];
+      if (offline) {
+        setHints((prev) => [...prev, { order: hintIndex + 1, text: offline }]);
+      } else {
+        setError(tt('play.error.hintFailed', locale));
+      }
     } finally {
       setHintLoading(false);
     }
@@ -1151,7 +1236,17 @@ export default function PlayPage() {
                   setShowIntro(false);
                 }
               } catch {
-                setError(tt('play.error.startFailed', locale));
+                // OFFLINE : si le jeu est pré-téléchargé, on démarre quand même
+                // (progression locale) et on met le start en file de sync.
+                const pack = await loadFullPack(sessionId).catch(() => null);
+                if (pack) {
+                  queueStart(sessionId);
+                  setOfflineStep(sessionId, getOfflineStep(sessionId, 1));
+                  await fetchGameState();
+                  setShowIntro(false);
+                } else {
+                  setError(tt('play.error.startFailed', locale));
+                }
               } finally {
                 setStartingGame(false);
               }
