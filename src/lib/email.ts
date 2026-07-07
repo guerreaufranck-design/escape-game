@@ -338,3 +338,72 @@ export async function sendCodeGenerationFailureAlert(params: {
     console.error(`[Email] Failed to send alert: ${err instanceof Error ? err.message : err}`);
   }
 }
+
+/**
+ * Suivi opérationnel (2026-07-07) — alerte à CHAQUE déclenchement de la
+ * pipeline, pour tracer l'activité multi-revendeurs :
+ *   - kind="game_build"      : un nouveau jeu part en génération
+ *   - kind="code_generation" : un code d'activation est créé pour un jeu existant
+ *
+ * Envoi best-effort vers l'admin. N'échoue JAMAIS l'appelant (try/catch interne,
+ * client null si RESEND_API_KEY absent). À placer sur les points d'entrée, pas
+ * dans une boucle — un email par déclenchement.
+ */
+export async function sendPipelineTriggerAlert(params: {
+  kind: "game_build" | "code_generation";
+  gameCity: string;
+  gameTitle?: string | null;
+  slug?: string | null;
+  language?: string | null;
+  buyerEmail?: string | null;
+  teamName?: string | null;
+  orderId?: string | null;
+  /** Point de vente / origine : host du callbackUrl, referer, ou "Backoffice". */
+  source?: string | null;
+}): Promise<void> {
+  const client = getResendClient();
+  if (!client) return;
+
+  const { kind, gameCity, gameTitle, slug, language, buyerEmail, teamName, orderId, source } = params;
+  const isBuild = kind === "game_build";
+  const emoji = isBuild ? "🏗️" : "🎫";
+  const label = isBuild ? "Nouveau jeu en génération" : "Code d'activation généré";
+  const subject = isBuild
+    ? `${emoji} Pipeline — nouveau jeu : ${gameCity}${source ? ` (${source})` : ""}`
+    : `${emoji} Code généré — ${gameCity}${language ? ` [${language.toUpperCase()}]` : ""}${buyerEmail ? ` → ${buyerEmail}` : ""}`;
+
+  const row = (k: string, v?: string | null) =>
+    v
+      ? `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600;">${k}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;">${v}</td></tr>`
+      : "";
+
+  try {
+    await client.emails.send({
+      from: FROM_EMAIL,
+      to: ADMIN_EMAIL,
+      subject,
+      html: `
+        <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color:${isBuild ? "#2563eb" : "#059669"};">${emoji} ${label}</h2>
+          <table style="width:100%; border-collapse:collapse; margin:16px 0;">
+            ${row("Ville", gameCity)}
+            ${row("Jeu", gameTitle || undefined)}
+            ${row("Slug", slug || undefined)}
+            ${row("Langue", language ? language.toUpperCase() : undefined)}
+            ${row("Point de vente", source || undefined)}
+            ${row("Client", buyerEmail ? `<a href="mailto:${buyerEmail}">${buyerEmail}</a>` : undefined)}
+            ${row("Équipe", teamName || undefined)}
+            ${row("Commande", orderId || undefined)}
+          </table>
+          <p style="color:#6b7280; font-size:12px;">
+            Timestamp: ${new Date().toISOString()}<br>
+            Escape Game Pipeline — suivi automatique
+          </p>
+        </div>
+      `,
+    });
+    console.log(`[Email] Pipeline trigger alert (${kind}) sent to ${ADMIN_EMAIL} — ${gameCity}`);
+  } catch (err) {
+    console.error(`[Email] Failed to send trigger alert: ${err instanceof Error ? err.message : err}`);
+  }
+}

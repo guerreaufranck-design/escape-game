@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { generateCodesSchema } from "@/lib/validators";
 import { generateCodes } from "@/lib/code-generator";
+import { sendPipelineTriggerAlert } from "@/lib/email";
 
 export async function GET(request: NextRequest) {
   try {
@@ -55,7 +56,7 @@ export async function POST(request: NextRequest) {
     // Verify game exists
     const { data: game, error: gameError } = await supabase
       .from("games")
-      .select("id")
+      .select("id, city, title")
       .eq("id", gameId)
       .single();
 
@@ -95,6 +96,28 @@ export async function POST(request: NextRequest) {
         { error: "Erreur lors de la génération des codes" },
         { status: 500 }
       );
+    }
+
+    // Suivi opérationnel (2026-07-07) — email à chaque génération manuelle
+    // de code depuis le backoffice. Non bloquant.
+    {
+      const rawTitle = (game as { title?: unknown }).title;
+      const title =
+        typeof rawTitle === "string"
+          ? rawTitle
+          : rawTitle && typeof rawTitle === "object"
+            ? ((rawTitle as Record<string, string>).en ??
+              (rawTitle as Record<string, string>).fr ??
+              Object.values(rawTitle as Record<string, string>)[0])
+            : undefined;
+      void sendPipelineTriggerAlert({
+        kind: "code_generation",
+        gameCity: (game as { city?: string }).city ?? gameId,
+        gameTitle: title,
+        teamName: teamName ?? null,
+        orderId: `${count} code(s) — backoffice`,
+        source: "Backoffice (manuel)",
+      });
     }
 
     return NextResponse.json(

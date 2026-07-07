@@ -27,7 +27,7 @@ import {
   type GameTemplate,
 } from "@/lib/game-pipeline";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { sendPipelineFailureAlert, sendNeedsReviewAlert } from "@/lib/email";
+import { sendPipelineFailureAlert, sendNeedsReviewAlert, sendPipelineTriggerAlert } from "@/lib/email";
 import { parseGenre } from "@/lib/game-genres";
 import { inngest } from "@/lib/inngest-client";
 import { validateOddballtripContract } from "@/lib/oddballtrip-contract";
@@ -426,6 +426,29 @@ export async function POST(request: NextRequest) {
         },
         { status: 200 }
       );
+    }
+
+    // Suivi opérationnel (2026-07-07) — email à chaque nouveau build, pour
+    // tracer l'activité multi-revendeurs. Placé APRÈS le check "already exists"
+    // → ne notifie que les vraies nouvelles générations. Best-effort, non bloquant.
+    {
+      let source: string | undefined;
+      try {
+        if (body.callbackUrl) source = new URL(body.callbackUrl as string).host;
+      } catch {
+        /* callbackUrl malformé — on ignore */
+      }
+      if (!source) source = request.headers.get("referer") || "Backoffice / direct";
+      void sendPipelineTriggerAlert({
+        kind: "game_build",
+        gameCity: template.city,
+        gameTitle: template.theme,
+        slug: template.slug,
+        language: template.language,
+        buyerEmail: body.buyerEmail,
+        orderId: body.orderId,
+        source,
+      });
     }
 
     // ════════════════════════════════════════════════════════════════

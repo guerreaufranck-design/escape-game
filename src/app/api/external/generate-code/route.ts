@@ -5,7 +5,7 @@ import {
   generateActivationCode,
   corsHeaders,
 } from "@/lib/external-auth";
-import { sendCodeGenerationFailureAlert } from "@/lib/email";
+import { sendCodeGenerationFailureAlert, sendPipelineTriggerAlert } from "@/lib/email";
 import { prepareGamePackage } from "@/lib/game-package";
 
 /**
@@ -299,6 +299,21 @@ export async function POST(request: NextRequest) {
     console.log(
       `[external/generate-code] code=${finalCode} game=${game.city} email=${buyerEmail} order=${orderId || "N/A"} lang=${language || "—"} raw="${body.language ?? ""}" idempotent=${isIdempotentReturn}`
     );
+
+    // Suivi opérationnel (2026-07-07) — email uniquement sur un NOUVEAU code
+    // (pas les retours idempotents, sinon spam à chaque retry). Non bloquant.
+    if (!isIdempotentReturn) {
+      void sendPipelineTriggerAlert({
+        kind: "code_generation",
+        gameCity: game.city,
+        gameTitle: extractTitle(game.title),
+        language,
+        buyerEmail,
+        teamName: buyerName || null,
+        orderId: orderId || null,
+        source: request.headers.get("referer") || "API revendeur",
+      });
+    }
 
     // ─── Pre-generation SYNCHRONE ────────────────────────────────────
     // On AWAIT prepareGamePackage avant de répondre. oddballtrip
