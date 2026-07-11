@@ -407,3 +407,59 @@ export async function sendPipelineTriggerAlert(params: {
     console.error(`[Email] Failed to send trigger alert: ${err instanceof Error ? err.message : err}`);
   }
 }
+
+/**
+ * Suivi joueur (2026-07-09) — email dès qu'un joueur ACTIVE son code (création
+ * de session côté /api/activate). Permet de suivre en direct qui commence à
+ * jouer. Best-effort, ne fait jamais échouer l'activation.
+ */
+export async function sendPlayerStartAlert(params: {
+  gameCity: string;
+  gameTitle?: string | null;
+  playerName?: string | null;
+  teamName?: string | null;
+  code?: string | null;
+  sessionId?: string | null;
+  totalSteps?: number | null;
+  buyerEmail?: string | null;
+}): Promise<void> {
+  const client = getResendClient();
+  if (!client) return;
+
+  const { gameCity, gameTitle, playerName, teamName, code, sessionId, totalSteps, buyerEmail } = params;
+  const who = playerName || teamName || "Joueur";
+  const row = (k: string, v?: string | null) =>
+    v
+      ? `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600;">${k}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;">${v}</td></tr>`
+      : "";
+
+  try {
+    await client.emails.send({
+      from: FROM_EMAIL,
+      to: ADMIN_EMAIL,
+      subject: `🎮 Partie démarrée — ${gameCity} — ${who}`,
+      html: `
+        <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color:#7c3aed;">🎮 Un joueur vient d'activer son code</h2>
+          <table style="width:100%; border-collapse:collapse; margin:16px 0;">
+            ${row("Ville", gameCity)}
+            ${row("Jeu", gameTitle || undefined)}
+            ${row("Joueur", playerName || undefined)}
+            ${row("Équipe", teamName || undefined)}
+            ${row("Code", code || undefined)}
+            ${row("Étapes", totalSteps != null ? String(totalSteps) : undefined)}
+            ${row("Acheteur", buyerEmail ? `<a href="mailto:${buyerEmail}">${buyerEmail}</a>` : undefined)}
+            ${row("Session", sessionId || undefined)}
+          </table>
+          <p style="color:#6b7280; font-size:12px;">
+            Timestamp: ${new Date().toISOString()}<br>
+            Escape Game — suivi joueur automatique
+          </p>
+        </div>
+      `,
+    });
+    console.log(`[Email] Player start alert sent to ${ADMIN_EMAIL} — ${gameCity} / ${who}`);
+  } catch (err) {
+    console.error(`[Email] Failed to send player start alert: ${err instanceof Error ? err.message : err}`);
+  }
+}

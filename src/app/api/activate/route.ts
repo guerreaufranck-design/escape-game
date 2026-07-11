@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { activateSchema } from "@/lib/validators";
 import { t, detectLocale } from "@/lib/i18n";
+import { sendPlayerStartAlert } from "@/lib/email";
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,6 +54,40 @@ export async function POST(request: NextRequest) {
         { error: "Code invalide ou expire" },
         { status: 400 }
       );
+    }
+
+    // Suivi joueur (2026-07-09) — email dès l'activation. On enrichit avec la
+    // ville + l'acheteur (lookup léger via le code). Best-effort, awaité pour
+    // fiabilité (l'activation est un événement rare, ~400ms invisible).
+    try {
+      let gameCity = "";
+      let buyerEmail: string | null = null;
+      const { data: codeRow } = await supabase
+        .from("activation_codes")
+        .select("game_id, buyer_email")
+        .eq("code", codeUpper)
+        .single();
+      if (codeRow?.game_id) {
+        buyerEmail = codeRow.buyer_email ?? null;
+        const { data: g } = await supabase
+          .from("games")
+          .select("city")
+          .eq("id", codeRow.game_id)
+          .single();
+        gameCity = g?.city ?? "";
+      }
+      await sendPlayerStartAlert({
+        gameCity: gameCity || (typeof gameTitle === "string" ? gameTitle : ""),
+        gameTitle: t(gameTitle, locale),
+        playerName,
+        teamName,
+        code: codeUpper,
+        sessionId: String(sessionId),
+        totalSteps: typeof totalSteps === "number" ? totalSteps : null,
+        buyerEmail,
+      });
+    } catch {
+      /* alerte non bloquante */
     }
 
     return NextResponse.json({
