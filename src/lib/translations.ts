@@ -614,6 +614,13 @@ export const ui: Translations = {
     es: 'La respuesta era...',
     it: 'La risposta era...',
   },
+  'play.puzzleWrong': {
+    fr: "Ce n'est pas la bonne réponse — réessayez, ou prenez un indice.",
+    en: "That's not it — try again, or take a hint.",
+    de: 'Das ist nicht richtig — versuch es erneut oder nimm einen Hinweis.',
+    es: 'No es correcto — inténtalo de nuevo o pide una pista.',
+    it: 'Non è la risposta giusta — riprova o usa un indizio.',
+  },
   'play.tryAgain': {
     fr: 'Pas tout à fait — il vous reste un essai',
     en: "Not quite — you have one attempt left",

@@ -1933,7 +1933,7 @@ export default function PlayPage() {
                     />
                     {puzzleWrong && (
                       <p className="text-sm text-red-300 mt-2">
-                        {tt('play.tryAgain', locale) || "Ce n'est pas ça, réessaie."}
+                        {tt('play.puzzleWrong', locale) || "Ce n'est pas la bonne réponse — réessayez, ou prenez un indice."}
                       </p>
                     )}
                     <Button
