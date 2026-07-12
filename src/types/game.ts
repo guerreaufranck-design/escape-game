@@ -55,8 +55,19 @@ export interface GameState {
      */
     answerSource: "physical" | "virtual_ar";
   } | null;
-  /** Optional short phrase "painted" on the facade when locked on in AR */
+  /** Optional short phrase "painted" on the facade when locked on in AR.
+   *  En PUZZLE MODE, contient les MOTS-INDICES (pas la réponse). */
   arFacadeText: string | null;
+  /**
+   * PUZZLE MODE (Phase 1) — si défini, l'RA dévoile `revealWords` et le joueur
+   * doit DÉDUIRE la réponse via un popup. La réponse n'est jamais envoyée en
+   * clair : `answerHash` permet la validation (même hors-ligne). `offlineStepAnswer`
+   * n'est présent que dans le pack offline (?step) pour le "passer" hors-ligne.
+   */
+  puzzleType?: "ACROSTIC" | "ANAGRAM" | "ASSOCIATION" | null;
+  revealWords?: string[];
+  answerHash?: string | null;
+  offlineStepAnswer?: string | null;
   /** Optional custom reward message revealed by tapping the AR chest */
   arTreasureReward: string | null;
   /** Optional AR character (monk/knight/pirate…) that speaks when locked on */

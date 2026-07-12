@@ -14,7 +14,7 @@ import { useLocale } from "@/components/player/LocaleSelector";
 import { formatTime } from "@/lib/scoring";
 import { formatDistance } from "@/lib/geo";
 import { tt } from "@/lib/translations";
-import { matchAnswer } from "@/lib/answer-match";
+import { matchAnswer, matchAnswerHash } from "@/lib/answer-match";
 import { resolveCachedUrl } from "@/lib/offline-cache";
 import {
   prefetchFullGame,
@@ -191,6 +191,9 @@ export default function PlayPage() {
   } | null>(null);
   const [notebook, setNotebook] = useState<Record<number, string>>({});
   const [notebookInput, setNotebookInput] = useState("");
+  // PUZZLE MODE — saisie de la réponse déduite + feedback "faux".
+  const [puzzleGuess, setPuzzleGuess] = useState("");
+  const [puzzleWrong, setPuzzleWrong] = useState(false);
   const [showNotebook, setShowNotebook] = useState(false);
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showFinalCode, setShowFinalCode] = useState(false);
@@ -712,9 +715,9 @@ export default function PlayPage() {
   // The server-side check matches against the stored expected answer
   // (case-insensitive + accent-folded), so passing the AR-revealed
   // facade text always succeeds.
-  const validateStep = async (explicitAnswer?: string) => {
-    if (!gameState) return;
-    if (validating) return; // re-entrancy guard for fast double-fires
+  const validateStep = async (explicitAnswer?: string): Promise<boolean> => {
+    if (!gameState) return false;
+    if (validating) return false; // re-entrancy guard for fast double-fires
     const submittedAnswer = (
       explicitAnswer ||
       notebookInput ||
@@ -724,7 +727,7 @@ export default function PlayPage() {
     if (!submittedAnswer) {
       setError(tt('play.error.typeAnswerFirst', locale));
       setTimeout(() => setError(null), 3000);
-      return;
+      return false;
     }
 
     setValidating(true);
@@ -782,27 +785,37 @@ export default function PlayPage() {
         if (!data.completed) {
           void fetchGameState();
         }
+        return true;
       } else if (data.reason === "wrong_answer") {
         setError(tt('play.error.wrongAnswer', locale));
         setTimeout(() => setError(null), 3500);
+        return false;
       } else if (data.error) {
         setError(data.error);
         setTimeout(() => setError(null), 3000);
+        return false;
       } else {
         setError(tt('play.error.validationFailed', locale));
         setTimeout(() => setError(null), 3000);
+        return false;
       }
     } catch {
-      // OFFLINE : on valide localement avec la réponse déjà en cache
-      // (arFacadeText = la réponse pour les jeux AR), on avance en local et on
-      // met la complétion en file de synchronisation.
-      if (matchAnswer(submittedAnswer, gameState.arFacadeText)) {
+      // OFFLINE : on valide localement. En mode PUZZLE, arFacadeText = les
+      // mots-indices (pas la réponse) → on compare via le hash. Sinon
+      // (legacy virtual_ar) arFacadeText = la réponse.
+      const offlineOk = gameState.puzzleType
+        ? await matchAnswerHash(submittedAnswer, gameState.answerHash)
+        : matchAnswer(submittedAnswer, gameState.arFacadeText);
+      if (offlineOk) {
         setStepSuccess(true);
         setNotebook((prev) => ({ ...prev, [gameState.currentStep]: submittedAnswer }));
         setHints([]);
         setGpsTooFar(false);
         setParticleBurst((n) => n + 1);
-        if (gameState.arFacadeText) setCorrectAnswer(gameState.arFacadeText);
+        const revealed = gameState.puzzleType
+          ? gameState.offlineStepAnswer || submittedAnswer
+          : gameState.arFacadeText;
+        if (revealed) setCorrectAnswer(revealed);
         if (gameState.offlineAnecdote) {
           setAnecdote({
             title: gameState.currentRiddle?.title || "Le saviez-vous ?",
@@ -827,14 +840,33 @@ export default function PlayPage() {
         if (next <= gameState.totalSteps) {
           void fetchGameState(); // charge l'étape suivante depuis le pack
         }
+        return true;
       } else {
         setError(tt('play.error.wrongAnswer', locale));
         setTimeout(() => setError(null), 3500);
+        return false;
       }
     } finally {
       setValidating(false);
     }
   };
+
+  // PUZZLE MODE — soumission depuis le popup : valide la réponse déduite.
+  // Faux → feedback "réessaie" ; juste → validateStep enchaîne (success modal).
+  const submitPuzzle = async () => {
+    const g = puzzleGuess.trim();
+    if (!g) return;
+    setPuzzleWrong(false);
+    const ok = await validateStep(g);
+    if (ok) setPuzzleGuess("");
+    else setPuzzleWrong(true);
+  };
+
+  // Reset de la saisie puzzle à chaque changement d'étape.
+  useEffect(() => {
+    setPuzzleGuess("");
+    setPuzzleWrong(false);
+  }, [gameState?.currentStepId]);
 
   // Request hint
   const requestHint = async (hintIndex: number) => {
@@ -931,7 +963,12 @@ export default function PlayPage() {
       // OFFLINE : skip local — on révèle la réponse (arFacadeText), on montre
       // le contenu pédagogique, on avance, et on met le skip en file de sync.
       if (gameState) {
-        setSkipAnswer(gameState.arFacadeText || tt('play.error.answerNotAvailable', locale));
+        // PUZZLE MODE : arFacadeText = mots-indices → on révèle la vraie
+        // réponse depuis le pack offline (offlineStepAnswer).
+        const revealOnSkip = gameState.puzzleType
+          ? gameState.offlineStepAnswer
+          : gameState.arFacadeText;
+        setSkipAnswer(revealOnSkip || tt('play.error.answerNotAvailable', locale));
         const isLast = gameState.currentStep >= gameState.totalSteps;
         setSkipCompleted(isLast);
         setHints([]);
@@ -1818,6 +1855,7 @@ export default function PlayPage() {
                     mode city_tour — pas d'énigme à résoudre, l'AR sert
                     juste de guidage. */}
                 {gameState.mode === "city_game" &&
+                  !gameState.puzzleType &&
                   gameState.currentRiddle.answerSource === "virtual_ar" && (
                   <div className="mb-6 rounded-xl border border-fuchsia-500/40 bg-gradient-to-br from-fuchsia-500/15 via-violet-500/10 to-transparent p-4 shadow-lg shadow-fuchsia-900/20 animate-pulse-slow">
                     <div className="flex items-start gap-3">
@@ -1861,6 +1899,77 @@ export default function PlayPage() {
                     {gameState.currentRiddle.text}
                   </p>
                 </div>
+
+                {/* PUZZLE MODE — popup de déchiffrage : mots-indices révélés par
+                    l'RA, saisie de la réponse déduite, indices + passer (pénalisés). */}
+                {gameState.mode === "city_game" && gameState.puzzleType && !stepSuccess && (
+                  <div className="mb-6 rounded-2xl border border-fuchsia-500/40 bg-gradient-to-br from-fuchsia-950/50 via-violet-950/30 to-slate-900/60 p-5 shadow-lg shadow-fuchsia-900/20">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Sparkles className="h-5 w-5 text-fuchsia-300" />
+                      <p className="text-xs font-bold uppercase tracking-wider text-fuchsia-300">
+                        {tt('play.decipher', locale) || "Déchiffre l'énigme"}
+                      </p>
+                    </div>
+                    {gameState.revealWords && gameState.revealWords.length > 0 && (
+                      <>
+                        <p className="text-[11px] uppercase tracking-wider text-fuchsia-300/70 mb-2">
+                          {tt('play.arRevealed', locale) || "L'RA a dévoilé"}
+                        </p>
+                        <div className="flex flex-wrap gap-2 mb-4">
+                          {gameState.revealWords.map((w, i) => (
+                            <span key={i} className="px-3 py-1.5 rounded-lg bg-fuchsia-500/15 border border-fuchsia-400/30 text-fuchsia-100 font-semibold text-sm">
+                              {w}
+                            </span>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                    <input
+                      value={puzzleGuess}
+                      onChange={(e) => { setPuzzleGuess(e.target.value); setPuzzleWrong(false); }}
+                      onKeyDown={(e) => { if (e.key === "Enter") void submitPuzzle(); }}
+                      placeholder={tt('play.yourAnswer', locale) || "Ta réponse…"}
+                      className="w-full px-4 py-3 rounded-xl bg-slate-950/60 border border-fuchsia-500/30 text-white placeholder:text-slate-500 focus:outline-none focus:border-fuchsia-400"
+                    />
+                    {puzzleWrong && (
+                      <p className="text-sm text-red-300 mt-2">
+                        {tt('play.puzzleWrong', locale) || "Ce n'est pas la bonne réponse — réessayez, ou prenez un indice."}
+                      </p>
+                    )}
+                    <Button
+                      onClick={() => void submitPuzzle()}
+                      disabled={validating || !puzzleGuess.trim()}
+                      className="w-full mt-3 bg-fuchsia-600 hover:bg-fuchsia-700 text-white font-bold h-12 rounded-xl"
+                    >
+                      {validating ? "…" : (tt('play.validate', locale) || "Valider")}
+                    </Button>
+                    {hints.length > 0 && (
+                      <div className="mt-3 space-y-1">
+                        {hints.map((h, i) => (
+                          <p key={i} className="text-sm text-amber-200/90">💡 {h.text}</p>
+                        ))}
+                      </div>
+                    )}
+                    <div className="flex gap-2 mt-3">
+                      {hints.length < gameState.hintsAvailable && (
+                        <button
+                          onClick={() => requestHint(hints.length)}
+                          disabled={hintLoading}
+                          className="flex-1 px-3 py-2 rounded-lg border border-amber-600/40 bg-amber-950/30 text-xs font-medium text-amber-300 hover:bg-amber-900/30 transition-colors disabled:opacity-50"
+                        >
+                          {tt('play.hintPenalty', locale) || "Indice (pénalité)"}
+                        </button>
+                      )}
+                      <button
+                        onClick={() => void skipStep()}
+                        disabled={skipping}
+                        className="flex-1 px-3 py-2 rounded-lg border border-slate-600/40 bg-slate-800/40 text-xs font-medium text-slate-300 hover:bg-slate-700/40 transition-colors disabled:opacity-50"
+                      >
+                        {tt('play.skipPenalty', locale) || "Passer l'énigme (pénalité)"}
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {gameState.currentRiddle.image && (
                   <img
@@ -2409,7 +2518,7 @@ export default function PlayPage() {
           onFacadeRevealed={() => logAr("ar_facade_revealed", { step: gameState.currentStep })}
           onCharacterSpeak={() => logAr("ar_character_speak", { step: gameState.currentStep })}
           facadeText={gameState.arFacadeText ?? null}
-          facadeTextIsAnswer={gameState.currentRiddle?.answerSource === "virtual_ar"}
+          facadeTextIsAnswer={!gameState.puzzleType && gameState.currentRiddle?.answerSource === "virtual_ar"}
           treasureReward={gameState.arTreasureReward ?? null}
           stepKey={gameState.currentStepId}
           onChestOpen={() => setParticleBurst((n) => n + 1)}
@@ -2425,6 +2534,13 @@ export default function PlayPage() {
           }
           latestHint={hints[hints.length - 1]?.text || null}
           onAutoValidate={(source) => {
+            // PUZZLE MODE : la façade dévoile des MOTS-INDICES, pas la réponse.
+            // On NE valide donc PAS automatiquement — le joueur doit déduire et
+            // taper sa réponse dans le popup. On ferme juste l'RA.
+            if (gameState.puzzleType) {
+              setArOpen(false);
+              return;
+            }
             // The AR overlay confirms the player has been on-site
             // long enough to read the magical letters. Validate
             // server-side using the EXACT answer Claude generated

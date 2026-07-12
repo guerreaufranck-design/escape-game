@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { obfuscateCoordinates } from "@/lib/geo";
 import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
 import { translateStepFields, translateGameField } from "@/lib/translate-service";
+import { answerHash as computeAnswerHash, extractExpectedAnswer } from "@/lib/answer-match";
 import type { GameState, CompletedStepInfo, Hint } from "@/types/game";
 
 /**
@@ -138,6 +139,12 @@ export async function GET(
     let hintsAvailable = 0;
     let currentStepId: string | null = null;
     let routeAttractions: GameState["routeAttractions"] = [];
+    // PUZZLE MODE — mots-indices révélés par l'RA + hash de la réponse (valid.
+    // offline sans fuite) + réponse en clair pour le "passer" offline.
+    let puzzleType: GameState["puzzleType"] = null;
+    let revealWords: string[] = [];
+    let answerHash: string | null = null;
+    let offlineStepAnswer: string | null = null;
     // OFFLINE pre-download (?step) : textes récompense + indices (voir plus bas).
     let offlineAnecdote: string | null = null;
     let offlineLandmarkHistory: string | null = null;
@@ -279,6 +286,21 @@ export async function GET(
           answerSource === "virtual_ar"
             ? step.answer_text || step.ar_facade_text || null
             : step.ar_facade_text || hints[1]?.text || null;
+
+        // PUZZLE MODE — si le stop a une couche déchiffrage, l'RA ne révèle plus
+        // la réponse mais les MOTS-INDICES. La réponse n'est jamais envoyée en
+        // clair ; un hash permet la validation offline. answerHash calculé plus bas.
+        const rawPuzzleType = (step as { puzzle_type?: string | null }).puzzle_type;
+        if (rawPuzzleType) {
+          puzzleType = rawPuzzleType as GameState["puzzleType"];
+          const rw = (step as { reveal_words?: unknown }).reveal_words;
+          revealWords = Array.isArray(rw) ? (rw as string[]) : [];
+          if (revealWords.length > 0) arFacadeText = revealWords.join("  ·  ");
+          const expected = extractExpectedAnswer(step.answer_text);
+          if (expected) answerHash = await computeAnswerHash(expected);
+          // Pack offline (?step) : la réponse en clair sert au "passer" hors-ligne.
+          if (stepParam) offlineStepAnswer = expected;
+        }
 
         // AR treasure reward — full English sentence; needs translation
         // when the player picked a non-English locale.
@@ -570,6 +592,10 @@ export async function GET(
       arFacadeText,
       arTreasureReward,
       arCharacter,
+      puzzleType,
+      revealWords,
+      answerHash,
+      offlineStepAnswer,
       routeAttractions,
       approximateTarget,
       validationRadius,

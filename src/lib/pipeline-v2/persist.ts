@@ -287,6 +287,10 @@ export async function persistMasterEN(
     validation_radius_meters: stop.validationRadiusMeters,
     bonus_time_seconds: stop.bonusTimeSeconds,
     answer_source: "virtual_ar",
+    // PUZZLE MODE — n'écrit ces colonnes que si le stop a une couche puzzle
+    // (sinon defaults DB : puzzle_type NULL, reveal_words []). Ainsi les
+    // builds legacy restent inchangés.
+    ...(stop.puzzleType ? { puzzle_type: stop.puzzleType, reveal_words: stop.revealWords ?? [] } : {}),
   }));
 
   const { error: iErr } = await s.from("game_steps").insert(rows);

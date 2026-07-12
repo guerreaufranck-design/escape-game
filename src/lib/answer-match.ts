@@ -45,3 +45,25 @@ export function matchAnswer(submitted: string, expectedRaw: unknown): boolean {
   const b = normalizeAnswer(expected);
   return a.length > 0 && a === b;
 }
+
+/**
+ * PUZZLE MODE — hash SHA-256 d'une réponse normalisée, avec sel.
+ * Permet au client (même HORS-LIGNE) de valider une réponse déchiffrée SANS
+ * jamais recevoir la solution en clair. Même fonction serveur + navigateur
+ * (globalThis.crypto.subtle existe des deux côtés). Renvoie du hex.
+ */
+const PUZZLE_SALT = "oddballtrip-puzzle-v1";
+export async function answerHash(raw: string): Promise<string> {
+  const data = new TextEncoder().encode(`${PUZZLE_SALT}:${normalizeAnswer(raw)}`);
+  const buf = await globalThis.crypto.subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(buf))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+/** Vrai si la réponse soumise matche le hash attendu (validation offline sûre). */
+export async function matchAnswerHash(submitted: string, expectedHash: string | null | undefined): Promise<boolean> {
+  if (!expectedHash) return false;
+  if (normalizeAnswer(submitted).length === 0) return false;
+  return (await answerHash(submitted)) === expectedHash;
+}
