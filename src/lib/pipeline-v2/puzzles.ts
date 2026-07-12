@@ -50,7 +50,6 @@ export function verifyPuzzle(p: { puzzle_type: string; reveal_words: string[]; a
 function buildPrompt(
   input: PipelineInput,
   stops: Array<{ step_order: number; landmarkName: string; answer: string }>,
-  answerLang: string,
   fixNote?: string,
 ): string {
   const list = stops.map((s) => `${s.step_order}. ${s.landmarkName} (concept actuel: ${s.answer})`).join("\n");
@@ -61,24 +60,26 @@ ${list}
 
 MECHANIC: at each stop the player's augmented reality reveals 2-3 WORDS; the player must DEDUCE one single answer from them (they type it; correct = next stop unlocks). A real deciphering puzzle — NOT reading the answer off a wall.
 
-All answers and words in **${answerLang}** (same language as the concepts above). Answers = single UPPERCASE word, NO accents.
+⚠️ LANGUAGE SPLIT (critical):
+- "answer" and "reveal_words" → keep them in the SAME language as the concepts above (they are the puzzle material, revealed in AR, and stay FIXED for every player). Answers = single UPPERCASE word, NO accents.
+- "instruction", "hint1", "hint2" (and the final's) → write them in ENGLISH. They are the base text, translated automatically for each player's language later.
 
 Keep the ${stops.length} answers a COHERENT set (all the same category) so a final word can unite them. You may keep or improve each stop's concept, but every answer must be a single word deducible from its reveal_words.
 
 For EACH stop choose puzzle_type and produce STRICTLY:
-- "answer": UPPERCASE, no accents, one word.
+- "answer": UPPERCASE, no accents, one word, in the concepts' language.
 - "puzzle_type": "ACROSTIC" | "ANAGRAM" | "ASSOCIATION"
-- "reveal_words":
-   * ACROSTIC  : EXACTLY answer.length words; the FIRST LETTER of each, in order, spells the answer EXACTLY. Real evocative ${answerLang} words tied to the landmark/theme.
+- "reveal_words" (in the concepts' language):
+   * ACROSTIC  : EXACTLY answer.length words; the FIRST LETTER of each, in order, spells the answer EXACTLY. Real evocative words tied to the landmark/theme.
    * ANAGRAM   : EXACTLY ONE string using EXACTLY the same letters as the answer, reordered into a different pronounceable decoy.
-   * ASSOCIATION : 2-3 ${answerLang} words/clues that clearly point to the answer by meaning.
-- "instruction": 1-2 ${answerLang} sentences telling HOW to solve.
-- "hint1": gentle ${answerLang} nudge (method / a letter).
-- "hint2": strong ${answerLang} hint (near-reveals it).
+   * ASSOCIATION : 2-3 words/clues that clearly point to the answer by meaning.
+- "instruction": 1-2 ENGLISH sentences telling HOW to solve (may reference the revealed words).
+- "hint1": gentle ENGLISH nudge (method / a letter).
+- "hint2": strong ENGLISH hint (near-reveals it).
 
 Target mix: ~half ACROSTIC, ~2 ANAGRAM, rest ASSOCIATION. Solvable for a tourist who doesn't know ${input.city}.
 
-Also "final": { "answer": ${answerLang} word uniting the ${stops.length} answers (the category), "instruction": how to combine, "hint1", "hint2", "explanation": 1-2 sentences }.
+Also "final": { "answer": word (concepts' language) uniting the ${stops.length} answers (the category), "instruction": ENGLISH, "hint1": ENGLISH, "hint2": ENGLISH, "explanation": 1-2 ENGLISH sentences }.
 ${fixNote ? `\nIMPORTANT — previous attempt had invalid puzzles. ${fixNote} Fix them so ACROSTIC initials and ANAGRAM letters match EXACTLY.` : ""}
 
 Output JSON ONLY:
@@ -94,14 +95,13 @@ async function generate(
   client: Anthropic,
   input: PipelineInput,
   stops: Array<{ step_order: number; landmarkName: string; answer: string }>,
-  answerLang: string,
   fixNote?: string,
 ): Promise<PuzzleResult> {
   const resp = await client.messages.create({
     model: CONFIG.CLAUDE_MODEL,
     max_tokens: 4000,
     temperature: 0.6,
-    messages: [{ role: "user", content: buildPrompt(input, stops, answerLang, fixNote) }],
+    messages: [{ role: "user", content: buildPrompt(input, stops, fixNote) }],
   });
   const text = resp.content[0].type === "text" ? resp.content[0].text : "";
   const m = text.match(/\{[\s\S]*\}/);
@@ -117,9 +117,6 @@ async function generate(
 export async function applyPuzzleLayer(input: PipelineInput, game: StructuredGame): Promise<StructuredGame> {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY missing (puzzles)");
   const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  // Les answers narrés sont déjà en langue patrimoniale ; on demande à Claude
-  // de respecter la langue des concepts fournis (montrés dans le prompt).
-  const answerLang = "the same language as the concepts above";
   const baseStops = game.stops.map((s) => ({ step_order: s.step_order, landmarkName: s.landmarkName, answer: s.answer }));
 
   let best: PuzzleResult | null = null;
@@ -128,7 +125,7 @@ export async function applyPuzzleLayer(input: PipelineInput, game: StructuredGam
     let res: PuzzleResult;
     try {
       const badNote = best ? `Invalid step_orders: ${best.stops.filter((p) => !verifyPuzzle(p)).map((p) => p.step_order).join(", ")}.` : undefined;
-      res = await generate(client, input, baseStops, answerLang, attempt > 1 ? badNote : undefined);
+      res = await generate(client, input, baseStops, attempt > 1 ? badNote : undefined);
     } catch {
       continue;
     }
