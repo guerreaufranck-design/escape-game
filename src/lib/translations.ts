@@ -663,6 +663,20 @@ export const ui: Translations = {
     es: 'Saltar enigma (penalización)',
     it: 'Salta enigma (penalità)',
   },
+  'play.arScanPrompt': {
+    fr: 'Pointe ton téléphone vers la façade pour révéler les mots.',
+    en: 'Point your phone at the facade to reveal the words.',
+    de: 'Richte dein Handy auf die Fassade, um die Wörter zu enthüllen.',
+    es: 'Apunta tu teléfono a la fachada para revelar las palabras.',
+    it: 'Punta il telefono verso la facciata per rivelare le parole.',
+  },
+  'play.cantSeeWords': {
+    fr: 'Je ne vois pas les mots',
+    en: "I can't see the words",
+    de: 'Ich sehe die Wörter nicht',
+    es: 'No veo las palabras',
+    it: 'Non vedo le parole',
+  },
   'play.tryAgain': {
     fr: 'Pas tout à fait — il vous reste un essai',
     en: "Not quite — you have one attempt left",

@@ -194,6 +194,9 @@ export default function PlayPage() {
   // PUZZLE MODE — saisie de la réponse déduite + feedback "faux".
   const [puzzleGuess, setPuzzleGuess] = useState("");
   const [puzzleWrong, setPuzzleWrong] = useState(false);
+  // Les mots-indices se découvrent en RA (façade). Ce flag les affiche aussi
+  // dans le panneau une fois révélés en RA, ou via le bouton fallback sans pénalité.
+  const [puzzleWordsRevealed, setPuzzleWordsRevealed] = useState(false);
   const [showNotebook, setShowNotebook] = useState(false);
   const [showActionMenu, setShowActionMenu] = useState(false);
   const [showFinalCode, setShowFinalCode] = useState(false);
@@ -866,6 +869,7 @@ export default function PlayPage() {
   useEffect(() => {
     setPuzzleGuess("");
     setPuzzleWrong(false);
+    setPuzzleWordsRevealed(false);
   }, [gameState?.currentStepId]);
 
   // Request hint
@@ -1910,19 +1914,36 @@ export default function PlayPage() {
                         {tt('play.decipher', locale) || "Déchiffre l'énigme"}
                       </p>
                     </div>
+                    {/* Les mots se découvrent en RA (façade). Une fois révélés
+                        (via l'RA ou le bouton fallback), on les affiche ici pour
+                        que le joueur puisse taper sans tenir le téléphone en l'air. */}
                     {gameState.revealWords && gameState.revealWords.length > 0 && (
-                      <>
-                        <p className="text-[11px] uppercase tracking-wider text-fuchsia-300/70 mb-2">
-                          {tt('play.arRevealed', locale) || "L'RA a dévoilé"}
-                        </p>
-                        <div className="flex flex-wrap gap-2 mb-4">
-                          {gameState.revealWords.map((w, i) => (
-                            <span key={i} className="px-3 py-1.5 rounded-lg bg-fuchsia-500/15 border border-fuchsia-400/30 text-fuchsia-100 font-semibold text-sm">
-                              {w}
-                            </span>
-                          ))}
+                      puzzleWordsRevealed ? (
+                        <>
+                          <p className="text-[11px] uppercase tracking-wider text-fuchsia-300/70 mb-2">
+                            {tt('play.arRevealed', locale) || "L'RA a dévoilé"}
+                          </p>
+                          <div className="flex flex-wrap gap-2 mb-4">
+                            {gameState.revealWords.map((w, i) => (
+                              <span key={i} className="px-3 py-1.5 rounded-lg bg-fuchsia-500/15 border border-fuchsia-400/30 text-fuchsia-100 font-semibold text-sm">
+                                {w}
+                              </span>
+                            ))}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="mb-4">
+                          <p className="text-sm text-fuchsia-100/80 mb-2">
+                            📱 {tt('play.arScanPrompt', locale) || "Pointe ton téléphone vers la façade pour révéler les mots."}
+                          </p>
+                          <button
+                            onClick={() => setPuzzleWordsRevealed(true)}
+                            className="text-xs text-fuchsia-300/60 underline underline-offset-2 hover:text-fuchsia-200"
+                          >
+                            {tt('play.cantSeeWords', locale) || "Je ne vois pas les mots"}
+                          </button>
                         </div>
-                      </>
+                      )
                     )}
                     <input
                       value={puzzleGuess}
@@ -2515,7 +2536,12 @@ export default function PlayPage() {
           onCompassGranted={() => logAr("ar_compass_granted", { step: gameState.currentStep })}
           onCompassDenied={() => logAr("ar_compass_denied", { step: gameState.currentStep })}
           onLockOn={(meta) => logAr("ar_lock_on", { step: gameState.currentStep, meta })}
-          onFacadeRevealed={() => logAr("ar_facade_revealed", { step: gameState.currentStep })}
+          onFacadeRevealed={() => {
+            // PUZZLE MODE : le joueur a trouvé les mots en RA → on les affiche
+            // aussi dans le panneau pour qu'il déchiffre sans tenir le téléphone.
+            if (gameState.puzzleType) setPuzzleWordsRevealed(true);
+            logAr("ar_facade_revealed", { step: gameState.currentStep });
+          }}
           onCharacterSpeak={() => logAr("ar_character_speak", { step: gameState.currentStep })}
           facadeText={gameState.arFacadeText ?? null}
           facadeTextIsAnswer={!gameState.puzzleType && gameState.currentRiddle?.answerSource === "virtual_ar"}
