@@ -154,6 +154,13 @@ export interface StructuredStop {
     category: string;
     distance_m?: number;
   }>;
+  /**
+   * PUZZLE MODE (Phase 1) — si défini, l'RA dévoile `revealWords` et le joueur
+   * DÉDUIT `answer` (au lieu de la lire). Absent = mode legacy (RA révèle la
+   * réponse). Voir pipeline-v2/puzzles.ts.
+   */
+  puzzleType?: "ACROSTIC" | "ANAGRAM" | "ASSOCIATION";
+  revealWords?: string[];
 }
 
 /** Résultat du structuring Claude — le game complet prêt à insérer. */
