@@ -168,6 +168,7 @@ For EACH selected landmark (in the given order), write :
 - arFacadeText (= answer, UPPERCASE)
 - arTreasureReward (symbolic narrative reward)
 - landmarkHistory.en (2-3 sentences real history of the place)
+- routeAttractions (2-3 real POIs the player passes ON THE WAY from the previous stop to this one — see the dedicated rule below)
 
 Then write game-wide content :
 - title (English)
@@ -256,6 +257,18 @@ These 3 hints GUARANTEE the player can finish without external lookup.
 - DO NOT anchor any specific duration anywhere in the text ("2 days", "a weekend", "in 90 minutes"). Players choose their own pacing — use open time language ("your journey", "at your own pace", "today", "your trail").
 - Apply the **Transport-aware writing directives** above verbatim — they override any default narrative reflex.
 
+## ROUTE ATTRACTIONS — "on the way" tips (supports newcomers)
+
+For EACH stop, list **2-3 REAL points of interest the player physically passes BETWEEN the previous stop and this one** (for stop 1: between the start point and stop 1). This is the "Sur le chemin, ne manque pas…" card — it helps visitors who DO NOT KNOW the city notice what surrounds them as they walk.
+
+- Each item = a real, findable place along the way: a notable street, a viewpoint, a historic facade, a quirky detail, a local food spot, a natural feature.
+- **MUST NOT** be one of the 8 selected stops, nor the current landmark itself.
+- \`name\` : the real place/street/view name.
+- \`fact\` : ONE short sentence — why a newcomer should glance at it.
+- \`category\` : EXACTLY one of \`heritage\` | \`viewpoint\` | \`quirky\` | \`food\` | \`nature\`.
+- English (translated later for the player).
+- If genuinely nothing notable is on the way, return an empty array \`[]\` — never invent fake places.
+
 ## Output schema (JSON only, no preamble)
 
 \`\`\`json
@@ -292,6 +305,7 @@ These 3 hints GUARANTEE the player can finish without external lookup.
       "arFacadeText": "<same as answer>",
       "arTreasureReward": "string",
       "landmarkHistory": { "en": "string" },
+      "routeAttractions": [{ "name": "real place/street/view on the way", "fact": "1 short sentence — why a newcomer should glance at it", "category": "heritage|viewpoint|quirky|food|nature" }],
       "validationRadiusMeters": ${CONFIG.VALIDATION_RADIUS_M},
       "bonusTimeSeconds": ${CONFIG.BONUS_TIME_S}
     }
@@ -344,6 +358,7 @@ These 3 hints GUARANTEE the player can finish without external lookup.
     validationRadiusMeters: s.validationRadiusMeters ?? CONFIG.VALIDATION_RADIUS_M,
     bonusTimeSeconds: s.bonusTimeSeconds ?? CONFIG.BONUS_TIME_S,
     landmarkHistory: s.landmarkHistory ?? { en: "" },
+    routeAttractions: Array.isArray(s.routeAttractions) ? s.routeAttractions : [],
   }));
 
   for (const s of parsed.stops) {

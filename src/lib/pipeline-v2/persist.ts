@@ -283,6 +283,7 @@ export async function persistMasterEN(
     ar_facade_text: stop.arFacadeText,
     ar_treasure_reward: stop.arTreasureReward,
     landmark_history: stop.landmarkHistory,
+    route_attractions: stop.routeAttractions ?? [],
     validation_radius_meters: stop.validationRadiusMeters,
     bonus_time_seconds: stop.bonusTimeSeconds,
     answer_source: "virtual_ar",

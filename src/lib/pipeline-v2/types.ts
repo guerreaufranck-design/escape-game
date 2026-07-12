@@ -142,6 +142,18 @@ export interface StructuredStop {
   validationRadiusMeters: number;
   /** Bonus de temps en secondes après validation. */
   bonusTimeSeconds: number;
+  /**
+   * POIs "sur le chemin" — lieux que le joueur croise en marchant depuis le
+   * stop précédent (carte "Sur le chemin, ne manque pas..."). Aide les
+   * visiteurs qui ne connaissent pas la ville. Base EN, traduit à la volée
+   * côté joueur. Vide si rien de notable en route.
+   */
+  routeAttractions: Array<{
+    name: string;
+    fact: string;
+    category: string;
+    distance_m?: number;
+  }>;
 }
 
 /** Résultat du structuring Claude — le game complet prêt à insérer. */
