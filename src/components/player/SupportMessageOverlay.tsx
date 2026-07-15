@@ -8,6 +8,8 @@ interface Props {
   message: SupportMessage | null;
   sessionId: string | null | undefined;
   onDismiss: (id: string) => void;
+  /** White-label : nom de la marque (défaut OddballTrip). */
+  brandName?: string;
 }
 
 /**
@@ -21,7 +23,7 @@ interface Props {
  * composant ne s'affiche QUE quand on a un message admin → la contrainte
  * est naturellement respectée.
  */
-export function SupportMessageOverlay({ message, sessionId, onDismiss }: Props) {
+export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName = "OddballTrip" }: Props) {
   const [showReply, setShowReply] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
@@ -70,7 +72,7 @@ export function SupportMessageOverlay({ message, sessionId, onDismiss }: Props) 
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wider text-amber-200">
-                Message du support OddballTrip
+                {`Message du support ${brandName}`}
               </p>
               <p className="mt-1 text-sm text-amber-50 leading-relaxed">
                 {message.text}

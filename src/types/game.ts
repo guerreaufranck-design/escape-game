@@ -1,3 +1,5 @@
+import type { Brand } from "@/lib/brand";
+
 export interface Hint {
   order: number;
   text: string;
@@ -178,6 +180,8 @@ export interface GameState {
   /** Réponse finale + explication, uniquement dans le pack offline (?step). */
   offlineFinalAnswer?: string | null;
   offlineFinalExplanation?: string | null;
+  /** White-label : marque du site qui a généré le code (logo, nom, support). */
+  brand?: Brand;
 }
 
 export interface CompletedStepInfo {
@@ -221,4 +225,6 @@ export interface GameResults {
     /** Pre-generated MP3 URL for the epilogue narration, if available. */
     audioUrl?: string | null;
   } | null;
+  /** White-label : marque du site qui a généré le code. */
+  brand?: Brand;
 }

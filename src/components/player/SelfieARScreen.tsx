@@ -8,6 +8,9 @@ interface SelfieARScreenProps {
   city: string | null;
   playerName: string;
   onClose: () => void;
+  /** White-label : nom + slug de la marque (défaut OddballTrip). */
+  brandName?: string;
+  brandFileSlug?: string;
 }
 
 /**
@@ -23,6 +26,8 @@ export function SelfieARScreen({
   city,
   playerName,
   onClose,
+  brandName = "OddballTrip",
+  brandFileSlug = "oddballtrip",
 }: SelfieARScreenProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -162,13 +167,13 @@ export function SelfieARScreen({
     // Convert data URL to blob
     const res = await fetch(captured);
     const blob = await res.blob();
-    const file = new File([blob], `oddballtrip-${Date.now()}.jpg`, {
+    const file = new File([blob], `${brandFileSlug}-${Date.now()}.jpg`, {
       type: "image/jpeg",
     });
     const shareData = {
       files: [file],
-      title: `${gameTitle} · OddballTrip`,
-      text: `J'ai terminé « ${gameTitle} » sur OddballTrip ! 🧭`,
+      title: `${gameTitle} · ${brandName}`,
+      text: `J'ai terminé « ${gameTitle} » sur ${brandName} ! 🧭`,
     };
     if (typeof navigator !== "undefined" && navigator.share && navigator.canShare?.(shareData)) {
       try {
@@ -186,7 +191,7 @@ export function SelfieARScreen({
     if (!captured) return;
     const link = document.createElement("a");
     link.href = captured;
-    link.download = `oddballtrip-${Date.now()}.jpg`;
+    link.download = `${brandFileSlug}-${Date.now()}.jpg`;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -241,7 +246,7 @@ export function SelfieARScreen({
               🧭
             </div>
             <div className="pointer-events-none absolute bottom-0 left-0 right-0 bg-gradient-to-t from-slate-950/95 via-slate-950/60 to-transparent p-5 pb-8 text-center">
-              <p className="text-sm font-bold text-amber-300">✨ OddballTrip</p>
+              <p className="text-sm font-bold text-amber-300">✨ {brandName}</p>
               <p className="mt-1 font-serif text-base text-white">{gameTitle}</p>
               {city && <p className="text-xs text-slate-300">📍 {city}</p>}
             </div>

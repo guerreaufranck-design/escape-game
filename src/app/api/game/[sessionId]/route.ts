@@ -4,6 +4,7 @@ import { obfuscateCoordinates } from "@/lib/geo";
 import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
 import { translateStepFields, translateGameField } from "@/lib/translate-service";
 import { answerHash as computeAnswerHash, extractExpectedAnswer } from "@/lib/answer-match";
+import { brandFromSlug } from "@/lib/brand";
 import type { GameState, CompletedStepInfo, Hint } from "@/types/game";
 
 /**
@@ -82,6 +83,7 @@ export async function GET(
 
     const game = session.games as unknown as {
       id: string;
+      slug?: string | null;
       title: string;
       description: string | null;
       intro_videos: Record<string, string> | null;
@@ -614,6 +616,7 @@ export async function GET(
       offlineHints,
       offlineFinalAnswer,
       offlineFinalExplanation,
+      brand: brandFromSlug(game.slug),
     };
 
     // Pre-generated narration MP3 URLs for the current step (ElevenLabs).

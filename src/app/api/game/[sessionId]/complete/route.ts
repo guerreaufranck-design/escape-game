@@ -3,6 +3,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { calculateScore } from "@/lib/scoring";
 import { t, detectLocale, isStaticLocale } from "@/lib/i18n";
 import { translateStepFields, translateGameField } from "@/lib/translate-service";
+import { brandFromSlug } from "@/lib/brand";
 import type { GameResults } from "@/types/game";
 
 function getEnglishBase(value: unknown): string {
@@ -27,7 +28,7 @@ export async function POST(
 
     const { data: session, error: sessionError } = await supabase
       .from("game_sessions")
-      .select("*, games(title, city, epilogue_title, epilogue_text)")
+      .select("*, games(slug, title, city, epilogue_title, epilogue_text)")
       .eq("id", sessionId)
       .single();
 
@@ -40,6 +41,7 @@ export async function POST(
     }
 
     const game = session.games as unknown as {
+      slug?: string | null;
       title: string;
       city: string;
       epilogue_title?: unknown;
@@ -309,6 +311,7 @@ export async function POST(
       totalPlayers: totalPlayers ?? 0,
       steps,
       epilogue,
+      brand: brandFromSlug(game.slug),
     };
 
     return NextResponse.json(results);

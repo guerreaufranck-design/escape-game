@@ -389,6 +389,8 @@ export default function ResultsPage() {
           gameTitle={results.gameTitle}
           city={null}
           playerName={results.playerName}
+          brandName={results.brand?.name}
+          brandFileSlug={results.brand?.fileSlug}
           onClose={() => setSelfieOpen(false)}
         />
       )}
