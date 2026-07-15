@@ -111,6 +111,8 @@ function HomePageInner() {
   const [teamName, setTeamName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // White-label : logo adapté au revendeur qui a généré le code.
+  const [brandLogo, setBrandLogo] = useState("/logo-oddballtrip.png");
   const inputRefs = useRef<(HTMLInputElement | null)[]>([null, null, null]);
 
   // Pre-fill code from URL ?code=XXXX-XXXX-XXXX and skip the language
@@ -126,6 +128,11 @@ function HomePageInner() {
         setParts([codeParts[0].slice(0, 4), codeParts[1].slice(0, 4), codeParts[2].slice(0, 4)]);
       }
       setLangChosen(true);
+      // White-label : récupère le logo du revendeur qui a généré ce code.
+      fetch(`/api/brand?code=${encodeURIComponent(codeParam)}`)
+        .then((r) => r.json())
+        .then((d) => { if (d?.brand?.logo) setBrandLogo(d.brand.logo); })
+        .catch(() => { /* garde le logo par défaut */ });
     }
     // Also skip the picker if a locale is already stored — repeat visitors
     // shouldn't be asked again. Only true first-timers without any code see
@@ -261,7 +268,7 @@ function HomePageInner() {
         <div className="text-center mb-8">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src="/logo-oddballtrip.png"
+            src={brandLogo}
             alt="Oddball Trip"
             width={100}
             height={100}
@@ -395,7 +402,7 @@ function HomePageInner() {
       <footer className="relative flex flex-col items-center gap-2 py-4 text-xs text-slate-700">
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
-          src="/logo-oddballtrip.png"
+          src={brandLogo}
           alt="Oddball Trip"
           width={36}
           height={36}
