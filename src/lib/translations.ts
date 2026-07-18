@@ -663,6 +663,13 @@ export const ui: Translations = {
     es: 'Saltar enigma (penalización)',
     it: 'Salta enigma (penalità)',
   },
+  'play.aboutThisPlace': {
+    fr: 'Ce lieu',
+    en: 'This place',
+    de: 'Dieser Ort',
+    es: 'Este lugar',
+    it: 'Questo luogo',
+  },
   'play.arScanPrompt': {
     fr: 'Pointe ton téléphone vers la façade pour révéler les mots.',
     en: 'Point your phone at the facade to reveal the words.',

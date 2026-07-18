@@ -150,6 +150,9 @@ export async function GET(
     // OFFLINE pre-download (?step) : textes récompense + indices (voir plus bas).
     let offlineAnecdote: string | null = null;
     let offlineLandmarkHistory: string | null = null;
+    // Audioguide (2026-07-18) — description du lieu envoyée DÈS L'ARRIVÉE
+    // (avant l'énigme), avec son audio via audioMap.landmarkHistory.
+    let landmarkDescription: string | null = null;
     let offlineHints: string[] = [];
     // S9 (2026-05-19) — tour content (null en mode city_game).
     let tourContent: GameState["tourContent"] = null;
@@ -323,6 +326,31 @@ export async function GET(
             }
           } else {
             arTreasureReward = rawTreasure;
+          }
+        }
+
+        // Audioguide : description du lieu (landmark_history) traduite, servie
+        // à l'arrivée. cacheOnly → rapide (la traduction est déjà en cache
+        // depuis la génération audio). Fallback EN si pas de cache.
+        {
+          const rawHist = getEnglishBase(step.landmark_history);
+          if (rawHist) {
+            if (locale === "en") {
+              landmarkDescription = rawHist;
+            } else {
+              try {
+                landmarkDescription = await translateGameField(
+                  step.id,
+                  "game_steps",
+                  "landmark_history",
+                  rawHist,
+                  locale,
+                  { cacheOnly: true },
+                );
+              } catch {
+                landmarkDescription = rawHist;
+              }
+            }
           }
         }
 
@@ -598,6 +626,7 @@ export async function GET(
       revealWords,
       answerHash,
       offlineStepAnswer,
+      landmarkDescription,
       routeAttractions,
       approximateTarget,
       validationRadius,

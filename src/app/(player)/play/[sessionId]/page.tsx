@@ -1886,6 +1886,35 @@ export default function PlayPage() {
                     page il voit "▶ Écouter" et peut choisir avant
                     de lire : écoute OR lecture, pas les deux par
                     accident. */}
+                {/* AUDIOGUIDE (2026-07-18) — description du lieu À L'ARRIVÉE,
+                    avant l'énigme : le joueur découvre/écoute l'histoire du site
+                    dès qu'il arrive (bouton ▶ Écouter), puis passe au déchiffrage. */}
+                {gameState.mode === "city_game" && gameState.landmarkDescription && !stepSuccess && (
+                  <div className="mb-6 rounded-2xl border border-amber-600/40 bg-gradient-to-br from-amber-950/40 via-amber-900/15 to-slate-900/60 p-5 shadow-lg shadow-amber-900/10">
+                    <div className="flex items-center gap-2 mb-3">
+                      <span className="text-xl">📍</span>
+                      <p className="text-xs font-bold uppercase tracking-wider text-amber-300">
+                        {gameState.currentRiddle?.landmarkName || tt('play.aboutThisPlace', locale) || "Ce lieu"}
+                      </p>
+                    </div>
+                    {narration.supported && (
+                      <div className="mb-3">
+                        <NarrationButton
+                          text={gameState.landmarkDescription}
+                          speaking={narration.speaking}
+                          currentText={narrationText}
+                          onSpeak={(t) => handleSpeak(t, gameState.audioMap?.landmarkHistory)}
+                          variant="pill"
+                          locale={locale}
+                        />
+                      </div>
+                    )}
+                    <p className="text-sm text-amber-50/90 leading-relaxed whitespace-pre-wrap">
+                      {gameState.landmarkDescription}
+                    </p>
+                  </div>
+                )}
+
                 <div className="relative mb-6">
                   <div className="absolute -left-3 top-0 bottom-0 w-0.5 bg-gradient-to-b from-emerald-500/50 via-emerald-500/20 to-transparent" />
                   {narration.supported && (

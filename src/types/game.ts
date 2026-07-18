@@ -70,6 +70,11 @@ export interface GameState {
   revealWords?: string[];
   answerHash?: string | null;
   offlineStepAnswer?: string | null;
+  /**
+   * Audioguide — description du lieu (histoire patrimoniale) envoyée à
+   * l'ARRIVÉE, avant l'énigme. Jouée via audioMap.landmarkHistory.
+   */
+  landmarkDescription?: string | null;
   /** Optional custom reward message revealed by tapping the AR chest */
   arTreasureReward: string | null;
   /** Optional AR character (monk/knight/pirate…) that speaks when locked on */
