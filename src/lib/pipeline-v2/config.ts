@@ -18,7 +18,11 @@ export const CONFIG = {
   MIN_STOPS: 5, // si select renvoie moins → halt + alerte
 
   // ── Per-stop defaults (sauf override payload futur) ──
-  VALIDATION_RADIUS_M: 30,
+  // 40 m (et non 30) : pour les grands sites / sites PAYANTS, la coordonnée
+  // géocodée est le centroïde intérieur, or le joueur reste dehors. Combiné
+  // au padding précision-GPS côté joueur (urban canyon), 40 m évite de laisser
+  // un joueur bien placé hors du rayon d'arrivée.
+  VALIDATION_RADIUS_M: 40,
   BONUS_TIME_S: 30,
 
   // ── Perplexity ──

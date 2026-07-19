@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useGeolocation } from "@/hooks/useGeolocation";
 import { useGpsTrace } from "@/hooks/useGpsTrace";
@@ -240,11 +240,25 @@ export default function PlayPage() {
   useEffect(() => {
     approachAlertedRef.current = null;
   }, [gameState?.currentStepId]);
+
+  // Rayon d'arrivée ÉLARGI par l'incertitude GPS.
+  //   Pourquoi : près des grands monuments en pierre (colleges, cathédrales)
+  //   le GPS chute à 20-50 m ("urban canyon") ; et pour les SITES PAYANTS la
+  //   coordonnée géocodée est le centroïde INTÉRIEUR, derrière la grille — un
+  //   joueur resté dehors (comme prévu) peut donc être hors des 30 m et ne
+  //   jamais déclencher l'arrivée. On ajoute la précision GPS rapportée
+  //   (plafonnée à 40 m pour éviter tout faux déclenchement) au rayon de base.
+  const arrivalRadius = useMemo(() => {
+    const base = gameState?.validationRadius ?? 40;
+    const pad = Math.min(Math.max(geo.accuracy ?? 0, 0), 40);
+    return base + pad;
+  }, [gameState?.validationRadius, geo.accuracy]);
+
   useEffect(() => {
     if (!gameState) return;
     if (gameState.currentRiddle?.answerSource !== "virtual_ar") return;
     if (distance === null) return;
-    if (distance > gameState.validationRadius) return;
+    if (distance > arrivalRadius) return;
     if (arOpen) return;
     if (!tutorialDone) return;
     if (showIntro) return;
@@ -255,7 +269,7 @@ export default function PlayPage() {
     setArOpen(true);
     logAr("ar_open", {
       step: gameState.currentStep,
-      meta: { trigger: "auto", distance, radius: gameState.validationRadius },
+      meta: { trigger: "auto", distance, radius: arrivalRadius },
     });
   }, [
     distance,
@@ -479,7 +493,7 @@ export default function PlayPage() {
     if (!gameState) return;
     if (distance === null) return;
     if (distance > 100) return; // pas encore assez proche
-    if (distance <= gameState.validationRadius) return; // déjà arrivé, no alert
+    if (distance <= arrivalRadius) return; // déjà arrivé, no alert
     if (!tutorialDone || showIntro) return;
     if (stepSuccess || skipAnswer || showFinalCode) return;
     if (approachAlertedRef.current === gameState.currentStepId) return;
