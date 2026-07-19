@@ -161,6 +161,8 @@ export interface StructuredStop {
    */
   puzzleType?: "ACROSTIC" | "ANAGRAM" | "ASSOCIATION";
   revealWords?: string[];
+  /** "physical" pour le mode audioguide (l'AR ne révèle pas la réponse). Défaut virtual_ar. */
+  answerSource?: "physical" | "virtual_ar";
 }
 
 /** Résultat du structuring Claude — le game complet prêt à insérer. */

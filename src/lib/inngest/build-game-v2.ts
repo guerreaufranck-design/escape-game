@@ -44,7 +44,7 @@ import { runDiscover } from "@/lib/pipeline-v2/discover";
 import { runGeocode, geocodeStartPoint } from "@/lib/pipeline-v2/geocode";
 import { runSelect } from "@/lib/pipeline-v2/select";
 import { runNarrate } from "@/lib/pipeline-v2/narrate";
-import { applyPuzzleLayer } from "@/lib/pipeline-v2/puzzles";
+import { applyAudioguideLayer } from "@/lib/pipeline-v2/audioguide";
 import { runAudio } from "@/lib/pipeline-v2/audio";
 import { translateGame } from "@/lib/pipeline-v2/translate";
 import {
@@ -214,23 +214,20 @@ export const buildGameV2 = inngest.createFunction(
       throw new Error(reason);
     }
 
-    // ── STEP 5b : PUZZLE MODE (déchiffrage sur place) — flag-gated ──
-    // Actif si env PUZZLE_MODE=true OU payload.puzzleMode=true. L'RA dévoilera
-    // des mots-indices et le joueur déduira la réponse. Repli auto en
-    // association si un puzzle n'est pas mécaniquement valide → jamais bloquant.
-    const puzzleMode =
-      process.env.PUZZLE_MODE === "true" ||
-      (input as unknown as { puzzleMode?: boolean }).puzzleMode === true;
-    if (puzzleMode) {
+    // ── STEP 5b : AUDIOGUIDE + JEU (mode par défaut) ──
+    // Le joueur arrive, écoute la description réelle du lieu, puis répond à une
+    // QUESTION DE DÉDUCTION (réponse trouvable dans l'audio). AR en bonus,
+    // jamais bloquant. Désactivable via AUDIOGUIDE_MODE=off (retour legacy).
+    // Non bloquant : en cas d'échec, on publie le jeu tel quel plutôt que de
+    // perdre tout le build.
+    if (process.env.AUDIOGUIDE_MODE !== "off") {
       try {
-        game = await step.run("puzzles", async () => {
-          return await applyPuzzleLayer(input, game!);
+        game = await step.run("audioguide", async () => {
+          return await applyAudioguideLayer(input, game!);
         });
-        logger.info(`[v5] puzzle layer appliqué (${game.stops.filter((s) => s.puzzleType).length} stops)`);
+        logger.info(`[v5] audioguide layer appliqué (${game.stops.length} stops)`);
       } catch (e) {
-        // Non bloquant : si la couche puzzle échoue, on publie le jeu en mode
-        // legacy (RA révèle la réponse) plutôt que de perdre tout le build.
-        logger.warn(`[v5] puzzle layer SKIP (échec non bloquant) : ${e instanceof Error ? e.message : "?"}`);
+        logger.warn(`[v5] audioguide layer SKIP (échec non bloquant) : ${e instanceof Error ? e.message : "?"}`);
       }
     }
 
