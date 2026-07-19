@@ -9,6 +9,7 @@ import { useSupportMessages } from "@/hooks/useSupportMessages";
 import { useTimer } from "@/hooks/useTimer";
 import { useDistance } from "@/hooks/useDistance";
 import { SupportMessageOverlay } from "@/components/player/SupportMessageOverlay";
+import { HelpPanel } from "@/components/player/HelpPanel";
 import { useGameStore } from "@/stores/game-store";
 import { useLocale } from "@/components/player/LocaleSelector";
 import { formatTime } from "@/lib/scoring";
@@ -1446,6 +1447,16 @@ export default function PlayPage() {
         onDismiss={supportMessages.dismiss}
         brandName={gameState?.brand?.name}
         locale={locale}
+      />
+
+      {/* Aide in-game (Phase 1) — bouton SOS + FAQ offline + contact qui
+          escalade par email. Masqué quand la caméra AR plein écran est ouverte
+          (arOpen) pour ne pas gêner le scan. */}
+      <HelpPanel
+        sessionId={sessionId}
+        locale={locale}
+        brandName={gameState?.brand?.name}
+        hidden={arOpen}
       />
 
       {/* Guide narration overlay — plein écran pendant les blocs majeurs

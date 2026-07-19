@@ -463,3 +463,70 @@ export async function sendPlayerStartAlert(params: {
     console.error(`[Email] Failed to send player start alert: ${err instanceof Error ? err.message : err}`);
   }
 }
+
+/**
+ * Escalade support (2026-07-19) — un joueur envoie une demande d'aide DEPUIS le
+ * jeu (bouton « Besoin d'aide ? »). Le message est déjà en DB (support_messages),
+ * cet email prévient l'admin en direct pour qu'il prenne le relais. Best-effort,
+ * ne fait jamais échouer l'envoi côté joueur.
+ */
+export async function sendPlayerHelpRequest(params: {
+  sessionId: string;
+  gameCity: string;
+  gameTitle?: string | null;
+  playerName?: string | null;
+  currentStep?: number | null;
+  totalSteps?: number | null;
+  question: string;
+  /** Lien direct vers la session live du back-office pour répondre. */
+  adminUrl: string;
+}): Promise<void> {
+  const client = getResendClient();
+  if (!client) return;
+
+  const { sessionId, gameCity, gameTitle, playerName, currentStep, totalSteps, question, adminUrl } = params;
+  const who = playerName || "Joueur";
+  const stepLabel =
+    currentStep != null ? `${currentStep}${totalSteps != null ? `/${totalSteps}` : ""}` : undefined;
+  const row = (k: string, v?: string | null) =>
+    v
+      ? `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600;">${k}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;">${v}</td></tr>`
+      : "";
+
+  try {
+    await client.emails.send({
+      from: FROM_EMAIL,
+      to: ADMIN_EMAIL,
+      // reply_to l'admin lui-même n'a pas de sens ; on met l'URL admin dans le corps.
+      subject: `🆘 Demande d'aide en jeu — ${gameCity} — ${who}`,
+      html: `
+        <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color:#dc2626;">🆘 Un joueur demande de l'aide</h2>
+          <div style="background:#fef2f2; border-left:4px solid #dc2626; padding:12px 16px; margin:16px 0; border-radius:4px;">
+            <span style="color:#7f1d1d; white-space:pre-wrap;">${question.replace(/</g, "&lt;")}</span>
+          </div>
+          <table style="width:100%; border-collapse:collapse; margin:16px 0;">
+            ${row("Ville", gameCity)}
+            ${row("Jeu", gameTitle || undefined)}
+            ${row("Joueur", playerName || undefined)}
+            ${row("Étape", stepLabel)}
+            ${row("Session", sessionId)}
+          </table>
+          <p style="margin:20px 0;">
+            <a href="${adminUrl}" style="display:inline-block; background:#dc2626; color:#fff; text-decoration:none; padding:10px 20px; border-radius:8px; font-weight:600;">
+              ➡️ Répondre depuis la session live
+            </a>
+          </p>
+          <p style="color:#6b7280; font-size:12px;">
+            Le message est déjà dans le fil support de la session. Ta réponse depuis
+            le back-office s'affiche en direct côté joueur.<br>
+            Timestamp: ${new Date().toISOString()} — Escape Game, escalade support automatique
+          </p>
+        </div>
+      `,
+    });
+    console.log(`[Email] Player help request sent to ${ADMIN_EMAIL} — ${gameCity} / ${who}`);
+  } catch (err) {
+    console.error(`[Email] Failed to send player help request: ${err instanceof Error ? err.message : err}`);
+  }
+}

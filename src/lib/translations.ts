@@ -670,6 +670,105 @@ export const ui: Translations = {
     es: "Este juego es en audio. Asegúrate de que tu teléfono NO esté en silencio y sube el volumen 🔊",
     it: "Questo gioco è basato sull'audio. Assicurati che il telefono NON sia in silenzioso e alza il volume 🔊",
   },
+  // ── Aide in-game (Phase 1) : bouton SOS + FAQ offline + contact ──
+  'play.helpButton': {
+    fr: "Besoin d'aide ?", en: "Need help?", de: "Brauchst du Hilfe?", es: "¿Necesitas ayuda?", it: "Serve aiuto?",
+  },
+  'play.helpTitle': {
+    fr: "Aide & contact", en: "Help & contact", de: "Hilfe & Kontakt", es: "Ayuda y contacto", it: "Aiuto e contatti",
+  },
+  'play.helpSubtitle': {
+    fr: "Réponses immédiates ci-dessous, ou écris-nous.",
+    en: "Instant answers below, or write to us.",
+    de: "Sofort-Antworten unten, oder schreib uns.",
+    es: "Respuestas inmediatas abajo, o escríbenos.",
+    it: "Risposte immediate qui sotto, o scrivici.",
+  },
+  'play.helpFaqTitle': {
+    fr: "Questions fréquentes", en: "Frequently asked", de: "Häufige Fragen", es: "Preguntas frecuentes", it: "Domande frequenti",
+  },
+  'play.faqAudioQ': {
+    fr: "Je n'ai aucun son", en: "I have no sound", de: "Ich habe keinen Ton", es: "No tengo sonido", it: "Non ho audio",
+  },
+  'play.faqAudioA': {
+    fr: "Vérifie que ton téléphone n'est PAS en mode silencieux (le petit interrupteur sur le côté de l'iPhone) et monte le volume. Le jeu est audio : c'est la cause n°1 d'absence de son.",
+    en: "Make sure your phone is NOT on silent (the little switch on the side of an iPhone) and turn the volume up. The game is audio-based — this is the #1 cause of no sound.",
+    de: "Stelle sicher, dass dein Handy NICHT auf lautlos steht (der kleine Schalter an der iPhone-Seite) und dreh die Lautstärke auf. Das Spiel ist audiobasiert — das ist Ursache Nr. 1 für fehlenden Ton.",
+    es: "Asegúrate de que tu teléfono NO esté en silencio (el pequeño interruptor lateral del iPhone) y sube el volumen. El juego es de audio: es la causa nº1 de que no haya sonido.",
+    it: "Assicurati che il telefono NON sia in silenzioso (il piccolo interruttore sul lato dell'iPhone) e alza il volume. Il gioco è basato sull'audio: è la causa n.1 di assenza di suono.",
+  },
+  'play.faqTicketQ': {
+    fr: "Dois-je payer une entrée ?", en: "Do I need to pay to enter?", de: "Muss ich Eintritt zahlen?", es: "¿Tengo que pagar entrada?", it: "Devo pagare un ingresso?",
+  },
+  'play.faqTicketA': {
+    fr: "Non, jamais. Tout se joue depuis la rue : rien de payant n'est nécessaire pour avancer. Certaines visites payantes sont un bonus facultatif, pas une obligation.",
+    en: "No, never. Everything is played from the street — nothing paid is needed to progress. Some paid tours are an optional bonus, never required.",
+    de: "Nein, nie. Alles wird von der Straße aus gespielt — nichts Kostenpflichtiges ist zum Weiterkommen nötig. Kostenpflichtige Führungen sind ein optionaler Bonus.",
+    es: "No, nunca. Todo se juega desde la calle: no necesitas pagar nada para avanzar. Algunas visitas de pago son un extra opcional, nunca obligatorio.",
+    it: "No, mai. Tutto si gioca dalla strada: non serve pagare nulla per proseguire. Alcune visite a pagamento sono un extra facoltativo, mai obbligatorio.",
+  },
+  'play.faqGpsQ': {
+    fr: "Je suis sur place mais rien ne se passe", en: "I'm at the spot but nothing happens", de: "Ich bin am Ort, aber nichts passiert", es: "Estoy en el sitio pero no pasa nada", it: "Sono sul posto ma non succede nulla",
+  },
+  'play.faqGpsA': {
+    fr: "Attends quelques secondes que le GPS se cale, ou fais quelques pas. Tu peux aussi ouvrir « Mode AR » et saisir directement ta réponse : elle se déduit de l'audio, tu n'as pas besoin d'être pile sur le point.",
+    en: "Wait a few seconds for GPS to settle, or take a few steps. You can also open \"AR mode\" and type your answer directly: it can be deduced from the audio, you don't need to be exactly on the spot.",
+    de: "Warte ein paar Sekunden, bis sich das GPS einpendelt, oder geh ein paar Schritte. Du kannst auch den \"AR-Modus\" öffnen und deine Antwort direkt eingeben: Sie lässt sich aus dem Audio ableiten, du musst nicht exakt am Punkt stehen.",
+    es: "Espera unos segundos a que el GPS se estabilice, o da unos pasos. También puedes abrir el \"Modo AR\" y escribir tu respuesta directamente: se deduce del audio, no hace falta estar justo en el punto.",
+    it: "Aspetta qualche secondo che il GPS si stabilizzi, o fai qualche passo. Puoi anche aprire la \"Modalità AR\" e digitare la risposta: si deduce dall'audio, non devi essere esattamente sul punto.",
+  },
+  'play.faqHintsQ': {
+    fr: "Comment marchent les indices et « passer » ?", en: "How do hints and \"skip\" work?", de: "Wie funktionieren Hinweise und \"Überspringen\"?", es: "¿Cómo funcionan las pistas y \"saltar\"?", it: "Come funzionano indizi e \"salta\"?",
+  },
+  'play.faqHintsA': {
+    fr: "Le bouton indice te donne un coup de pouce (petite pénalité de temps). Si tu bloques vraiment, « passer » débloque l'étape suivante avec une pénalité plus grande — tu peux toujours finir le jeu.",
+    en: "The hint button gives you a nudge (small time penalty). If you're really stuck, \"skip\" unlocks the next step with a bigger penalty — you can always finish the game.",
+    de: "Der Hinweis-Button gibt dir einen Schubs (kleine Zeitstrafe). Wenn du wirklich feststeckst, schaltet \"Überspringen\" den nächsten Schritt mit größerer Strafe frei — du kannst das Spiel immer beenden.",
+    es: "El botón de pista te da un empujón (pequeña penalización de tiempo). Si te atascas de verdad, \"saltar\" desbloquea el siguiente paso con más penalización: siempre puedes terminar el juego.",
+    it: "Il pulsante indizio ti dà una spinta (piccola penalità di tempo). Se sei davvero bloccato, \"salta\" sblocca il passo successivo con una penalità maggiore: puoi sempre finire il gioco.",
+  },
+  'play.faqPauseQ': {
+    fr: "Puis-je faire une pause ?", en: "Can I take a break?", de: "Kann ich eine Pause machen?", es: "¿Puedo hacer una pausa?", it: "Posso fare una pausa?",
+  },
+  'play.faqPauseA': {
+    fr: "Oui, à tout moment. Prends un café, déjeune, souffle : ta progression est sauvegardée. Reprends simplement là où tu t'es arrêté quand tu veux.",
+    en: "Yes, anytime. Grab a coffee, have lunch, catch your breath: your progress is saved. Just resume where you left off whenever you like.",
+    de: "Ja, jederzeit. Trink einen Kaffee, iss zu Mittag, hol Luft: Dein Fortschritt wird gespeichert. Mach einfach weiter, wo du aufgehört hast.",
+    es: "Sí, cuando quieras. Tómate un café, come, respira: tu progreso se guarda. Retoma donde lo dejaste cuando quieras.",
+    it: "Sì, quando vuoi. Prendi un caffè, pranza, riprendi fiato: i tuoi progressi sono salvati. Riparti da dove eri quando vuoi.",
+  },
+  'play.helpContactTitle': {
+    fr: "Toujours besoin d'aide ? Écris-nous", en: "Still need help? Write to us", de: "Noch Hilfe nötig? Schreib uns", es: "¿Aún necesitas ayuda? Escríbenos", it: "Serve ancora aiuto? Scrivici",
+  },
+  'play.helpContactHint': {
+    fr: "On reçoit ton message en direct et on te répond ici même dans le jeu.",
+    en: "We get your message live and reply right here in the game.",
+    de: "Wir erhalten deine Nachricht live und antworten direkt hier im Spiel.",
+    es: "Recibimos tu mensaje en directo y te respondemos aquí mismo en el juego.",
+    it: "Riceviamo il tuo messaggio in diretta e ti rispondiamo qui nel gioco.",
+  },
+  'play.helpPlaceholder': {
+    fr: "Décris ton problème…", en: "Describe your problem…", de: "Beschreibe dein Problem…", es: "Describe tu problema…", it: "Descrivi il problema…",
+  },
+  'play.helpSend': {
+    fr: "Envoyer", en: "Send", de: "Senden", es: "Enviar", it: "Invia",
+  },
+  'play.helpSending': {
+    fr: "Envoi…", en: "Sending…", de: "Senden…", es: "Enviando…", it: "Invio…",
+  },
+  'play.helpSent': {
+    fr: "Message envoyé ✓ On te répond vite.", en: "Message sent ✓ We'll reply soon.", de: "Nachricht gesendet ✓ Wir antworten bald.", es: "Mensaje enviado ✓ Te respondemos pronto.", it: "Messaggio inviato ✓ Ti rispondiamo presto.",
+  },
+  'play.helpQueuedOffline': {
+    fr: "Pas de réseau — ton message part automatiquement dès que tu recaptes.",
+    en: "Offline — your message will send automatically once you're back online.",
+    de: "Offline — deine Nachricht wird automatisch gesendet, sobald du wieder online bist.",
+    es: "Sin conexión: tu mensaje se enviará automáticamente cuando vuelvas a tener red.",
+    it: "Offline — il messaggio verrà inviato automaticamente appena torni online.",
+  },
+  'play.helpError': {
+    fr: "Envoi impossible. Réessaie dans un instant.", en: "Couldn't send. Try again in a moment.", de: "Senden fehlgeschlagen. Versuch es gleich nochmal.", es: "No se pudo enviar. Inténtalo en un momento.", it: "Invio non riuscito. Riprova tra poco.",
+  },
   'play.noTicketNotice': {
     fr: "Aucune entrée payante n'est jamais nécessaire pour terminer l'aventure : tout ce dont tu as besoin s'observe depuis la rue. Certains lieux proposent des visites ou entrées payantes pour aller plus loin — c'est un bonus, jamais une obligation pour avancer.",
     en: "You never need to pay to enter anywhere to finish the adventure — everything you need is visible from the street. Some places offer paid tours or entry if you'd like to go deeper — that's a bonus, never required to progress.",
