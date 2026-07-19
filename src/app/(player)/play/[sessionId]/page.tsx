@@ -1354,6 +1354,18 @@ export default function PlayPage() {
             </p>
           </div>
 
+          {/* Rassurance ENTRÉE — le joueur doit savoir DÈS LE DÉPART qu'aucune
+              entrée payante n'est requise (question récurrente : "faut-il un
+              ticket pour entrer ?"). Tout est jouable depuis l'extérieur ;
+              les visites payantes sont un bonus facultatif. */}
+          <div className="mb-3 rounded-xl border border-emerald-500/40 bg-emerald-950/30 p-3 flex items-start gap-2.5">
+            <span className="text-lg leading-none mt-0.5">🎟️</span>
+            <p className="text-sm text-emerald-100/90 leading-snug">
+              {tt('play.noTicketNotice', locale) ||
+                "Aucune entrée payante n'est jamais nécessaire pour terminer l'aventure : tout ce dont tu as besoin s'observe depuis la rue."}
+            </p>
+          </div>
+
           {/* Start button — starts the timer via API */}
           <Button
             size="lg"

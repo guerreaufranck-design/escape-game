@@ -670,6 +670,13 @@ export const ui: Translations = {
     es: "Este juego es en audio. Asegúrate de que tu teléfono NO esté en silencio y sube el volumen 🔊",
     it: "Questo gioco è basato sull'audio. Assicurati che il telefono NON sia in silenzioso e alza il volume 🔊",
   },
+  'play.noTicketNotice': {
+    fr: "Aucune entrée payante n'est jamais nécessaire pour terminer l'aventure : tout ce dont tu as besoin s'observe depuis la rue. Certains lieux proposent des visites ou entrées payantes pour aller plus loin — c'est un bonus, jamais une obligation pour avancer.",
+    en: "You never need to pay to enter anywhere to finish the adventure — everything you need is visible from the street. Some places offer paid tours or entry if you'd like to go deeper — that's a bonus, never required to progress.",
+    de: "Um das Abenteuer abzuschließen, ist niemals ein kostenpflichtiger Eintritt nötig – alles, was du brauchst, ist von der Straße aus sichtbar. Manche Orte bieten kostenpflichtige Führungen oder Eintritte an – ein Bonus, aber keine Pflicht, um weiterzukommen.",
+    es: "Nunca necesitas pagar una entrada para terminar la aventura: todo lo que necesitas se ve desde la calle. Algunos lugares ofrecen visitas o entradas de pago para profundizar, pero es un extra, nunca una obligación para avanzar.",
+    it: "Non serve mai pagare un ingresso per finire l'avventura: tutto ciò che ti serve è visibile dalla strada. Alcuni luoghi offrono visite o ingressi a pagamento per approfondire, ma è un extra, mai un obbligo per proseguire.",
+  },
   'play.supportLabel': {
     fr: 'Support', en: 'Support', de: 'Support', es: 'Soporte', it: 'Supporto',
   },
