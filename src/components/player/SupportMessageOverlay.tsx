@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { MessageCircle, X, Send } from "lucide-react";
 import type { SupportMessage } from "@/hooks/useSupportMessages";
+import { tt } from "@/lib/translations";
 
 interface Props {
   message: SupportMessage | null;
@@ -10,6 +11,8 @@ interface Props {
   onDismiss: (id: string) => void;
   /** White-label : nom de la marque (défaut OddballTrip). */
   brandName?: string;
+  /** Langue du JOUEUR : les libellés de l'overlay s'affichent dedans. */
+  locale?: string;
 }
 
 /**
@@ -23,7 +26,7 @@ interface Props {
  * composant ne s'affiche QUE quand on a un message admin → la contrainte
  * est naturellement respectée.
  */
-export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName = "OddballTrip" }: Props) {
+export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName = "OddballTrip", locale = "en" }: Props) {
   const [showReply, setShowReply] = useState(false);
   const [replyText, setReplyText] = useState("");
   const [sending, setSending] = useState(false);
@@ -72,7 +75,7 @@ export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName
             </div>
             <div className="flex-1 min-w-0">
               <p className="text-[10px] font-bold uppercase tracking-wider text-amber-200">
-                {`Message du support ${brandName}`}
+                {`${brandName} · ${tt('play.supportLabel', locale)}`}
               </p>
               <p className="mt-1 text-sm text-amber-50 leading-relaxed">
                 {message.text}
@@ -80,7 +83,7 @@ export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName
             </div>
             <button
               onClick={() => onDismiss(message.id)}
-              aria-label="Fermer"
+              aria-label={tt('play.closeBtn', locale)}
               className="flex-shrink-0 rounded-full p-1 hover:bg-amber-400/20 transition-colors"
             >
               <X className="h-4 w-4 text-amber-300" />
@@ -93,7 +96,7 @@ export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName
               <textarea
                 value={replyText}
                 onChange={(e) => setReplyText(e.target.value)}
-                placeholder="Ta réponse au support..."
+                placeholder={tt('play.replyPlaceholder', locale)}
                 rows={2}
                 maxLength={500}
                 disabled={sending || sent}
@@ -110,7 +113,7 @@ export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName
                   className="inline-flex items-center gap-1.5 rounded-md bg-amber-400 px-4 py-1.5 text-xs font-bold uppercase tracking-wider text-amber-950 hover:bg-amber-300 disabled:opacity-50"
                 >
                   <Send className="h-3 w-3" />
-                  {sent ? "Envoyé !" : sending ? "Envoi..." : "Envoyer"}
+                  {sent ? tt('play.sentBtn', locale) : sending ? tt('play.sendingBtn', locale) : tt('play.sendBtn', locale)}
                 </button>
               </div>
               {err && <p className="text-xs text-red-300">{err}</p>}
@@ -125,7 +128,7 @@ export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName
                   onClick={() => setShowReply(true)}
                   className="rounded-lg bg-amber-400/10 hover:bg-amber-400/20 border border-amber-400/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-amber-200 transition-colors"
                 >
-                  Répondre
+                  {tt('play.replyBtn', locale)}
                 </button>
               )}
               <button
@@ -136,7 +139,7 @@ export function SupportMessageOverlay({ message, sessionId, onDismiss, brandName
                     : "rounded-lg bg-amber-400/20 hover:bg-amber-400/30 border border-amber-400/40 px-4 py-2 text-xs font-bold uppercase tracking-wider text-amber-100 transition-colors"
                 }
               >
-                Compris, merci
+                {tt('play.gotItThanks', locale)}
               </button>
             </div>
           )}

@@ -1404,6 +1404,7 @@ export default function PlayPage() {
         sessionId={sessionId}
         onDismiss={supportMessages.dismiss}
         brandName={gameState?.brand?.name}
+        locale={locale}
       />
 
       {/* Guide narration overlay — plein écran pendant les blocs majeurs

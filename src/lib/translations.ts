@@ -663,6 +663,30 @@ export const ui: Translations = {
     es: 'Saltar enigma (penalización)',
     it: 'Salta enigma (penalità)',
   },
+  'play.supportLabel': {
+    fr: 'Support', en: 'Support', de: 'Support', es: 'Soporte', it: 'Supporto',
+  },
+  'play.replyBtn': {
+    fr: 'Répondre', en: 'Reply', de: 'Antworten', es: 'Responder', it: 'Rispondi',
+  },
+  'play.gotItThanks': {
+    fr: 'Compris, merci', en: 'Got it, thanks', de: 'Verstanden, danke', es: 'Entendido, gracias', it: 'Capito, grazie',
+  },
+  'play.replyPlaceholder': {
+    fr: 'Ta réponse au support…', en: 'Your reply to support…', de: 'Deine Antwort an den Support…', es: 'Tu respuesta al soporte…', it: 'La tua risposta al supporto…',
+  },
+  'play.sendBtn': {
+    fr: 'Envoyer', en: 'Send', de: 'Senden', es: 'Enviar', it: 'Invia',
+  },
+  'play.sendingBtn': {
+    fr: 'Envoi…', en: 'Sending…', de: 'Senden…', es: 'Enviando…', it: 'Invio…',
+  },
+  'play.sentBtn': {
+    fr: 'Envoyé !', en: 'Sent!', de: 'Gesendet!', es: '¡Enviado!', it: 'Inviato!',
+  },
+  'play.closeBtn': {
+    fr: 'Fermer', en: 'Close', de: 'Schließen', es: 'Cerrar', it: 'Chiudi',
+  },
   'play.answerQuestion': {
     fr: 'À toi de répondre',
     en: 'Your answer',
