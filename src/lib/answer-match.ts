@@ -38,12 +38,48 @@ export function extractExpectedAnswer(raw: unknown): string | null {
  * Vrai si la réponse soumise correspond à l'attendue.
  * Un stop sans réponse stockée (legacy) est accepté (comme le serveur).
  */
+/** Distance de Levenshtein (nombre minimal d'éditions caractère). */
+function levenshtein(a: string, b: string): number {
+  const m = a.length,
+    n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+/**
+ * Tolérance aux fautes d'orthographe. Seuil calibré selon la longueur pour
+ * accepter une petite faute SANS accepter une vraie mauvaise réponse :
+ *   ≤ 3 lettres → exact (MAR ≠ MAS)
+ *   4-6         → 1 édition
+ *   ≥ 7         → 2 éditions
+ * On refuse aussi si l'écart de longueur dépasse la tolérance.
+ */
+export function fuzzyEqual(a: string, b: string): boolean {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const len = Math.max(a.length, b.length);
+  const tol = len <= 3 ? 0 : len <= 6 ? 1 : 2;
+  if (tol === 0) return false;
+  if (Math.abs(a.length - b.length) > tol) return false;
+  return levenshtein(a, b) <= tol;
+}
+
 export function matchAnswer(submitted: string, expectedRaw: unknown): boolean {
   const expected = extractExpectedAnswer(expectedRaw);
   if (!expected) return true; // legacy / GPS-only step
   const a = normalizeAnswer(submitted);
   const b = normalizeAnswer(expected);
-  return a.length > 0 && a === b;
+  return a.length > 0 && fuzzyEqual(a, b);
 }
 
 /**

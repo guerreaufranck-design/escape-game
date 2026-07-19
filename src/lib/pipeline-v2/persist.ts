@@ -286,7 +286,7 @@ export async function persistMasterEN(
     route_attractions: stop.routeAttractions ?? [],
     validation_radius_meters: stop.validationRadiusMeters,
     bonus_time_seconds: stop.bonusTimeSeconds,
-    answer_source: "virtual_ar",
+    answer_source: stop.answerSource ?? "virtual_ar",
     // PUZZLE MODE — n'écrit ces colonnes que si le stop a une couche puzzle
     // (sinon defaults DB : puzzle_type NULL, reveal_words []). Ainsi les
     // builds legacy restent inchangés.
