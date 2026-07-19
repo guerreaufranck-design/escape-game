@@ -377,6 +377,14 @@ export default function PlayPage() {
       // let the player tap "Listen" themselves. Falling back to Web Speech
       // here would shatter the immersion (robotic browser TTS instead of
       // the premium voice the customer paid for).
+      // AUDIOGUIDE : à l'arrivée, on joue d'abord la DESCRIPTION du lieu
+      // (l'histoire réelle) — le cœur de l'expérience. Sinon, l'énigme.
+      const descText = gameState?.landmarkDescription;
+      const descAudio = gameState?.audioMap?.landmarkHistory;
+      if (descText && descAudio) {
+        const t = setTimeout(() => autoSpeak(descText, descAudio), 600);
+        return () => clearTimeout(t);
+      }
       const audioUrl = gameState?.audioMap?.riddle;
       if (!audioUrl) return;
       const t = setTimeout(
@@ -388,6 +396,8 @@ export default function PlayPage() {
   }, [
     gameState?.currentStep,
     gameState?.currentRiddle?.text,
+    gameState?.landmarkDescription,
+    gameState?.audioMap?.landmarkHistory,
     gameState?.audioMap?.riddle,
     showIntro,
     stepSuccess,
@@ -1941,7 +1951,9 @@ export default function PlayPage() {
                     <div className="flex items-center gap-2 mb-3">
                       <Sparkles className="h-5 w-5 text-fuchsia-300" />
                       <p className="text-xs font-bold uppercase tracking-wider text-fuchsia-300">
-                        {tt('play.decipher', locale) || "Déchiffre l'énigme"}
+                        {(gameState.revealWords && gameState.revealWords.length > 0)
+                          ? (tt('play.decipher', locale) || "Déchiffre l'énigme")
+                          : (tt('play.answerQuestion', locale) || "À toi de répondre")}
                       </p>
                     </div>
                     {/* Les mots se découvrent en RA (façade). Une fois révélés

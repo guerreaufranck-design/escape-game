@@ -663,6 +663,13 @@ export const ui: Translations = {
     es: 'Saltar enigma (penalización)',
     it: 'Salta enigma (penalità)',
   },
+  'play.answerQuestion': {
+    fr: 'À toi de répondre',
+    en: 'Your answer',
+    de: 'Deine Antwort',
+    es: 'Tu respuesta',
+    it: 'La tua risposta',
+  },
   'play.aboutThisPlace': {
     fr: 'Ce lieu',
     en: 'This place',
