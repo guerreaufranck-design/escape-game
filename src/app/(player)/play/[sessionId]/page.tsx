@@ -1343,12 +1343,27 @@ export default function PlayPage() {
             )}
           </div>
 
+          {/* Avertissement AUDIO — le mode silencieux iPhone coupe le son et
+              a causé des remboursements (client sans audio). Message clair
+              avant de démarrer. */}
+          <div className="mb-3 rounded-xl border border-amber-500/50 bg-amber-950/40 p-3 flex items-start gap-2.5">
+            <span className="text-lg leading-none mt-0.5">🔊</span>
+            <p className="text-sm text-amber-100/90 leading-snug">
+              {tt('play.audioNotice', locale) ||
+                "Ce jeu se joue en audio. Vérifie que ton téléphone n'est PAS en mode silencieux et monte le volume 🔊"}
+            </p>
+          </div>
+
           {/* Start button — starts the timer via API */}
           <Button
             size="lg"
             className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg h-14 rounded-xl"
             disabled={startingGame}
             onClick={async () => {
+              // Déverrouille l'audio DANS le geste (avant tout await) : sur
+              // iPhone, ça autorise ensuite la lecture même en mode silencieux
+              // + l'auto-play à l'arrivée sur chaque étape.
+              narration.prime();
               setStartingGame(true);
               try {
                 const res = await fetch(`/api/game/${sessionId}/start`, { method: "POST" });

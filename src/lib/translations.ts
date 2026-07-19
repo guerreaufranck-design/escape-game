@@ -663,6 +663,13 @@ export const ui: Translations = {
     es: 'Saltar enigma (penalización)',
     it: 'Salta enigma (penalità)',
   },
+  'play.audioNotice': {
+    fr: "Ce jeu se joue en audio. Vérifie que ton téléphone n'est PAS en mode silencieux et monte le volume 🔊",
+    en: "This game is audio-based. Make sure your phone is NOT on silent and turn the volume up 🔊",
+    de: "Dieses Spiel ist audiobasiert. Stelle sicher, dass dein Handy NICHT stumm ist, und dreh die Lautstärke auf 🔊",
+    es: "Este juego es en audio. Asegúrate de que tu teléfono NO esté en silencio y sube el volumen 🔊",
+    it: "Questo gioco è basato sull'audio. Assicurati che il telefono NON sia in silenzioso e alza il volume 🔊",
+  },
   'play.supportLabel': {
     fr: 'Support', en: 'Support', de: 'Support', es: 'Soporte', it: 'Supporto',
   },

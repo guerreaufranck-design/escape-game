@@ -20,19 +20,74 @@ interface SpeakOptions {
   audioUrl?: string | null;
 }
 
+/**
+ * Web Audio partagé — CRUCIAL pour iPhone : un élément <audio> classique est
+ * COUPÉ par l'interrupteur silencieux de l'iPhone (bug qui a causé le
+ * remboursement de Tori : "no sound"). Le Web Audio (AudioContext), lui, joue
+ * MÊME en mode silencieux, à condition d'avoir été déverrouillé par un geste
+ * utilisateur (prime()). On garde <audio> en repli si le Web Audio échoue.
+ */
+let sharedAudioCtx: AudioContext | null = null;
+function getAudioCtx(): AudioContext | null {
+  if (typeof window === "undefined") return null;
+  const AC =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!AC) return null;
+  if (!sharedAudioCtx) {
+    try {
+      sharedAudioCtx = new AC();
+    } catch {
+      return null;
+    }
+  }
+  return sharedAudioCtx;
+}
+
 export function useNarration(locale: string) {
   const [speaking, setSpeaking] = useState(false);
   const [supported, setSupported] = useState(false);
   const currentTextRef = useRef<string>("");
   const currentAudioRef = useRef<HTMLAudioElement | null>(null);
+  const sourceRef = useRef<AudioBufferSourceNode | null>(null);
 
   useEffect(() => {
     setSupported(typeof window !== "undefined" && "speechSynthesis" in window);
   }, []);
 
+  /**
+   * Déverrouille l'audio — à appeler sur un GESTE utilisateur (ex. "C'est
+   * parti"). Reprend le contexte + joue un buffer silencieux : sur iOS, ça
+   * autorise ensuite la lecture Web Audio même en mode silencieux ET sans
+   * nouveau geste (auto-play à l'arrivée).
+   */
+  const prime = useCallback(() => {
+    const ctx = getAudioCtx();
+    if (!ctx) return;
+    if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+    try {
+      const buf = ctx.createBuffer(1, 1, 22050);
+      const src = ctx.createBufferSource();
+      src.buffer = buf;
+      src.connect(ctx.destination);
+      src.start(0);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const stop = useCallback(() => {
     if (typeof window !== "undefined" && window.speechSynthesis) {
       window.speechSynthesis.cancel();
+    }
+    if (sourceRef.current) {
+      try {
+        sourceRef.current.onended = null;
+        sourceRef.current.stop();
+      } catch {
+        /* déjà arrêté */
+      }
+      sourceRef.current = null;
     }
     if (currentAudioRef.current) {
       currentAudioRef.current.pause();
@@ -43,31 +98,14 @@ export function useNarration(locale: string) {
     currentTextRef.current = "";
   }, []);
 
-  /**
-   * Play a pre-generated MP3 (e.g. ElevenLabs). Optimistic — assumes
-   * playback will succeed and updates the speaking state immediately.
-   * If the audio actually errors (true 404 / CORS), the error handler
-   * resets the state. We deliberately don't await play() because iOS
-   * Safari rejects play() on the FIRST user gesture sometimes (audio
-   * context still locked) even though the audio CAN play after — and
-   * falling back to Web Speech in that case produced exactly the bug
-   * the user just reported (Samantha robot voice on first tap).
-   */
-  const playMp3 = useCallback((audioUrl: string, identifier: string) => {
+  /** Repli : lecture via un élément <audio> (coupé par le silencieux iOS). */
+  const playViaElement = useCallback((audioUrl: string, identifier: string) => {
     try {
       const audio = new Audio(audioUrl);
       audio.preload = "auto";
       currentAudioRef.current = audio;
-
-      // Optimistically mark as speaking so the UI updates instantly.
       setSpeaking(true);
       currentTextRef.current = identifier;
-
-      audio.addEventListener("playing", () => {
-        // Already optimistic-set above; this just confirms.
-        setSpeaking(true);
-        currentTextRef.current = identifier;
-      });
       audio.addEventListener("ended", () => {
         setSpeaking(false);
         currentTextRef.current = "";
@@ -78,13 +116,7 @@ export function useNarration(locale: string) {
         currentTextRef.current = "";
         currentAudioRef.current = null;
       });
-
       audio.play().catch(() => {
-        // play() rejection (autoplay policy on first interaction) is a
-        // soft failure — the audio is loaded and will play on the next
-        // tap. Do NOT fall back to Web Speech: hearing Samantha when
-        // the customer paid for ElevenLabs is the WORST outcome. Just
-        // reset the speaking state so the user can tap again.
         setSpeaking(false);
         currentTextRef.current = "";
       });
@@ -93,6 +125,58 @@ export function useNarration(locale: string) {
       currentTextRef.current = "";
     }
   }, []);
+
+  /**
+   * Joue un MP3 pré-généré (ElevenLabs). Web Audio en priorité (son en mode
+   * silencieux iPhone), repli <audio> si le décodage échoue. On ne retombe
+   * JAMAIS sur la voix navigateur quand un MP3 est fourni.
+   */
+  const playMp3 = useCallback(
+    (audioUrl: string, identifier: string) => {
+      setSpeaking(true);
+      currentTextRef.current = identifier;
+
+      const ctx = getAudioCtx();
+      if (!ctx) {
+        playViaElement(audioUrl, identifier);
+        return;
+      }
+      if (ctx.state === "suspended") void ctx.resume().catch(() => {});
+
+      fetch(audioUrl, { mode: "cors" })
+        .then((r) => r.arrayBuffer())
+        .then((ab) => ctx.decodeAudioData(ab))
+        .then((buffer) => {
+          // Une lecture plus récente a pris la main entre-temps → on abandonne.
+          if (currentTextRef.current !== identifier) return;
+          if (sourceRef.current) {
+            try {
+              sourceRef.current.onended = null;
+              sourceRef.current.stop();
+            } catch {
+              /* ignore */
+            }
+          }
+          const src = ctx.createBufferSource();
+          src.buffer = buffer;
+          src.connect(ctx.destination);
+          src.onended = () => {
+            if (currentTextRef.current === identifier) {
+              setSpeaking(false);
+              currentTextRef.current = "";
+              sourceRef.current = null;
+            }
+          };
+          sourceRef.current = src;
+          src.start(0);
+        })
+        .catch(() => {
+          // Web Audio indisponible (décodage/CORS) → repli <audio>.
+          playViaElement(audioUrl, identifier);
+        });
+    },
+    [playViaElement],
+  );
 
   /** Internal: speak via the browser's TTS engine. */
   const speakWithTts = useCallback(
@@ -146,9 +230,7 @@ export function useNarration(locale: string) {
       stop();
 
       // If an ElevenLabs MP3 URL is provided, play it. We do NOT fall
-      // back to Web Speech when the URL is present — falling back would
-      // mean the customer hears the robot voice they paid not to hear.
-      // The MP3 element handles its own errors silently.
+      // back to Web Speech when the URL is present.
       if (options?.audioUrl) {
         playMp3(options.audioUrl, text);
         return;
@@ -170,8 +252,16 @@ export function useNarration(locale: string) {
         currentAudioRef.current.pause();
         currentAudioRef.current = null;
       }
+      if (sourceRef.current) {
+        try {
+          sourceRef.current.stop();
+        } catch {
+          /* ignore */
+        }
+        sourceRef.current = null;
+      }
     };
   }, []);
 
-  return { speak, stop, speaking, supported };
+  return { speak, stop, speaking, supported, prime };
 }
