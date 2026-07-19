@@ -251,6 +251,28 @@ export async function runSelect(
     }
   }
 
+  // ── ANTI-DOUBLON (2026-07-18) — petites villes ──
+  // Peu de landmarks distincts → le LLM peut RÉPÉTER le même lieu (ex. Los
+  // Cristianos : Plaza de la iglesia en stop 1 ET 8). On dédoublonne par
+  // placeId (à défaut coords arrondies) — garde la 1ʳᵉ occurrence.
+  {
+    const seen = new Set<string>();
+    const unique: typeof selected = [];
+    for (const st of selected) {
+      const key = st.placeId || `${st.lat.toFixed(5)},${st.lon.toFixed(5)}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      unique.push(st);
+    }
+    if (unique.length < selected.length) {
+      console.warn(
+        `[v5 select] ⚠️ ${selected.length - unique.length} doublon(s) de landmark retiré(s) (petite ville) — ${unique.length} lieux distincts`,
+      );
+      selected.length = 0;
+      selected.push(...unique);
+    }
+  }
+
   // ── Route optimization (2026-06-08) — déterministe, post-LLM ──
   // Claude choisit BIEN les landmarks mais ordonne MAL la route (il raisonne la
   // géographie au lieu de la calculer → zigzags, ex. Boston Old North→Tea Party).
