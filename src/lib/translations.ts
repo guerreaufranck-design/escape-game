@@ -1218,6 +1218,50 @@ export const ui: Translations = {
   'results.congrats': {
     fr: 'Felicitations !', en: 'Congratulations!', de: 'Gluckwunsch!', es: '¡Felicidades!', it: 'Complimenti!',
   },
+  // ── Avis de fin de partie (étoiles + texte) ──
+  'results.reviewTitle': {
+    fr: 'Note ton expérience', en: 'Rate your experience', de: 'Bewerte dein Erlebnis', es: 'Valora tu experiencia', it: 'Valuta la tua esperienza',
+  },
+  'results.reviewSubtitle': {
+    fr: 'Ton avis nous aide énormément 🙏', en: 'Your feedback helps us a lot 🙏', de: 'Dein Feedback hilft uns sehr 🙏', es: 'Tu opinión nos ayuda muchísimo 🙏', it: 'Il tuo parere ci aiuta molto 🙏',
+  },
+  'results.reviewPickStars': {
+    fr: 'Choisis une note', en: 'Pick a rating', de: 'Wähle eine Bewertung', es: 'Elige una valoración', it: 'Scegli un voto',
+  },
+  'results.reviewPlaceholder': {
+    fr: 'Raconte ton expérience (facultatif)…', en: 'Tell us about your experience (optional)…', de: 'Erzähl uns von deinem Erlebnis (optional)…', es: 'Cuéntanos tu experiencia (opcional)…', it: 'Raccontaci la tua esperienza (facoltativo)…',
+  },
+  'results.reviewSubmit': {
+    fr: 'Envoyer mon avis', en: 'Submit my review', de: 'Bewertung senden', es: 'Enviar mi opinión', it: 'Invia la recensione',
+  },
+  'results.reviewThanks': {
+    fr: 'Merci pour ton avis ! 🙏', en: 'Thanks for your feedback! 🙏', de: 'Danke für dein Feedback! 🙏', es: '¡Gracias por tu opinión! 🙏', it: 'Grazie per il tuo parere! 🙏',
+  },
+  'results.reviewThanksPublic': {
+    fr: 'Merci ! Ton avis pourra apparaître sur la page du jeu.', en: 'Thank you! Your review may appear on the game page.', de: 'Danke! Deine Bewertung kann auf der Spielseite erscheinen.', es: '¡Gracias! Tu opinión podría aparecer en la página del juego.', it: 'Grazie! La tua recensione potrà apparire sulla pagina del gioco.',
+  },
+  'results.reviewSeePublic': {
+    fr: 'Voir les avis', en: 'See reviews', de: 'Bewertungen ansehen', es: 'Ver opiniones', it: 'Vedi le recensioni',
+  },
+  'results.reviewError': {
+    fr: "Envoi impossible. Réessaie.", en: "Couldn't send. Try again.", de: 'Senden fehlgeschlagen. Versuch es nochmal.', es: 'No se pudo enviar. Inténtalo de nuevo.', it: 'Invio non riuscito. Riprova.',
+  },
+  // ── Page publique d'avis /avis/[slug] ──
+  'reviews.pageTitle': {
+    fr: 'Avis des joueurs', en: 'Player reviews', de: 'Bewertungen der Spieler', es: 'Opiniones de jugadores', it: 'Recensioni dei giocatori',
+  },
+  'reviews.count': {
+    fr: 'témoignages', en: 'reviews', de: 'Bewertungen', es: 'opiniones', it: 'recensioni',
+  },
+  'reviews.empty': {
+    fr: "Sois le premier à partager ton avis sur cette aventure !", en: 'Be the first to share your review of this adventure!', de: 'Sei der Erste, der diese Tour bewertet!', es: '¡Sé el primero en opinar sobre esta aventura!', it: 'Sii il primo a recensire questa avventura!',
+  },
+  'reviews.anonymous': {
+    fr: 'Joueur', en: 'Player', de: 'Spieler', es: 'Jugador', it: 'Giocatore',
+  },
+  'reviews.footer': {
+    fr: 'Avis vérifiés de joueurs ayant terminé le jeu', en: 'Verified reviews from players who completed the game', de: 'Verifizierte Bewertungen von Spielern, die das Spiel beendet haben', es: 'Opiniones verificadas de jugadores que completaron el juego', it: 'Recensioni verificate di giocatori che hanno completato il gioco',
+  },
   'results.scoreFinal': {
     fr: 'Score final', en: 'Final score', de: 'Endpunktzahl', es: 'Puntuacion final', it: 'Punteggio finale',
   },

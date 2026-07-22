@@ -16,6 +16,7 @@ import {
   Sparkles,
   Activity,
   Layers,
+  Star,
   LogOut,
   Menu,
   X,
@@ -35,6 +36,7 @@ const navItems = [
   // Permet l'assistance support live + audit post-mortem litiges.
   { href: "/admin/sessions/live", label: "Live", icon: Radio },
   { href: "/leaderboard", label: "Classement", icon: Trophy },
+  { href: "/admin/reviews", label: "Avis", icon: Star },
   { href: "/admin/reports", label: "Signalements", icon: AlertTriangle },
   // (2026-05-21, Sprint 4.3) Pipeline self-managing observability.
   // SLO success rate, per-phase quality scores, auto-tuned thresholds,

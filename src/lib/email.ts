@@ -530,3 +530,62 @@ export async function sendPlayerHelpRequest(params: {
     console.error(`[Email] Failed to send player help request: ${err instanceof Error ? err.message : err}`);
   }
 }
+
+/**
+ * Avis bas (2026-07-20) — un joueur a laissé une note ≤3★ en fin de partie.
+ * L'avis reste PRIVÉ (jamais publié). Cet email permet à l'admin de rappeler
+ * le client pour rattraper l'expérience (service recovery). Best-effort.
+ */
+export async function sendLowReviewAlert(params: {
+  gameCity: string;
+  gameTitle?: string | null;
+  playerName?: string | null;
+  rating: number;
+  text?: string | null;
+  brandName?: string | null;
+  adminUrl: string;
+}): Promise<void> {
+  const client = getResendClient();
+  if (!client) return;
+
+  const { gameCity, gameTitle, playerName, rating, text, brandName, adminUrl } = params;
+  const who = playerName || "Joueur";
+  const stars = "★".repeat(rating) + "☆".repeat(5 - rating);
+  const row = (k: string, v?: string | null) =>
+    v
+      ? `<tr><td style="padding:8px;border-bottom:1px solid #e5e7eb;font-weight:600;">${k}</td><td style="padding:8px;border-bottom:1px solid #e5e7eb;">${v}</td></tr>`
+      : "";
+
+  try {
+    await client.emails.send({
+      from: FROM_EMAIL,
+      to: ADMIN_EMAIL,
+      subject: `⭐ Avis ${rating}/5 à rattraper — ${gameCity} — ${who}`,
+      html: `
+        <div style="font-family: system-ui, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color:#d97706;">⭐ Avis bas reçu (${stars}) — privé, à rattraper</h2>
+          ${text ? `<div style="background:#fffbeb; border-left:4px solid #d97706; padding:12px 16px; margin:16px 0; border-radius:4px;"><span style="color:#78350f; white-space:pre-wrap;">${text.replace(/</g, "&lt;")}</span></div>` : `<p style="color:#6b7280;">(Pas de commentaire texte.)</p>`}
+          <table style="width:100%; border-collapse:collapse; margin:16px 0;">
+            ${row("Note", `${rating}/5`)}
+            ${row("Ville", gameCity)}
+            ${row("Jeu", gameTitle || undefined)}
+            ${row("Joueur", playerName || undefined)}
+            ${row("Marque", brandName || undefined)}
+          </table>
+          <p style="margin:20px 0;">
+            <a href="${adminUrl}" style="display:inline-block; background:#d97706; color:#fff; text-decoration:none; padding:10px 20px; border-radius:8px; font-weight:600;">
+              ➡️ Gérer les avis
+            </a>
+          </p>
+          <p style="color:#6b7280; font-size:12px;">
+            Cet avis n'est PAS publié (seuls les 4-5★ apparaissent en public).<br>
+            Timestamp: ${new Date().toISOString()} — Escape Game, alerte avis automatique
+          </p>
+        </div>
+      `,
+    });
+    console.log(`[Email] Low review alert sent to ${ADMIN_EMAIL} — ${gameCity} / ${who} (${rating}/5)`);
+  } catch (err) {
+    console.error(`[Email] Failed to send low review alert: ${err instanceof Error ? err.message : err}`);
+  }
+}

@@ -26,6 +26,7 @@ import { SelfieARScreen } from "@/components/player/SelfieARScreen";
 import { GameEpilogue } from "@/components/player/GameEpilogue";
 import { TruthReveal } from "@/components/player/TruthReveal";
 import { PostGameUpsell } from "@/components/player/PostGameUpsell";
+import { GameReviewCard } from "@/components/player/GameReviewCard";
 import { tt } from "@/lib/translations";
 import type { GameResults } from "@/types/game";
 
@@ -236,6 +237,11 @@ export default function ResultsPage() {
             <p className="text-sm text-slate-500 mt-1">{tt('results.points', locale)}</p>
           </div>
         </Card>
+
+        {/* Avis de fin de partie — étoiles + texte. 4-5★ → public /avis/[slug],
+            ≤3★ → interne + alerte email. Placé juste après le score (pic de
+            satisfaction) pour maximiser le taux de réponse. */}
+        <GameReviewCard sessionId={sessionId} locale={locale} brandName={results.brand?.name} />
 
         {/* Stats grid */}
         <div className="grid grid-cols-3 gap-3">

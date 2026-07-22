@@ -54,3 +54,12 @@ export function brandFromSlug(slug?: string | null): Brand {
   if (s.startsWith("rsc-")) return BRANDS.rumbosecreto;
   return BRANDS.oddballtrip;
 }
+
+/** Langue par défaut du chrome (libellés) selon la marque : la page publique
+ *  d'avis s'adresse au public du revendeur. Les avis eux-mêmes restent dans la
+ *  langue où ils ont été écrits. */
+export function brandPageLang(brand: Brand): "fr" | "es" | "en" {
+  if (brand.key === "surlestraces") return "fr";
+  if (brand.key === "rumbosecreto") return "es";
+  return "en";
+}
