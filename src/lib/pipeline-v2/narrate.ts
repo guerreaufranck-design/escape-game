@@ -117,7 +117,11 @@ export async function runNarrate(
       (s, i) =>
         `${i + 1}. "${s.name}" / Google: "${s.googleName}" — GPS ${s.lat}, ${s.lon} (placeId ${s.placeId}, ${s.distanceFromStartM}m from start)${
           s.narrativeTitle ? ` · Why selected: ${s.narrativeTitle.slice(0, 200)}` : ""
-        }`,
+        }${
+          s.anecdote
+            ? `\n   · Researched facts (from Perplexity — GROUND your history/anecdote/riddle in THESE, do not invent beyond them): ${s.anecdote.slice(0, 400)}`
+            : `\n   · Researched facts: (none provided — stay GENERAL, do NOT invent specific dates/attributions for this landmark)`
+        }${s.sources?.length ? ` [sources: ${s.sources.slice(0, 3).join("; ")}]` : ""}`,
     )
     .join("\n");
 
@@ -247,6 +251,7 @@ These 3 hints GUARANTEE the player can finish without external lookup.
 
 ## Strict rules
 
+- 🏛️ **FACTUAL GROUNDING — HARD RULE (read twice).** Base EVERY date, century, year, architect, artistic style, and historical attribution ONLY on the "Researched facts" listed under each landmark above. **If a specific fact is NOT in the research, DO NOT invent one** — describe it generally instead ("a centuries-old church", "a Renaissance-era mansion", "in the town's golden age") rather than stating a precise but unverified date or attribution. Never attribute an event (e.g. "hosted the assembly", "where X was signed") to a landmark unless the research says so. A plausible-but-false fact is the WORST failure of this whole game — when in doubt, stay general.
 - ALL narrative TEXT (titles, riddles, anecdotes, intro, epilogue, finalRiddleText…) in English — it is the base, translated later. EXCEPTION : the answer words themselves (answer, arFacadeText, finalAnswer) are in ${answerLang}, because they are revealed in AR and stay identical across languages.
 - DO NOT change landmark selection or order
 - landmarkName must be verbatim from above (prefer Google name if available)

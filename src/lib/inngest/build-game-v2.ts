@@ -45,6 +45,8 @@ import { runGeocode, geocodeStartPoint } from "@/lib/pipeline-v2/geocode";
 import { runSelect } from "@/lib/pipeline-v2/select";
 import { runNarrate } from "@/lib/pipeline-v2/narrate";
 import { applyAudioguideLayer } from "@/lib/pipeline-v2/audioguide";
+import { runQaGate } from "@/lib/pipeline-v2/qa-gate";
+import { sendNeedsReviewAlert } from "@/lib/email";
 import { runAudio } from "@/lib/pipeline-v2/audio";
 import { translateGame } from "@/lib/pipeline-v2/translate";
 import {
@@ -231,6 +233,25 @@ export const buildGameV2 = inngest.createFunction(
       }
     }
 
+    // ── STEP 5c : QA GATE (P4) — filet avant publication ──
+    // NON bloquant pour le build : on collecte le verdict ici et on l'applique
+    // à l'étape publish (halt+needs_review si critique, sinon publish normal).
+    // Ne throw jamais — un échec QA interne ne doit pas perdre le build.
+    const qa = await step.run("qa-gate", async () => {
+      try {
+        return await runQaGate(input, selectedStops, game!);
+      } catch (e) {
+        return {
+          pass: true,
+          critical: [] as string[],
+          warnings: [`QA gate skipped: ${e instanceof Error ? e.message : "?"}`],
+          expectedLang: input.language,
+        };
+      }
+    });
+    if (qa.warnings.length) logger.warn(`[v5] QA warnings — ${qa.warnings.join(" | ")}`);
+    if (!qa.pass) logger.warn(`[v5] QA CRITICAL (needs_review) — ${qa.critical.join(" | ")}`);
+
     // ── STEP 6 : PERSIST master EN ──
     await step.run("persist-master-en", async () => {
       await persistMasterEN(gameId, input, game);
@@ -288,9 +309,28 @@ export const buildGameV2 = inngest.createFunction(
     });
     logger.info(`[v5] activation_code créé : ${code}`);
 
-    // ── STEP 13 : PUBLISH ──
+    // ── STEP 13 : PUBLISH (ou HALT si la QA a trouvé un problème critique) ──
+    // Si la QA (P4) a levé un critique (ex. réponses en mauvaise langue,
+    // réponse non typable, coordonnée aberrante), on NE publie PAS clean : on
+    // lève needs_review → le code est retenu côté revendeur jusqu'à validation
+    // manuelle, et un email d'alerte part. Sinon publication normale.
     await step.run("publish", async () => {
-      await publishGame(gameId);
+      if (!qa.pass) {
+        const reason = `QA auto (réponses attendues en ${qa.expectedLang}) : ${qa.critical.join(" ; ")}`;
+        await haltForReview(gameId, reason);
+        await sendNeedsReviewAlert({
+          gameId,
+          slug: input.slug,
+          city: input.city,
+          theme: input.theme,
+          reviewReason: reason,
+          buyerEmail: input.buyerEmail,
+          orderId: input.orderId,
+        });
+        logger.warn(`[v5] PUBLISH HALTED by QA — needs_review set for ${input.slug}`);
+      } else {
+        await publishGame(gameId);
+      }
     });
 
     // ── STEP 13.5 : MARK DRAFT FULFILLED (si utilisé) ──
