@@ -776,6 +776,35 @@ export const ui: Translations = {
     es: "Nunca necesitas pagar una entrada para terminar la aventura: todo lo que necesitas se ve desde la calle. Algunos lugares ofrecen visitas o entradas de pago para profundizar, pero es un extra, nunca una obligación para avanzar.",
     it: "Non serve mai pagare un ingresso per finire l'avventura: tutto ciò che ti serve è visibile dalla strada. Alcuni luoghi offrono visite o ingressi a pagamento per approfondire, ma è un extra, mai un obbligo per proseguire.",
   },
+  // ── Statut téléchargement hors-ligne (anti-blocage réseau) ──
+  'play.offlineReadyMsg': {
+    fr: '✓ Jeu téléchargé — jouable hors-ligne',
+    en: '✓ Game downloaded — playable offline',
+    de: '✓ Spiel heruntergeladen — offline spielbar',
+    es: '✓ Juego descargado — jugable sin conexión',
+    it: '✓ Gioco scaricato — giocabile offline',
+  },
+  'play.offlineProgress': {
+    fr: 'Téléchargement du jeu (pour jouer hors-ligne)…',
+    en: 'Downloading the game (for offline play)…',
+    de: 'Spiel wird heruntergeladen (für offline)…',
+    es: 'Descargando el juego (para sin conexión)…',
+    it: 'Scaricamento del gioco (per offline)…',
+  },
+  'play.offlineWarn': {
+    fr: 'Reste connecté au wifi ou aux données jusqu’au ✓ vert avant de partir — sinon tu ne pourras pas continuer sans réseau.',
+    en: 'Stay on wifi or mobile data until the green ✓ before you set off — otherwise you won’t be able to continue without a signal.',
+    de: 'Bleib mit WLAN oder mobilen Daten verbunden, bis das grüne ✓ erscheint — sonst kannst du ohne Signal nicht weiterspielen.',
+    es: 'Permanece con wifi o datos móviles hasta el ✓ verde antes de salir — si no, no podrás continuar sin señal.',
+    it: 'Resta connesso al wifi o ai dati fino al ✓ verde prima di partire — altrimenti non potrai continuare senza segnale.',
+  },
+  'play.offlineConfirm': {
+    fr: 'Le jeu n’est pas encore entièrement téléchargé. Si tu pars sans réseau, tu ne pourras pas continuer. Commencer quand même ?',
+    en: 'The game isn’t fully downloaded yet. If you leave without a signal, you won’t be able to continue. Start anyway?',
+    de: 'Das Spiel ist noch nicht vollständig heruntergeladen. Ohne Signal kannst du nicht weiterspielen. Trotzdem starten?',
+    es: 'El juego aún no está descargado por completo. Si sales sin señal, no podrás continuar. ¿Empezar de todos modos?',
+    it: 'Il gioco non è ancora scaricato del tutto. Se parti senza segnale non potrai continuare. Iniziare comunque?',
+  },
   'play.supportLabel': {
     fr: 'Support', en: 'Support', de: 'Support', es: 'Soporte', it: 'Supporto',
   },

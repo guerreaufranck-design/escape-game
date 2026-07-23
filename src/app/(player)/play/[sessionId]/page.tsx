@@ -542,9 +542,12 @@ export default function PlayPage() {
   }, [gameState, finalResult]);
 
   // Pré-download déclenché une seule fois par session.
-  const prefetchedRef = useRef(false);
+  const prefetchingRef = useRef(false);
+  const totalStepsRef = useRef(0);
   // Vrai quand tout le jeu + audios sont en cache → jouable hors-ligne.
   const [offlineReady, setOfflineReady] = useState(false);
+  // Nombre d'étapes déjà en cache (pour la barre de progression du départ).
+  const [cachedCount, setCachedCount] = useState(0);
 
   // Fetch game state
   const fetchGameState = useCallback(async () => {
@@ -557,14 +560,9 @@ export default function PlayPage() {
       // OFFLINE : on garde l'étape locale synchronisée sur le serveur, et on
       // pré-télécharge TOUT le jeu (une fois) pour pouvoir continuer sans réseau.
       setOfflineStep(sessionId, data.currentStep);
-      if (!prefetchedRef.current && data.totalSteps > 0) {
-        prefetchedRef.current = true;
-        void prefetchFullGame(sessionId, locale, data.totalSteps)
-          .then((r) => {
-            if (r.steps >= data.totalSteps) setOfflineReady(true);
-          })
-          .catch(() => {});
-      }
+      if (data.totalSteps > 0) totalStepsRef.current = data.totalSteps;
+      // Le pré-téléchargement robuste (retry + reprise) est piloté par l'effet
+      // dédié plus bas, qui relance tant que le jeu n'est pas 100% en cache.
       // BUG A FIX (2026-05-18) : ne PAS rediriger automatiquement vers
       // /results si un overlay post-game est en cours (skip reveal,
       // step success, final code modal).
@@ -626,6 +624,39 @@ export default function PlayPage() {
     window.addEventListener("online", onReconnect);
     return () => window.removeEventListener("online", onReconnect);
   }, [sessionId, locale, fetchGameState]);
+
+  // OFFLINE — pré-téléchargement ROBUSTE (fix blocage Pézenas 2026-07-23).
+  // On lance le prefetch, on RETENTE tant que le jeu n'est pas 100% en cache
+  // (au retour du réseau + toutes les 12 s), et on remonte la progression.
+  // Un garde `prefetchingRef` évite les lancements concurrents.
+  const ensureOfflineCache = useCallback(async () => {
+    const total = totalStepsRef.current;
+    if (total <= 0 || offlineReady || prefetchingRef.current) return;
+    prefetchingRef.current = true;
+    try {
+      const r = await prefetchFullGame(sessionId, locale, total, (done) =>
+        setCachedCount(done),
+      );
+      setCachedCount(r.steps);
+      if (r.steps >= total) setOfflineReady(true);
+    } catch {
+      /* on retentera via l'intervalle / l'event online */
+    } finally {
+      prefetchingRef.current = false;
+    }
+  }, [sessionId, locale, offlineReady]);
+
+  useEffect(() => {
+    if (offlineReady || !gameState?.totalSteps) return;
+    void ensureOfflineCache();
+    const onOnline = () => void ensureOfflineCache();
+    window.addEventListener("online", onOnline);
+    const iv = setInterval(() => void ensureOfflineCache(), 12000);
+    return () => {
+      window.removeEventListener("online", onOnline);
+      clearInterval(iv);
+    };
+  }, [offlineReady, gameState?.totalSteps, ensureOfflineCache]);
 
   // -------------------------------------------------------------------
   // Persist hints + notebook across reloads / accidental nav.
@@ -1347,16 +1378,24 @@ export default function PlayPage() {
             </p>
           </details>
 
-          {/* Statut de téléchargement hors-ligne */}
+          {/* Statut de téléchargement hors-ligne (+ progression X/N) */}
           <div className="w-full text-center text-xs mb-2">
             {offlineReady ? (
-              <span className="text-emerald-400">✓ Jeu téléchargé — jouable hors-ligne</span>
+              <span className="text-emerald-400">{tt('play.offlineReadyMsg', locale)}</span>
             ) : (
-              <span className="text-slate-500 inline-flex items-center gap-1">
-                <Loader2 className="h-3 w-3 animate-spin" /> Téléchargement du jeu (hors-ligne)…
+              <span className="text-slate-400 inline-flex items-center gap-1">
+                <Loader2 className="h-3 w-3 animate-spin" /> {tt('play.offlineProgress', locale)}
+                {totalStepsRef.current > 0 ? ` ${cachedCount}/${totalStepsRef.current}` : ""}
               </span>
             )}
           </div>
+          {/* Avertissement anti-blocage : ne pas partir avant le ✓ vert. */}
+          {!offlineReady && (
+            <div className="mb-3 rounded-xl border border-amber-500/40 bg-amber-950/30 p-2.5 flex items-start gap-2">
+              <span className="text-base leading-none mt-0.5">📶</span>
+              <p className="text-xs text-amber-200/90 leading-snug">{tt('play.offlineWarn', locale)}</p>
+            </div>
+          )}
 
           {/* Avertissement AUDIO — le mode silencieux iPhone coupe le son et
               a causé des remboursements (client sans audio). Message clair
@@ -1387,6 +1426,13 @@ export default function PlayPage() {
             className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-lg h-14 rounded-xl"
             disabled={startingGame}
             onClick={async () => {
+              // ANTI-BLOCAGE : si le jeu n'est pas 100% en cache, on prévient
+              // AVANT de démarrer (partir sans réseau = blocage, cf. Pézenas).
+              // Non bloquant : le joueur peut forcer (zone sans signal réelle).
+              if (!offlineReady && typeof window !== "undefined") {
+                const ok = window.confirm(tt('play.offlineConfirm', locale));
+                if (!ok) return;
+              }
               // Déverrouille l'audio DANS le geste (avant tout await) : sur
               // iPhone, ça autorise ensuite la lecture même en mode silencieux
               // + l'auto-play à l'arrivée sur chaque étape.

@@ -33,23 +33,43 @@ const stepKey = (sessionId: string) => `offline:${sessionId}:step`;
 const queueKey = (sessionId: string) => `offline:${sessionId}:queue`;
 const doneKey = (sessionId: string) => `offline:${sessionId}:done`;
 
-/** Pré-télécharge TOUT le jeu (à appeler EN LIGNE). Best-effort. */
+/**
+ * Pré-télécharge TOUT le jeu (à appeler EN LIGNE).
+ *
+ * Robuste (2026-07-23, après blocage client Pézenas) : chaque étape est
+ * retentée jusqu'à 3× (réseau capricieux), et on RÉUTILISE le pack déjà en
+ * cache pour ne re-télécharger que les étapes manquantes. Idempotent : peut
+ * être rappelé au retour du réseau jusqu'à ce que tout soit là.
+ * `onProgress(done, total)` remonte l'avancement pour l'UI.
+ */
 export async function prefetchFullGame(
   sessionId: string,
   locale: string,
   totalSteps: number,
+  onProgress?: (done: number, total: number) => void,
 ): Promise<{ steps: number; assets: { ok: number; failed: number } }> {
-  const steps: Record<number, GameState> = {};
+  // Repart du pack existant → on ne refait que les étapes manquantes.
+  const existing = await loadFullPack(sessionId).catch(() => null);
+  const steps: Record<number, GameState> = existing?.steps ? { ...existing.steps } : {};
   const assetUrls = new Set<string>();
+  onProgress?.(Object.keys(steps).length, totalSteps);
   for (let n = 1; n <= totalSteps; n++) {
-    try {
-      const res = await fetch(`/api/game/${sessionId}?lang=${locale}&step=${n}`);
-      if (!res.ok) continue;
-      const data = (await res.json()) as GameState;
-      steps[n] = data;
-      for (const u of collectAssetUrls(data)) assetUrls.add(u);
-    } catch {
-      /* étape sautée — best effort */
+    if (steps[n]) {
+      for (const u of collectAssetUrls(steps[n])) assetUrls.add(u);
+      continue; // déjà en cache
+    }
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await fetch(`/api/game/${sessionId}?lang=${locale}&step=${n}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as GameState;
+        steps[n] = data;
+        for (const u of collectAssetUrls(data)) assetUrls.add(u);
+        onProgress?.(Object.keys(steps).length, totalSteps);
+        break; // succès → étape suivante
+      } catch {
+        if (attempt < 2) await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
+      }
     }
   }
   // Sprites AR des personnages : leurs URLs sont construites côté client
